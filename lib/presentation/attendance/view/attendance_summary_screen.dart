@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'database_helper.dart';
-import 'attendance_log_model.dart';
+
+import '../../../core/utils/date_time_formatter.dart';
+import '../../../data/models/attendance_log_model.dart';
+import '../viewmodel/attendance_summary_viewmodel.dart';
 
 class AttendanceSummaryScreen extends StatefulWidget {
   const AttendanceSummaryScreen({super.key});
@@ -11,37 +13,18 @@ class AttendanceSummaryScreen extends StatefulWidget {
 }
 
 class _AttendanceSummaryScreenState extends State<AttendanceSummaryScreen> {
-  final DatabaseHelper _dbHelper = DatabaseHelper();
-  bool _isLoading = true;
-  Map<String, List<AttendanceLog>> _grouped = {};
+  final AttendanceSummaryViewModel _viewModel = AttendanceSummaryViewModel();
 
   @override
   void initState() {
     super.initState();
-    _loadLogs();
+    _viewModel.loadLogs();
   }
 
-  Future<void> _loadLogs() async {
-    final logs = await _dbHelper.getAllAttendanceLogs();
-    final Map<String, List<AttendanceLog>> grouped = {};
-    for (final log in logs) {
-      grouped.putIfAbsent(log.employeeId, () => []).add(log);
-    }
-    setState(() {
-      _grouped = grouped;
-      _isLoading = false;
-    });
-  }
-
-  String _formatDateTime(String isoString) {
-    final dt = DateTime.parse(isoString);
-    final date =
-        '${dt.day.toString().padLeft(2, '0')}/'
-        '${dt.month.toString().padLeft(2, '0')}/${dt.year}';
-    final time =
-        '${dt.hour.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')}';
-    return '$date  •  $time';
+  @override
+  void dispose() {
+    _viewModel.dispose();
+    super.dispose();
   }
 
   @override
@@ -52,58 +35,58 @@ class _AttendanceSummaryScreenState extends State<AttendanceSummaryScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-              setState(() => _isLoading = true);
-              _loadLogs();
-            },
+            onPressed: _viewModel.loadLogs,
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _grouped.isEmpty
-          ? const Center(child: Text('No attendance records yet'))
-          : ListView(
-              padding: const EdgeInsets.all(12),
-              children: _grouped.entries.map((entry) {
-                final logs = entry.value;
-                final name = logs.first.employeeName;
-                final employeeId = entry.key;
+      body: ListenableBuilder(
+        listenable: _viewModel,
+        builder: (context, _) {
+          if (_viewModel.isLoading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (_viewModel.isEmpty) {
+            return const Center(child: Text('No attendance records yet'));
+          }
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: _viewModel.groupedLogs.entries
+                .map((entry) => _buildEmployeeCard(entry.key, entry.value))
+                .toList(),
+          );
+        },
+      ),
+    );
+  }
 
-                return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: ExpansionTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.green.shade50,
-                      child: Text(
-                        name.isNotEmpty ? name[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    title: Text(
-                      name,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Text(
-                      'ID: $employeeId  •  Total logins: ${logs.length}',
-                    ),
-                    children: logs.map((log) {
-                      return ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.access_time, size: 18),
-                        title: Text(_formatDateTime(log.loginTime)),
-                      );
-                    }).toList(),
-                  ),
-                );
-              }).toList(),
+  Widget _buildEmployeeCard(String employeeId, List<AttendanceLog> logs) {
+    final name = logs.first.employeeName;
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: ExpansionTile(
+        leading: CircleAvatar(
+          backgroundColor: Colors.green.shade50,
+          child: Text(
+            name.isNotEmpty ? name[0].toUpperCase() : '?',
+            style: const TextStyle(
+              color: Colors.green,
+              fontWeight: FontWeight.bold,
             ),
+          ),
+        ),
+        title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(
+          'ID: $employeeId  •  Total logins: ${logs.length}',
+        ),
+        children: logs.map((log) {
+          return ListTile(
+            dense: true,
+            leading: const Icon(Icons.access_time, size: 18),
+            title: Text(DateTimeFormatter.format(log.loginTime)),
+          );
+        }).toList(),
+      ),
     );
   }
 }

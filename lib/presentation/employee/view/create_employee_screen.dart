@@ -1,8 +1,8 @@
-import 'package:employee_attendance_app/attendance_detail_screen.dart';
 import 'package:flutter/material.dart';
-import 'database_helper.dart';
-import 'employee_model.dart';
-import 'face_scan_screen.dart';
+
+import '../../face_scan/view/face_scan_screen.dart';
+import '../viewmodel/create_employee_viewmodel.dart';
+import 'attendance_detail_screen.dart';
 
 class CreateAttendanceScreen extends StatefulWidget {
   const CreateAttendanceScreen({super.key});
@@ -16,18 +16,14 @@ class _CreateAttendanceScreenState extends State<CreateAttendanceScreen> {
   final _nameController = TextEditingController();
   final _numberController = TextEditingController();
   final _employeeIdController = TextEditingController();
-
-  final DatabaseHelper _dbHelper = DatabaseHelper();
-
-  bool _isFaceVerified = false;
-  bool _isSaving = false;
-  List<List<double>>? _faceEmbeddings;
+  final CreateEmployeeViewModel _viewModel = CreateEmployeeViewModel();
 
   @override
   void dispose() {
     _nameController.dispose();
     _numberController.dispose();
     _employeeIdController.dispose();
+    _viewModel.dispose();
     super.dispose();
   }
 
@@ -48,54 +44,32 @@ class _CreateAttendanceScreenState extends State<CreateAttendanceScreen> {
       ),
     );
 
-    if (embeddings == null) return;
+    if (embeddings == null || !mounted) return;
 
-    setState(() {
-      _faceEmbeddings = embeddings;
-      _isFaceVerified = true;
-    });
+    _viewModel.setFaceEmbeddings(embeddings);
     _showSnackBar('Face profile captured successfully');
   }
 
   Future<void> _saveAttendance() async {
     if (!_formKey.currentState!.validate()) return;
 
-    if (!_isFaceVerified || _faceEmbeddings == null) {
+    if (!_viewModel.isFaceVerified) {
       _showSnackBar('Please scan the employee\'s face before submitting');
       return;
     }
 
-    setState(() => _isSaving = true);
-
-    final employee = Employee(
+    final employee = await _viewModel.save(
       name: _nameController.text.trim(),
       number: _numberController.text.trim(),
       employeeId: _employeeIdController.text.trim(),
-      attendanceTime: DateTime.now().toIso8601String(),
-      faceVerified: true,
-      faceEmbeddings: _faceEmbeddings!,
     );
 
-    final insertedId = await _dbHelper.insertAttendance(employee);
-
-    setState(() => _isSaving = false);
-
-    if (!mounted) return;
+    if (employee == null || !mounted) return;
 
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => AttendanceDetailScreen(
-          employee: Employee(
-            id: insertedId,
-            name: employee.name,
-            number: employee.number,
-            employeeId: employee.employeeId,
-            attendanceTime: employee.attendanceTime,
-            faceVerified: employee.faceVerified,
-            faceEmbeddings: employee.faceEmbeddings,
-          ),
-        ),
+        builder: (context) => AttendanceDetailScreen(employee: employee),
       ),
     );
   }
@@ -148,59 +122,70 @@ class _CreateAttendanceScreenState extends State<CreateAttendanceScreen> {
                     : null,
               ),
               const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: _isFaceVerified
-                      ? Colors.green.shade50
-                      : Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: _isFaceVerified
-                        ? Colors.green
-                        : Colors.grey.shade300,
-                  ),
-                ),
-                child: Row(
+              ListenableBuilder(
+                listenable: _viewModel,
+                builder: (context, _) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(
-                      _isFaceVerified ? Icons.check_circle : Icons.face,
-                      color: _isFaceVerified ? Colors.green : Colors.grey,
-                      size: 32,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _isFaceVerified ? 'Face captured' : 'Face not captured',
-                        style: const TextStyle(fontSize: 15),
-                      ),
-                    ),
-                    ElevatedButton(
-                      onPressed: _captureFace,
-                      child: Text(_isFaceVerified ? 'Re-scan' : 'Scan Face'),
-                    ),
+                    _buildFaceCaptureCard(),
+                    const SizedBox(height: 24),
+                    _buildSubmitButton(),
                   ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _isSaving ? null : _saveAttendance,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                  ),
-                  child: _isSaving
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text(
-                          'Submit Attendance',
-                          style: TextStyle(color: Colors.white, fontSize: 16),
-                        ),
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildFaceCaptureCard() {
+    final isVerified = _viewModel.isFaceVerified;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isVerified ? Colors.green.shade50 : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isVerified ? Colors.green : Colors.grey.shade300,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isVerified ? Icons.check_circle : Icons.face,
+            color: isVerified ? Colors.green : Colors.grey,
+            size: 32,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              isVerified ? 'Face captured' : 'Face not captured',
+              style: const TextStyle(fontSize: 15),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: _captureFace,
+            child: Text(isVerified ? 'Re-scan' : 'Scan Face'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSubmitButton() {
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: _viewModel.isSaving ? null : _saveAttendance,
+        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+        child: _viewModel.isSaving
+            ? const CircularProgressIndicator(color: Colors.white)
+            : const Text(
+                'Submit Attendance',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
       ),
     );
   }

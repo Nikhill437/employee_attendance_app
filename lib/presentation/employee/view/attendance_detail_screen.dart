@@ -1,21 +1,12 @@
 import 'package:flutter/material.dart';
-import 'employee_model.dart';
+
+import '../../../core/utils/date_time_formatter.dart';
+import '../../../data/models/employee_model.dart';
 
 class AttendanceDetailScreen extends StatelessWidget {
   final Employee employee;
 
   const AttendanceDetailScreen({super.key, required this.employee});
-
-  String _formatDateTime(String isoString) {
-    final dt = DateTime.parse(isoString);
-    final date =
-        '${dt.day.toString().padLeft(2, '0')}/'
-        '${dt.month.toString().padLeft(2, '0')}/${dt.year}';
-    final time =
-        '${dt.hour.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')}';
-    return '$date  •  $time';
-  }
 
   Widget _infoRow(IconData icon, String label, String value) {
     return Padding(
@@ -129,7 +120,7 @@ class AttendanceDetailScreen extends StatelessWidget {
                     _infoRow(
                       Icons.access_time,
                       'Attendance Time',
-                      _formatDateTime(employee.attendanceTime),
+                      DateTimeFormatter.format(employee.attendanceTime),
                     ),
                     if (employee.id != null) ...[
                       const Divider(height: 1),

@@ -1,6 +1,6 @@
-import 'package:employee_attendance_app/create_employee.dart';
-import 'package:employee_attendance_app/login.dart';
 import 'package:flutter/material.dart';
+
+import '../../../core/routes/app_routes.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -19,15 +19,8 @@ class HomeScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: () {
-                    // Navigate to Login screen
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const LoginScreen(),
-                      ),
-                    );
-                  },
+                  onPressed: () =>
+                      Navigator.pushNamed(context, AppRoutes.login),
                   child: const Text('Login', style: TextStyle(fontSize: 16)),
                 ),
               ),
@@ -36,15 +29,8 @@ class HomeScreen extends StatelessWidget {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: () {
-                    // Navigate to Create Attendance screen
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const CreateAttendanceScreen(),
-                      ),
-                    );
-                  },
+                  onPressed: () =>
+                      Navigator.pushNamed(context, AppRoutes.createAttendance),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                   ),

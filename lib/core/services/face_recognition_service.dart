@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
+
+import '../../data/models/face_analysis_model.dart';
 import 'inspireface_bridge.dart';
 
 class FaceRecognitionService {
@@ -27,9 +29,7 @@ class FaceRecognitionService {
   Future<FaceAnalysis> getFaceAnalysis(File imageFile) async {
     final bytes = await imageFile.readAsBytes();
     var original = img.decodeImage(bytes);
-    if (original == null) {
-      return FaceAnalysis(faceCount: 0, embedding: null, livenessConfidence: null);
-    }
+    if (original == null) return const FaceAnalysis.empty();
     // decodeImage does not bake EXIF rotation into the pixel buffer, and
     // InspireFace expects an already-upright image — without this, capture
     // from front cameras that write rotated JPEGs would be misread.

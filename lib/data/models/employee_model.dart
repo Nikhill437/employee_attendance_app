@@ -23,6 +23,26 @@ class Employee {
     required this.faceEmbeddings,
   });
 
+  Employee copyWith({
+    int? id,
+    String? name,
+    String? number,
+    String? employeeId,
+    String? attendanceTime,
+    bool? faceVerified,
+    List<List<double>>? faceEmbeddings,
+  }) {
+    return Employee(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      number: number ?? this.number,
+      employeeId: employeeId ?? this.employeeId,
+      attendanceTime: attendanceTime ?? this.attendanceTime,
+      faceVerified: faceVerified ?? this.faceVerified,
+      faceEmbeddings: faceEmbeddings ?? this.faceEmbeddings,
+    );
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'id': id,
