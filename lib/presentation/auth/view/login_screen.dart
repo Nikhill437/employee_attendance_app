@@ -1,152 +1,111 @@
-import 'package:employee_attendance_app/core/utils/background.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/app_routes.dart';
+import '../../common/widgets/common_widgets.dart';
+import '../viewmodel/supervisor_login_viewmodel.dart';
 
-class LoginScreen extends StatelessWidget {
+/// Supervisor login, checked against the single fixed supervisor account.
+class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
-  /// There is no password-reset flow yet, so this points the user at the one
-  /// route that does work today rather than silently doing nothing.
-  void _onForgotPassword(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Contact your supervisor to reset your password'),
-      ),
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final SupervisorLoginViewModel _viewModel = SupervisorLoginViewModel();
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _viewModel.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final success = await _viewModel.login(
+      username: _usernameController.text.trim(),
+      password: _passwordController.text,
     );
+    if (!mounted) return;
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_viewModel.errorMessage!)),
+      );
+      _viewModel.consumeError();
+      return;
+    }
+
+    Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
   }
 
   @override
   Widget build(BuildContext context) {
-    return BackgroundScreen(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Stack(
-          children: [
-            // Decorative layers go first so they sit *behind* the controls,
-            // and ignore pointers so they can never swallow a tap.
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Image.asset(
-                  'assets/bg/bg.png',
-                  fit: BoxFit.fitHeight,
-                  opacity: const AlwaysStoppedAnimation(0.2),
-                ),
-              ),
-            ),
-            Positioned(
-              right: 30,
-              left: 30,
-              bottom: 80,
-              top: 5,
-              child: IgnorePointer(
-                child: Image.asset(
-                  'assets/logo/logo.png',
-                  width: double.infinity,
-                  height: double.infinity,
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-            Positioned(
-              right: 0,
-              left: 0,
-              bottom: 15,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 14.0, right: 14.0),
-                child: Column(
-                  children: [
-                    GestureDetector(
-                      onTap: () => Navigator.pushNamed(
-                        context,
-                        AppRoutes.markAttendance,
-                      ),
-                      child: ListTile(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8.0),
-                          side: BorderSide(color: Colors.white),
-                        ),
-                        leading: Icon(Icons.check_circle, color: Colors.green),
-                        title: Center(child: Text('Mark Attendance')),
-                      ),
-                    ),
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: BackgroundScreen(
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Expanded so the form scrolls within the space left over when
+              // the keyboard opens, instead of overflowing.
+              Expanded(child: _buildForm()),
+              const SizedBox(height: 23),
+              const AppFooterImage(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-                    GestureDetector(
-                      onTap: () => Navigator.pushNamed(
-                        context,
-                        AppRoutes.markAttendance,
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8.0),
-                        ),
-                        width: MediaQuery.of(context).size.width * 0.8,
-                        height: 50,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.login, color: Colors.green),
-                            const Text(
-                              'Login',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    GestureDetector(
-                      onTap: () => Navigator.pushNamed(
-                        context,
-                        AppRoutes.createAttendance,
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.white, width: 2.0),
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(8.0),
-                        ),
-                        width: MediaQuery.of(context).size.width * 0.8,
-                        height: 50,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Text(
-                              'Create Attendance',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () => _onForgotPassword(context),
-                      child: const Text(
-                        'Forget Password?',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.white,
-                          decoration: TextDecoration.underline,
-                          decorationColor: Colors.white,
-                        ),
-                      ),
-                    ),
-                    Text("v1.0.0", style: TextStyle(color: Colors.white)),
-                  ],
-                ),
-              ),
+  Widget _buildForm() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.08),
+            const BrandHeader(
+              logoWidth: 320,
+              logoHeight: 220,
+              showTagline: false,
             ),
+            const SizedBox(height: 10),
+            AppTextField(
+              label: 'Username or Email',
+              hint: 'Enter your username',
+              icon: Icons.person_outline,
+              controller: _usernameController,
+              validator: _validateRequired,
+            ),
+            const SizedBox(height: 18),
+            AppTextField(
+              label: 'Password',
+              hint: 'Enter your password',
+              icon: Icons.password,
+              controller: _passwordController,
+              obscureText: true,
+              validator: _validateRequired,
+              onSubmitted: (_) => _login(),
+            ),
+            const SizedBox(height: 28),
+            AppPrimaryButton(label: 'Login', onPressed: _login),
           ],
         ),
       ),
     );
   }
+
+  String? _validateRequired(String? value) =>
+      (value == null || value.isEmpty) ? 'Required' : null;
 }

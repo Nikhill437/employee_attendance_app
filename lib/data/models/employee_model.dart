@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'worker_model.dart';
+
 class Employee {
   final int? id;
   final String name;
@@ -13,6 +15,17 @@ class Employee {
   /// capture instead of a single front-on shot.
   final List<List<double>> faceEmbeddings;
 
+  /// ISO-8601 date, or null for records enrolled before this field existed.
+  final String? dateOfBirth;
+
+  final Gender gender;
+  final String? address;
+  final PayType payType;
+
+  /// Free-text department the supervisor typed on the enrollment form, or
+  /// null for records enrolled before this field existed.
+  final String? department;
+
   Employee({
     this.id,
     required this.name,
@@ -21,6 +34,11 @@ class Employee {
     required this.attendanceTime,
     required this.faceVerified,
     required this.faceEmbeddings,
+    this.dateOfBirth,
+    this.gender = Gender.other,
+    this.address,
+    this.payType = PayType.daily,
+    this.department,
   });
 
   Employee copyWith({
@@ -31,6 +49,11 @@ class Employee {
     String? attendanceTime,
     bool? faceVerified,
     List<List<double>>? faceEmbeddings,
+    String? dateOfBirth,
+    Gender? gender,
+    String? address,
+    PayType? payType,
+    String? department,
   }) {
     return Employee(
       id: id ?? this.id,
@@ -40,6 +63,11 @@ class Employee {
       attendanceTime: attendanceTime ?? this.attendanceTime,
       faceVerified: faceVerified ?? this.faceVerified,
       faceEmbeddings: faceEmbeddings ?? this.faceEmbeddings,
+      dateOfBirth: dateOfBirth ?? this.dateOfBirth,
+      gender: gender ?? this.gender,
+      address: address ?? this.address,
+      payType: payType ?? this.payType,
+      department: department ?? this.department,
     );
   }
 
@@ -52,6 +80,11 @@ class Employee {
       'attendanceTime': attendanceTime,
       'faceVerified': faceVerified ? 1 : 0,
       'faceEmbedding': jsonEncode(faceEmbeddings),
+      'dateOfBirth': dateOfBirth,
+      'gender': gender.name,
+      'address': address,
+      'payType': payType.name,
+      'department': department,
     };
   }
 
@@ -68,6 +101,25 @@ class Employee {
                 .map((e) => List<double>.from(e))
                 .toList()
           : [],
+      dateOfBirth: map['dateOfBirth'] as String?,
+      // Records enrolled before these columns existed have null here —
+      // fall back to a neutral default rather than throwing.
+      gender: _enumOrDefault(Gender.values, map['gender'], Gender.other),
+      address: map['address'] as String?,
+      payType: _enumOrDefault(PayType.values, map['payType'], PayType.daily),
+      department: map['department'] as String?,
     );
+  }
+
+  static T _enumOrDefault<T extends Enum>(
+    List<T> values,
+    Object? storedName,
+    T fallback,
+  ) {
+    if (storedName is! String) return fallback;
+    for (final value in values) {
+      if (value.name == storedName) return value;
+    }
+    return fallback;
   }
 }

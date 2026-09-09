@@ -1,3 +1,4 @@
+import '../../core/utils/date_time_formatter.dart';
 import '../datasources/database_helper.dart';
 import '../models/attendance_log_model.dart';
 
@@ -21,5 +22,18 @@ class AttendanceRepository {
       grouped.putIfAbsent(log.employeeId, () => []).add(log);
     }
     return grouped;
+  }
+
+  /// Distinct employees with at least one attendance log on [day].
+  Future<int> countPresentOn(DateTime day) async {
+    final logs = await getAllLogs();
+    final present = <String>{};
+    for (final log in logs) {
+      final loggedAt = DateTime.tryParse(log.loginTime);
+      if (loggedAt != null && DateTimeFormatter.isSameDay(loggedAt, day)) {
+        present.add(log.employeeId);
+      }
+    }
+    return present.length;
   }
 }

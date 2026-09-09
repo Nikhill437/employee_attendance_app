@@ -39,7 +39,7 @@ class _CreateAttendanceScreenState extends State<CreateAttendanceScreen> {
       MaterialPageRoute(
         builder: (context) => const FaceScanScreen(
           mode: FaceScanMode.enroll,
-          title: 'Scan Your Face',
+          title: 'Face Enrollment',
         ),
       ),
     );

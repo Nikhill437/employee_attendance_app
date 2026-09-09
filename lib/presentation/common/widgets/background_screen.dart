@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_colors.dart';
+
 /// Full-screen gradient backdrop shared by the auth screens.
 ///
 /// Deliberately not a [Scaffold] itself — it is meant to sit *inside* one, as
@@ -17,7 +19,7 @@ class BackgroundScreen extends StatelessWidget {
     return DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF114319), Color(0xFF1D6122)],
+          colors: [AppColors.gradientTop, AppColors.gradientBottom],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),

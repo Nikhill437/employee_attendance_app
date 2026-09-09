@@ -20,7 +20,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 4,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance(
@@ -30,7 +30,12 @@ class DatabaseHelper {
             employeeId TEXT NOT NULL,
             attendanceTime TEXT NOT NULL,
             faceVerified INTEGER NOT NULL,
-            faceEmbedding TEXT
+            faceEmbedding TEXT,
+            dateOfBirth TEXT,
+            gender TEXT,
+            address TEXT,
+            payType TEXT,
+            department TEXT
           )
         ''');
         await db.execute('''
@@ -66,6 +71,19 @@ class DatabaseHelper {
           // multi-pose flow.
           await db.execute('DELETE FROM attendance');
         }
+        if (oldVersion < 5) {
+          // The enrollment form now collects these directly; existing rows
+          // get them as null and Employee.fromMap falls back to neutral
+          // defaults for gender/payType rather than treating this as a
+          // breaking change requiring re-enrollment.
+          await db.execute('ALTER TABLE attendance ADD COLUMN dateOfBirth TEXT');
+          await db.execute('ALTER TABLE attendance ADD COLUMN gender TEXT');
+          await db.execute('ALTER TABLE attendance ADD COLUMN address TEXT');
+          await db.execute('ALTER TABLE attendance ADD COLUMN payType TEXT');
+        }
+        if (oldVersion < 6) {
+          await db.execute('ALTER TABLE attendance ADD COLUMN department TEXT');
+        }
       },
     );
   }
@@ -83,11 +101,17 @@ class DatabaseHelper {
     return List.generate(maps.length, (i) => Employee.fromMap(maps[i]));
   }
 
+  /// One row per employeeId (their most recent enrollment, if they were ever
+  /// re-enrolled), newest enrollment first — so the worker list reflects the
+  /// order employees were actually added rather than being re-sorted
+  /// alphabetically.
   Future<List<Employee>> getUniqueEmployees() async {
     final db = await database;
-    final maps = await db.rawQuery(
-      'SELECT * FROM attendance GROUP BY employeeId ORDER BY name ASC',
-    );
+    final maps = await db.rawQuery('''
+      SELECT * FROM attendance
+      WHERE id IN (SELECT MAX(id) FROM attendance GROUP BY employeeId)
+      ORDER BY id DESC
+    ''');
     return List.generate(maps.length, (i) => Employee.fromMap(maps[i]));
   }
 

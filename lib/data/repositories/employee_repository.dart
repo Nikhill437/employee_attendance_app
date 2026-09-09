@@ -23,4 +23,11 @@ class EmployeeRepository {
   /// has never been enrolled.
   Future<Employee?> findByEmployeeId(String employeeId) =>
       _dbHelper.getEmployeeByEmployeeId(employeeId);
+
+  /// True if [employeeId] (the National ID) is already enrolled — checked
+  /// before saving a new enrollment so two workers never share one ID.
+  Future<bool> isEmployeeIdTaken(String employeeId) async {
+    final existing = await findByEmployeeId(employeeId);
+    return existing != null;
+  }
 }

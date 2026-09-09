@@ -118,6 +118,28 @@ class FaceScanViewModel extends BaseViewModel {
 
   EnrollPose get currentPose => kEnrollSequence[_enrollStep];
 
+  /// How far the current capture has got, 0..1 — the stable-hold counter as a
+  /// fraction of the frames this pose needs. Drives the progress bar.
+  double get scanProgress {
+    switch (_status) {
+      case ScanStatus.capturing:
+      case ScanStatus.poseCaptured:
+      case ScanStatus.success:
+        return 1;
+      case ScanStatus.initializing:
+      case ScanStatus.noFace:
+      case ScanStatus.multipleFaces:
+      case ScanStatus.notRecognized:
+      case ScanStatus.livenessFailed:
+      case ScanStatus.error:
+        return 0;
+      case ScanStatus.singleFace:
+        return (_stableSingleFaceFrames / _holdFramesRequired).clamp(0.0, 1.0);
+    }
+  }
+
+  int get scanPercent => (scanProgress * 100).round();
+
   String get enrollStepLabel =>
       'Step ${_enrollStep + 1}/${kEnrollSequence.length}: '
       '${kPoseInstruction[currentPose]}';
@@ -231,7 +253,9 @@ class FaceScanViewModel extends BaseViewModel {
     } else {
       _stableSingleFaceFrames = 0;
     }
-    _setStatus(ScanStatus.singleFace);
+    // Force the repaint: the status often stays `singleFace` across frames
+    // while the hold counter — and so the progress bar — keeps moving.
+    _setStatus(ScanStatus.singleFace, force: true);
 
     if (_stableSingleFaceFrames >= _holdFramesRequired) {
       _stableSingleFaceFrames = 0;
