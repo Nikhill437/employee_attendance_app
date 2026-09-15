@@ -28,6 +28,10 @@ class AppFormField extends StatelessWidget {
   /// Hard cap on input length, enforced as the user types.
   final int? maxLength;
 
+  /// Marks the label with a red "*" — purely visual, the validator is still
+  /// what actually enforces the field.
+  final bool isRequired;
+
   const AppFormField({
     super.key,
     required this.label,
@@ -41,6 +45,7 @@ class AppFormField extends StatelessWidget {
     this.onTap,
     this.inputFormatters,
     this.maxLength,
+    this.isRequired = false,
   });
 
   @override
@@ -48,12 +53,24 @@ class AppFormField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 13.5,
-            fontWeight: FontWeight.w600,
-            color: AppColors.slate,
+        Text.rich(
+          TextSpan(
+            text: label,
+            style: const TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.slate,
+            ),
+            children: [
+              if (isRequired)
+                const TextSpan(
+                  text: ' *',
+                  style: TextStyle(
+                    color: AppColors.danger,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
           ),
         ),
         const SizedBox(height: 8),

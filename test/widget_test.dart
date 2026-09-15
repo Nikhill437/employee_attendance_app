@@ -257,17 +257,24 @@ void main() {
       for (final step in ['Details', 'Face Capture', 'Complete']) {
         expect(find.text(step), findsOneWidget);
       }
+      for (final label in ['Date of Birth', 'Gender', 'Department', 'Enrollment Type']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      // The four required fields render their label plus a red "*" as one
+      // Text.rich span, so a plain find.text() (which only matches Text.data)
+      // won't see them — match the exact rendered string via findRichText
+      // instead (a "contains" match would also pick up hint text like
+      // "Enter National ID Card Number").
       for (final label in [
         'Full Name',
-        'Date of Birth',
-        'Gender',
         'National ID',
         'Phone Number',
-        'Department',
         'Address',
-        'Enrollment Type',
       ]) {
-        expect(find.text(label), findsOneWidget);
+        expect(
+          find.text('$label *', findRichText: true),
+          findsOneWidget,
+        );
       }
       expect(
         find.widgetWithText(ElevatedButton, 'Proceed to Face Capture'),
@@ -495,7 +502,7 @@ void main() {
         AppSection.dashboard.index,
       );
 
-      await tester.tap(find.text('Employees'));
+      await tester.tap(find.text('Workers'));
       await tester.pumpAndSettle();
 
       expect(find.text('Worker List'), findsOneWidget);
@@ -505,7 +512,7 @@ void main() {
       );
 
       // Switching back must re-highlight Dashboard rather than leaving
-      // Employees selected — the bug this test guards against.
+      // Workers selected — the bug this test guards against.
       await tester.tap(find.text('Dashboard'));
       await tester.pumpAndSettle();
 

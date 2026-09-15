@@ -198,6 +198,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
           children: [
             AppFormField(
               label: 'Full Name',
+              isRequired: true,
               hint: 'e.g. Jhon Doe',
               icon: Icons.person_outline,
               controller: _nameController,
@@ -228,6 +229,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             const SizedBox(height: 18),
             AppFormField(
               label: 'National ID',
+              isRequired: true,
               hint: 'Enter National ID Card Number',
               icon: Icons.badge_outlined,
               controller: _nationalIdController,
@@ -236,7 +238,8 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             const SizedBox(height: 18),
             AppFormField(
               label: 'Phone Number',
-              hint: 'e.g. +91 98765 43210',
+              isRequired: true,
+              hint: 'e.g. 98765 43210',
               icon: Icons.phone_outlined,
               controller: _phoneController,
               keyboardType: TextInputType.phone,
@@ -253,6 +256,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             const SizedBox(height: 18),
             AppFormField(
               label: 'Address',
+              isRequired: true,
               hint: 'Enter permanent residential address...',
               controller: _addressController,
               minLines: 3,

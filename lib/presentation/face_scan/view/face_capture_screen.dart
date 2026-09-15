@@ -107,27 +107,27 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen>
         _buildGuidancePanel(),
         const SizedBox(height: 18),
         _buildQuickTips(),
-        const SizedBox(height: 24),
-        _buildCaptureButton(),
-        const SizedBox(height: 10),
-        Center(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _startCapture,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-              child: Text(
-                'Retake Photo',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.ink,
-                  decoration: TextDecoration.underline,
-                ),
-              ),
-            ),
-          ),
-        ),
+        // const SizedBox(height: 24),
+        // _buildCaptureButton(),
+        // const SizedBox(height: 10),
+        // Center(
+        //   child: GestureDetector(
+        //     behavior: HitTestBehavior.opaque,
+        //     onTap: _startCapture,
+        //     child: const Padding(
+        //       padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        //       child: Text(
+        //         'Retake Photo',
+        //         style: TextStyle(
+        //           fontSize: 15,
+        //           fontWeight: FontWeight.w600,
+        //           color: AppColors.ink,
+        //           decoration: TextDecoration.underline,
+        //         ),
+        //       ),
+        //     ),
+        //   ),
+        // ),
       ],
     );
   }
@@ -138,32 +138,44 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen>
     final controller = _viewModel?.controller;
     final isReady = _viewModel?.isCameraReady ?? false;
 
-    return AppCard(
-      padding: const EdgeInsets.symmetric(vertical: 24),
-      child: Center(
-        child: SizedBox(
-          width: _frameSize,
-          height: _frameSize,
-          child: CustomPaint(
-            painter: const DashedCirclePainter(
-              color: AppColors.deepGreen,
-              strokeWidth: 2.5,
-              dashCount: 60,
-              dashFraction: 0.5,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: ClipOval(
-                child: isReady
-                    ? _buildPreview(controller!)
-                    : const Icon(
-                        Icons.person_outline,
-                        size: 150,
-                        color: Color(0xFFE0E4E0),
-                      ),
+    return GestureDetector(
+      onTap: () => _startCapture(),
+      child: AppCard(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Column(
+          children: [
+            Center(
+              child: SizedBox(
+                width: _frameSize,
+                height: _frameSize,
+                child: CustomPaint(
+                  painter: const DashedCirclePainter(
+                    color: AppColors.deepGreen,
+                    strokeWidth: 2.5,
+                    dashCount: 60,
+                    dashFraction: 0.5,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: ClipOval(
+                      child: isReady
+                          ? _buildPreview(controller!)
+                          : const Icon(
+                              Icons.person_outline,
+                              size: 150,
+                              color: Color(0xFFE0E4E0),
+                            ),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
+            SizedBox(height: 16),
+            Text(
+              "Capture Face",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+          ],
         ),
       ),
     );
@@ -246,28 +258,6 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen>
             ),
           ),
       ],
-    );
-  }
-
-  Widget _buildCaptureButton() {
-    return Center(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _startCapture,
-        child: Container(
-          width: 66,
-          height: 66,
-          decoration: const BoxDecoration(
-            color: AppColors.lime,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.photo_camera_outlined,
-            size: 28,
-            color: AppColors.onLime,
-          ),
-        ),
-      ),
     );
   }
 }
