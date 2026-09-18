@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/date_time_formatter.dart';
+import '../../../core/utils/input_formatters.dart';
 import '../../../data/models/enrollment_draft_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../common/widgets/common_widgets.dart';
@@ -233,6 +234,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               hint: 'Enter National ID Card Number',
               icon: Icons.badge_outlined,
               controller: _nationalIdController,
+              inputFormatters: AppInputFormatters.alphanumericUppercase,
               validator: (v) => _requireText(v, 'Enter the National ID'),
             ),
             const SizedBox(height: 18),
@@ -248,6 +250,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             const SizedBox(height: 18),
             AppFormField(
               label: 'Department',
+              isRequired: true,
               hint: 'e.g. Site Operations',
               icon: Icons.apartment_outlined,
               controller: _departmentController,

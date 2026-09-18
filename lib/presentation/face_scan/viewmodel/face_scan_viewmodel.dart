@@ -36,6 +36,8 @@ enum ScanStatus {
   initializing,
   noFace,
   multipleFaces,
+  faceObstructed,
+  eyesClosed,
   singleFace,
   capturing,
   poseCaptured,
@@ -64,6 +66,12 @@ class FaceScanViewModel extends BaseViewModel {
   // (pitch) carries no such caveat, so up/down poses are angle-verified.
   static const _turnHoldFramesRequired = 14;
   static const double _pitchThreshold = 10.0;
+
+  // ML Kit's classification confidence that each eye is open; requires
+  // enableClassification on the detector (see LiveFaceDetector). Both eyes
+  // must clear this for a frame to count towards the capture hold, so a
+  // blink can't sneak a closed-eyes shot into enrollment or attendance.
+  static const double _eyeOpenThreshold = 0.5;
 
   final FaceScanMode mode;
   final FaceMatchCallback? onMatch;
@@ -129,6 +137,8 @@ class FaceScanViewModel extends BaseViewModel {
       case ScanStatus.initializing:
       case ScanStatus.noFace:
       case ScanStatus.multipleFaces:
+      case ScanStatus.faceObstructed:
+      case ScanStatus.eyesClosed:
       case ScanStatus.notRecognized:
       case ScanStatus.livenessFailed:
       case ScanStatus.error:
@@ -226,6 +236,34 @@ class FaceScanViewModel extends BaseViewModel {
     }
   }
 
+  /// Core landmarks that must all resolve for the face to count as clearly
+  /// visible. A hand, mask, cloth, or other covering typically makes ML Kit
+  /// fail to resolve one or more of these, which is the signal used to block
+  /// capture — required for every pose in both enroll and attendance modes.
+  static const _requiredLandmarks = [
+    FaceLandmarkType.noseBase,
+    FaceLandmarkType.leftEye,
+    FaceLandmarkType.rightEye,
+    FaceLandmarkType.leftMouth,
+    FaceLandmarkType.rightMouth,
+  ];
+
+  bool _faceFullyVisible(Face face) {
+    return _requiredLandmarks.every(
+      (type) => face.landmarks[type] != null,
+    );
+  }
+
+  /// Both eyes must be open — required for every pose in both enroll and
+  /// attendance modes. Missing probabilities (classification unavailable)
+  /// fail closed, same as the liveness check.
+  bool _eyesOpenSatisfied(Face face) {
+    final left = face.leftEyeOpenProbability;
+    final right = face.rightEyeOpenProbability;
+    if (left == null || right == null) return false;
+    return left >= _eyeOpenThreshold && right >= _eyeOpenThreshold;
+  }
+
   Future<void> _processFrame(CameraImage image) async {
     final inputImage = _liveDetector.inputImageFromCameraImage(
       image: image,
@@ -248,7 +286,20 @@ class FaceScanViewModel extends BaseViewModel {
       return;
     }
 
-    if (_poseAngleSatisfied(faces.first)) {
+    final face = faces.first;
+    if (!_faceFullyVisible(face)) {
+      _stableSingleFaceFrames = 0;
+      _setStatus(ScanStatus.faceObstructed, force: true);
+      return;
+    }
+
+    if (!_eyesOpenSatisfied(face)) {
+      _stableSingleFaceFrames = 0;
+      _setStatus(ScanStatus.eyesClosed, force: true);
+      return;
+    }
+
+    if (_poseAngleSatisfied(face)) {
       _stableSingleFaceFrames++;
     } else {
       _stableSingleFaceFrames = 0;
@@ -384,6 +435,10 @@ class FaceScanViewModel extends BaseViewModel {
             : 'Please position your face inside the frame';
       case ScanStatus.multipleFaces:
         return 'Only one face should be visible';
+      case ScanStatus.faceObstructed:
+        return 'Face partially covered — remove any obstruction and try again';
+      case ScanStatus.eyesClosed:
+        return 'Please open your eyes';
       case ScanStatus.singleFace:
         return mode == FaceScanMode.enroll
             ? enrollStepLabel
@@ -414,6 +469,8 @@ class FaceScanViewModel extends BaseViewModel {
       case ScanStatus.livenessFailed:
       case ScanStatus.error:
       case ScanStatus.multipleFaces:
+      case ScanStatus.faceObstructed:
+      case ScanStatus.eyesClosed:
         return Colors.redAccent;
       case ScanStatus.singleFace:
         return Colors.lightGreenAccent;

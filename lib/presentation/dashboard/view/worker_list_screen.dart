@@ -57,6 +57,47 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     await _viewModel.load();
   }
 
+  /// Confirms before removing a worker — deletion also clears their
+  /// attendance history, so it isn't reversible.
+  Future<bool> _confirmDeleteWorker(Worker worker) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete worker?'),
+        content: Text(
+          'This removes ${worker.name} and their attendance history. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  Future<void> _deleteWorker(Worker worker) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _viewModel.deleteWorker(worker.employeeId);
+      messenger.showSnackBar(
+        SnackBar(content: Text('${worker.name} removed')),
+      );
+    } catch (e) {
+      await _viewModel.load();
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not delete ${worker.name}: $e')),
+      );
+    }
+  }
+
   Widget _buildHeader() {
     return AppScreenHeader(
       title: 'Worker List',
@@ -154,11 +195,30 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
               ),
             ),
           for (final worker in _viewModel.workers) ...[
-            _WorkerCard(worker: worker),
+            Dismissible(
+              key: ValueKey(worker.employeeId),
+              direction: DismissDirection.endToStart,
+              confirmDismiss: (_) => _confirmDeleteWorker(worker),
+              onDismissed: (_) => _deleteWorker(worker),
+              background: _buildDeleteBackground(),
+              child: _WorkerCard(worker: worker),
+            ),
             const SizedBox(height: 12),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildDeleteBackground() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      alignment: Alignment.centerRight,
+      decoration: BoxDecoration(
+        color: AppColors.danger,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Icon(Icons.delete_outline, color: Colors.white),
     );
   }
 }

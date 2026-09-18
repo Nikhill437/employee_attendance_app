@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/routes/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/input_formatters.dart';
 import '../../../data/models/auth/auth_user_model.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../face_scan/view/face_scan_screen.dart';
@@ -85,7 +86,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   /// no login step of their own, so there is nothing to pop back to that
   /// still makes sense once attendance is marked.
   void _returnToLogin() {
-    Navigator.pushReplacementNamed(context, AppRoutes.login);
+    Navigator.pushReplacementNamed(context, AppRoutes.splash);
   }
 
   @override
@@ -190,6 +191,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
             controller: _employeeIdController,
             keyboardType: TextInputType.visiblePassword,
             textInputAction: TextInputAction.done,
+            inputFormatters: AppInputFormatters.alphanumericUppercase,
             onSubmitted: (_) => _startScan(),
             validator: (v) => (v == null || v.trim().isEmpty)
                 ? 'Enter your National ID'

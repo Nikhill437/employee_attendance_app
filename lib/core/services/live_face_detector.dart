@@ -8,7 +8,15 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 /// lightweight (landmark-free) face detection for real-time feedback.
 class LiveFaceDetector {
   final FaceDetector _detector = FaceDetector(
-    options: FaceDetectorOptions(performanceMode: FaceDetectorMode.fast),
+    options: FaceDetectorOptions(
+      performanceMode: FaceDetectorMode.fast,
+      // Needed for Face.leftEyeOpenProbability / rightEyeOpenProbability,
+      // so capture can be gated on eyes being open.
+      enableClassification: true,
+      // Needed for Face.landmarks, used as an obstruction signal: ML Kit
+      // fails to resolve a landmark under a hand, mask, or other covering.
+      enableLandmarks: true,
+    ),
   );
 
   static const Map<DeviceOrientation, int> _orientations = {

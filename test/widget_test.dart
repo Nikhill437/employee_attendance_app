@@ -257,10 +257,10 @@ void main() {
       for (final step in ['Details', 'Face Capture', 'Complete']) {
         expect(find.text(step), findsOneWidget);
       }
-      for (final label in ['Date of Birth', 'Gender', 'Department', 'Enrollment Type']) {
+      for (final label in ['Date of Birth', 'Gender', 'Enrollment Type']) {
         expect(find.text(label), findsOneWidget);
       }
-      // The four required fields render their label plus a red "*" as one
+      // The five required fields render their label plus a red "*" as one
       // Text.rich span, so a plain find.text() (which only matches Text.data)
       // won't see them — match the exact rendered string via findRichText
       // instead (a "contains" match would also pick up hint text like
@@ -269,6 +269,7 @@ void main() {
         'Full Name',
         'National ID',
         'Phone Number',
+        'Department',
         'Address',
       ]) {
         expect(
@@ -300,6 +301,7 @@ void main() {
     // Text field order on the form: Full Name, Date of Birth (read-only),
     // National ID, Phone Number, Department, Address.
     const fullNameField = 0;
+    const nationalIdField = 2;
     const phoneField = 3;
 
     testWidgets('full name field strips digits and symbols as they are typed', (
@@ -318,6 +320,24 @@ void main() {
       );
       expect(field.controller?.text, 'Rajesh Kumar');
     });
+
+    testWidgets(
+      'National ID field uppercases letters and strips non-alphanumerics',
+      (tester) async {
+        await pumpForm(tester);
+
+        await tester.enterText(
+          find.byType(TextFormField).at(nationalIdField),
+          'ab-12 cd!34',
+        );
+        await tester.pump();
+
+        final field = tester.widget<TextFormField>(
+          find.byType(TextFormField).at(nationalIdField),
+        );
+        expect(field.controller?.text, 'AB12CD34');
+      },
+    );
 
     testWidgets('rejects a malformed phone number', (tester) async {
       await pumpForm(tester);

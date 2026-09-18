@@ -54,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // signed-in session.
     Navigator.pushNamedAndRemoveUntil(
       context,
-      AppRoutes.login,
+      AppRoutes.splash,
       (route) => false,
     );
   }
@@ -74,9 +74,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   AppCard(
                     padding: EdgeInsets.zero,
-                    // A ListTile paints its ink splash on the nearest
-                    // Material ancestor — without this it would render (and
-                    // clip) against AppCard's own decorated background.
                     child: Material(
                       color: Colors.transparent,
                       borderRadius: BorderRadius.circular(12),

@@ -142,4 +142,24 @@ class DatabaseHelper {
     final maps = await db.query('attendance_logs', orderBy: 'loginTime DESC');
     return List.generate(maps.length, (i) => AttendanceLog.fromMap(maps[i]));
   }
+
+  /// Removes every enrollment record and attendance log for [employeeId] —
+  /// a full removal (not a soft-delete), so a deleted worker also drops out
+  /// of attendance history and summary counts rather than leaving orphaned
+  /// logs behind.
+  Future<void> deleteEmployee(String employeeId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'attendance',
+        where: 'employeeId = ?',
+        whereArgs: [employeeId],
+      );
+      await txn.delete(
+        'attendance_logs',
+        where: 'employeeId = ?',
+        whereArgs: [employeeId],
+      );
+    });
+  }
 }

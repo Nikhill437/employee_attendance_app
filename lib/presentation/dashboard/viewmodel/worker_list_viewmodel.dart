@@ -54,6 +54,13 @@ class WorkerListViewModel extends BaseViewModel {
     safeNotify();
   }
 
+  /// Deletes [employeeId] and refreshes the roster. Callers are expected to
+  /// confirm with the user first — this performs the deletion outright.
+  Future<void> deleteWorker(String employeeId) async {
+    await _employees.delete(employeeId);
+    await load();
+  }
+
   Future<void> load() async {
     _isLoading = true;
     safeNotify();

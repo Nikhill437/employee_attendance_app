@@ -30,4 +30,8 @@ class EmployeeRepository {
     final existing = await findByEmployeeId(employeeId);
     return existing != null;
   }
+
+  /// Removes [employeeId]'s enrollment record(s) and attendance history.
+  Future<void> delete(String employeeId) =>
+      _dbHelper.deleteEmployee(employeeId);
 }

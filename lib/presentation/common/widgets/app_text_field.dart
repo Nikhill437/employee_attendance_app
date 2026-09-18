@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// A labelled, white-filled form field as used on the green screens.
 class AppTextField extends StatelessWidget {
@@ -12,6 +13,9 @@ class AppTextField extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final bool obscureText;
 
+  /// Restricts what can be typed — e.g. alphanumeric-only for an ID field.
+  final List<TextInputFormatter>? inputFormatters;
+
   const AppTextField({
     super.key,
     required this.label,
@@ -23,6 +27,7 @@ class AppTextField extends StatelessWidget {
     this.textInputAction = TextInputAction.next,
     this.onSubmitted,
     this.obscureText = false,
+    this.inputFormatters,
   });
 
   @override
@@ -42,6 +47,7 @@ class AppTextField extends StatelessWidget {
           textInputAction: textInputAction,
           onFieldSubmitted: onSubmitted,
           obscureText: obscureText,
+          inputFormatters: inputFormatters,
           autocorrect: false,
           enableSuggestions: false,
           style: const TextStyle(color: Colors.black),
