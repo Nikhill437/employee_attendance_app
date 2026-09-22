@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../face_scan/view/face_scan_screen.dart';
 import '../viewmodel/create_employee_viewmodel.dart';
@@ -99,6 +100,7 @@ class _CreateAttendanceScreenState extends State<CreateAttendanceScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _numberController,
+
                 keyboardType: TextInputType.phone,
                 decoration: const InputDecoration(
                   labelText: 'Phone Number',
@@ -112,6 +114,7 @@ class _CreateAttendanceScreenState extends State<CreateAttendanceScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _employeeIdController,
+
                 decoration: const InputDecoration(
                   labelText: 'Employee ID',
                   border: OutlineInputBorder(),

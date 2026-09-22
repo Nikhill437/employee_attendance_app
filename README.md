@@ -45,6 +45,12 @@ Android requires the JitPack repository (already configured in `android/build.gr
 
 Upgrading to this version wipes previously enrolled employees on-device (`DatabaseHelper` bumps the DB schema version because the embedding storage format changed from one embedding per employee to a list of five) — re-enroll after updating.
 
+Local storage now mirrors the backend's schema (`workers`, `worker_tasks`, `departments`, `tasks` tables in `DatabaseHelper`) instead of the old flat `attendance` table — another schema-version bump, so upgrading past this version wipes previously enrolled workers again (re-enroll after updating). Notes for whoever wires up real backend sync:
+- `workers.created_by`/`departments.created_by`/`.modified_by` reference an admin-accounts table (`ab_admin` on the backend) that doesn't exist locally — there's no admin/supervisor-accounts table yet, just a single hardcoded credential (`SupervisorAuthRepository`). Local inserts use a placeholder `created_by` (see `DatabaseHelper._placeholderCreatedBy`) until real accounts exist.
+- The backend schema's approval workflow (`workers.status`: pending/approved/rejected, `approved_by`, `approved_at`) has no review screen in the app yet, so every local enrollment is written straight to `status = 'approved'`.
+- `departments`/`tasks` are populated/created lazily: enrolling a worker looks up (or creates) a `departments` row for whatever free-text department name the supervisor typed, matched case-insensitively. `tasks`/`worker_tasks` exist as schema only — nothing in the app currently assigns tasks to workers.
+- SQLite doesn't have MySQL's `ENUM`, so `gender`/`status` etc. are plain `TEXT` columns without a `CHECK` constraint — keep the values in sync with the backend's enum literals by convention, not by DB enforcement.
+
 ## Known limitations / next steps
 
 - `matchThreshold` (0.65) and `matchMargin` (0.07) in `lib/face_recognition_service.dart` are starting defaults — validate and tune them against real enrollment photos, particularly across the demographics the app will actually be used with, before trusting them in the field.

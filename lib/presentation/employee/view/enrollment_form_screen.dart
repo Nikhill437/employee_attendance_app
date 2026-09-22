@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../core/utils/input_formatters.dart';
+import '../../../data/models/department_model.dart';
 import '../../../data/models/enrollment_draft_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../common/widgets/common_widgets.dart';
@@ -16,7 +20,12 @@ import 'enrollment_complete_screen.dart';
 /// Step 1 of enrollment: the worker's personal details, before the face
 /// capture on step 2.
 class EnrollmentFormScreen extends StatefulWidget {
-  const EnrollmentFormScreen({super.key});
+  /// Overridable so tests can inject a fake (avoids the real
+  /// DatabaseHelper/ApiClient, which need plugins the test environment
+  /// doesn't provide).
+  final EnrollmentFormViewModel? formViewModel;
+
+  const EnrollmentFormScreen({super.key, this.formViewModel});
 
   @override
   State<EnrollmentFormScreen> createState() => _EnrollmentFormScreenState();
@@ -33,10 +42,16 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
   final _nationalIdController = TextEditingController();
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
-  final _departmentController = TextEditingController();
 
-  final EnrollmentFormViewModel _formViewModel = EnrollmentFormViewModel();
+  late final EnrollmentFormViewModel _formViewModel;
   final CreateEmployeeViewModel _employeeViewModel = CreateEmployeeViewModel();
+
+  @override
+  void initState() {
+    super.initState();
+    _formViewModel = widget.formViewModel ?? EnrollmentFormViewModel();
+    _formViewModel.loadDepartments();
+  }
 
   @override
   void dispose() {
@@ -45,7 +60,6 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     _nationalIdController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
-    _departmentController.dispose();
     _formViewModel.dispose();
     _employeeViewModel.dispose();
     super.dispose();
@@ -72,10 +86,28 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     _dobController.text = DateTimeFormatter.dayLabel(selected);
   }
 
+  /// Opens the camera, then hands the shot to the view model to copy into
+  /// permanent storage (see EnrollmentFormViewModel.captureNationalIdImage)
+  /// — also used to retake, since capturing again just overwrites the
+  /// preview.
+  Future<void> _captureNationalIdImage() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+    await _formViewModel.captureNationalIdImage(File(picked.path));
+  }
+
   Future<void> _proceedToFaceCapture() async {
     if (!_formKey.currentState!.validate()) return;
     if (_formViewModel.dateOfBirth == null) {
       _showSnackBar('Select the date of birth');
+      return;
+    }
+    if (_formViewModel.nationalIdImage == null) {
+      _showSnackBar('Capture the National ID attachment');
       return;
     }
 
@@ -94,7 +126,6 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       nationalId: nationalId,
       phoneNumber: _phoneController.text.trim(),
       address: _addressController.text.trim(),
-      department: _departmentController.text.trim(),
     );
 
     final embeddings = await Navigator.push<List<List<double>>>(
@@ -121,7 +152,9 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       gender: draft.gender,
       address: draft.address,
       payType: draft.enrollmentType,
-      department: draft.department,
+      department: draft.departmentName,
+      departmentId: draft.departmentId,
+      nationalIdImage: draft.nationalIdImagePath,
     );
     if (employee == null || !mounted) return;
 
@@ -238,6 +271,14 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               validator: (v) => _requireText(v, 'Enter the National ID'),
             ),
             const SizedBox(height: 18),
+            AppImageCaptureField(
+              label: 'National ID Attachment',
+              isRequired: true,
+              hint: 'Tap to capture National ID',
+              image: _formViewModel.nationalIdImage,
+              onCapture: _captureNationalIdImage,
+            ),
+            const SizedBox(height: 18),
             AppFormField(
               label: 'Phone Number',
               isRequired: true,
@@ -245,16 +286,26 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               icon: Icons.phone_outlined,
               controller: _phoneController,
               keyboardType: TextInputType.phone,
+              inputFormatters: [
+                LengthLimitingTextInputFormatter(10),
+                FilteringTextInputFormatter.digitsOnly,
+              ],
               validator: _validatePhoneNumber,
             ),
             const SizedBox(height: 18),
-            AppFormField(
+            AppDropdownField<Department>(
               label: 'Department',
               isRequired: true,
-              hint: 'e.g. Site Operations',
+              hint: _formViewModel.isLoadingDepartments
+                  ? 'Loading departments...'
+                  : 'Select department',
               icon: Icons.apartment_outlined,
-              controller: _departmentController,
-              validator: (v) => _requireText(v, 'Enter the department'),
+              value: _formViewModel.department,
+              items: _formViewModel.departments,
+              labelBuilder: (department) => department.name,
+              onChanged: _formViewModel.selectDepartment,
+              validator: (department) =>
+                  department == null ? 'Select the department' : null,
             ),
             const SizedBox(height: 18),
             AppFormField(

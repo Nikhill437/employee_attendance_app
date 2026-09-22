@@ -55,9 +55,12 @@ enum VerificationStatus {
 /// One row of the worker list.
 ///
 /// [payType] and [department] come from the employee's stored enrollment
-/// record. [role], [workStatus] and [verification] describe a job-tracking
-/// workflow the database does not model yet, so they fall back to neutral
-/// defaults rather than being invented per worker.
+/// record. [verification] is derived from [isSynced] (pending once synced,
+/// not verified until then — there's no backend approval status in the
+/// sync response, just the fact that sync succeeded). [role] and
+/// [workStatus] describe a job-tracking workflow the database does not
+/// model yet, so they fall back to neutral defaults rather than being
+/// invented per worker.
 class Worker {
   final String name;
   final String employeeId;
@@ -75,6 +78,10 @@ class Worker {
   final WorkStatus workStatus;
   final VerificationStatus verification;
 
+  /// Whether `POST attendance/sync-worker` has succeeded for this worker —
+  /// drives the "Synced" pill on the worker card.
+  final bool isSynced;
+
   const Worker({
     required this.name,
     required this.employeeId,
@@ -85,6 +92,7 @@ class Worker {
     this.checkInAt,
     this.workStatus = WorkStatus.notStarted,
     this.verification = VerificationStatus.notVerified,
+    this.isSynced = false,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;

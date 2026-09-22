@@ -39,6 +39,8 @@ class CreateEmployeeViewModel extends BaseViewModel {
     String? address,
     PayType payType = PayType.daily,
     String? department,
+    int? departmentId,
+    String? nationalIdImage,
   }) async {
     final embeddings = _faceEmbeddings;
     if (embeddings == null) return null;
@@ -59,6 +61,8 @@ class CreateEmployeeViewModel extends BaseViewModel {
         address: address,
         payType: payType,
         department: department,
+        departmentId: departmentId,
+        nationalIdImage: nationalIdImage,
       ),
     );
 

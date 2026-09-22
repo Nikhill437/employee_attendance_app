@@ -4,26 +4,35 @@ import '../../../data/models/attendance_log_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
+import '../../../data/repositories/worker_sync_repository.dart';
 
 /// Builds today's worker list by pairing every enrolled employee with their
 /// first attendance log of the day.
 class WorkerListViewModel extends BaseViewModel {
   final EmployeeRepository _employees;
   final AttendanceRepository _attendance;
+  final WorkerSyncRepository _sync;
 
   WorkerListViewModel({
     EmployeeRepository? employees,
     AttendanceRepository? attendance,
+    WorkerSyncRepository? sync,
   }) : _employees = employees ?? EmployeeRepository(),
-       _attendance = attendance ?? AttendanceRepository();
+       _attendance = attendance ?? AttendanceRepository(),
+       _sync = sync ?? WorkerSyncRepository();
 
   bool _isLoading = true;
+  final Set<String> _syncingIds = {};
   List<Worker> _workers = const [];
   String _query = '';
   AttendanceStatus? _attendanceFilter;
 
   bool get isLoading => _isLoading;
   AttendanceStatus? get attendanceFilter => _attendanceFilter;
+
+  /// Whether [employeeId]'s worker is mid-sync — drives that card's sync
+  /// button.
+  bool isSyncing(String employeeId) => _syncingIds.contains(employeeId);
 
   /// The list after the current search term and attendance filter.
   List<Worker> get workers {
@@ -61,6 +70,31 @@ class WorkerListViewModel extends BaseViewModel {
     await load();
   }
 
+  /// Pushes [employeeId]'s worker record to the backend. Returns null on
+  /// success, or an error message on failure. Guards against a second tap
+  /// on the same card while its sync is already running.
+  Future<String?> syncWorker(String employeeId) async {
+    if (_syncingIds.contains(employeeId)) return null;
+    _syncingIds.add(employeeId);
+    safeNotify();
+
+    String? error;
+    try {
+      await _sync.syncWorker(employeeId);
+    } catch (e) {
+      error = e.toString();
+    }
+
+    _syncingIds.remove(employeeId);
+    if (error == null) {
+      // Reload so this worker's card picks up the new synced/pending state.
+      await load();
+    } else {
+      safeNotify();
+    }
+    return error;
+  }
+
   Future<void> load() async {
     _isLoading = true;
     safeNotify();
@@ -79,6 +113,13 @@ class WorkerListViewModel extends BaseViewModel {
           attendance: checkIns.containsKey(employee.employeeId)
               ? AttendanceStatus.present
               : AttendanceStatus.absent,
+          isSynced: employee.isSynced,
+          // The sync response doesn't include an approval status, only that
+          // the push succeeded — a synced worker sits at "Pending" until a
+          // real approval feature exists to move it to "Verified".
+          verification: employee.isSynced
+              ? VerificationStatus.pending
+              : VerificationStatus.notVerified,
         ),
     ];
 

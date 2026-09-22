@@ -87,15 +87,31 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       await _viewModel.deleteWorker(worker.employeeId);
-      messenger.showSnackBar(
-        SnackBar(content: Text('${worker.name} removed')),
-      );
+      messenger.showSnackBar(SnackBar(content: Text('${worker.name} removed')));
     } catch (e) {
       await _viewModel.load();
       messenger.showSnackBar(
         SnackBar(content: Text('Could not delete ${worker.name}: $e')),
       );
     }
+  }
+
+  /// Pushes a single worker to the backend — the sync endpoint only takes
+  /// one worker per call, so this runs per-card rather than as a bulk
+  /// "sync everyone" action.
+  Future<void> _syncWorker(Worker worker) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final error = await _viewModel.syncWorker(worker.employeeId);
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? '${worker.name} synced'
+              : 'Could not sync ${worker.name}: $error',
+        ),
+      ),
+    );
   }
 
   Widget _buildHeader() {
@@ -201,7 +217,11 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
               confirmDismiss: (_) => _confirmDeleteWorker(worker),
               onDismissed: (_) => _deleteWorker(worker),
               background: _buildDeleteBackground(),
-              child: _WorkerCard(worker: worker),
+              child: _WorkerCard(
+                worker: worker,
+                isSyncing: _viewModel.isSyncing(worker.employeeId),
+                onSync: () => _syncWorker(worker),
+              ),
             ),
             const SizedBox(height: 12),
           ],
@@ -306,8 +326,14 @@ class _SummaryTile extends StatelessWidget {
 /// One worker: identity on top, work and verification state underneath.
 class _WorkerCard extends StatelessWidget {
   final Worker worker;
+  final bool isSyncing;
+  final VoidCallback onSync;
 
-  const _WorkerCard({required this.worker});
+  const _WorkerCard({
+    required this.worker,
+    required this.isSyncing,
+    required this.onSync,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -402,11 +428,23 @@ class _WorkerCard extends StatelessWidget {
               showDot: worker.workStatus != WorkStatus.completed,
             ),
           ),
-          _StatusText(
-            label: worker.verification.label,
-            color: _verificationColor,
-            showDot: worker.verification != VerificationStatus.verified,
-            alignEnd: true,
+          const SizedBox(width: 8),
+          // Flexible (not Expanded) so the verification label is the one
+          // that ellipsizes if space is tight — the sync pill next to it
+          // stays a fixed, always-fully-visible tap target.
+          Flexible(
+            child: _StatusText(
+              label: worker.verification.label,
+              color: _verificationColor,
+              showDot: worker.verification != VerificationStatus.verified,
+              alignEnd: true,
+            ),
+          ),
+          const SizedBox(width: 10),
+          _SyncIndicator(
+            isSyncing: isSyncing,
+            isSynced: worker.isSynced,
+            onTap: onSync,
           ),
         ],
       ),
@@ -424,6 +462,50 @@ class _WorkerCard extends StatelessWidget {
     VerificationStatus.pending => AppColors.warning,
     VerificationStatus.notVerified => AppColors.muted,
   };
+}
+
+/// Small per-card tap target that pushes that one worker to the backend —
+/// a spinner while the sync is in flight, then a "Synced" pill once it has
+/// (still tappable, to push again). Reuses [_Pill]'s look for visual
+/// consistency with the attendance pill above it.
+class _SyncIndicator extends StatelessWidget {
+  final bool isSyncing;
+  final bool isSynced;
+  final VoidCallback onTap;
+
+  const _SyncIndicator({
+    required this.isSyncing,
+    required this.isSynced,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isSyncing) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 4),
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return Tooltip(
+      message: isSynced ? 'Synced — tap to sync again' : 'Sync worker',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap,
+        child: _Pill(
+          label: isSynced ? 'SYNCED' : 'NOT SYNCED',
+          foreground: isSynced ? AppColors.success : AppColors.deepGreen,
+          background: isSynced
+              ? const Color(0xFFE7F6EC)
+              : const Color(0xFFEFF6F0),
+        ),
+      ),
+    );
+  }
 }
 
 class _Avatar extends StatelessWidget {

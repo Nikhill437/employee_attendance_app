@@ -9,9 +9,12 @@ import 'package:employee_attendance_app/presentation/auth/view/login_screen.dart
 import 'package:employee_attendance_app/presentation/face_scan/view/face_scan_screen.dart';
 import 'package:employee_attendance_app/presentation/auth/view/pin_screen.dart';
 import 'package:employee_attendance_app/data/models/attendance_log_model.dart';
+import 'package:employee_attendance_app/data/models/department_model.dart';
 import 'package:employee_attendance_app/data/models/employee_model.dart';
 import 'package:employee_attendance_app/data/repositories/attendance_repository.dart';
 import 'package:employee_attendance_app/data/repositories/employee_repository.dart';
+import 'package:employee_attendance_app/data/repositories/lookup_repository.dart';
+import 'package:employee_attendance_app/presentation/employee/viewmodel/enrollment_form_viewmodel.dart';
 import 'package:employee_attendance_app/presentation/dashboard/view/dashboard_screen.dart';
 import 'package:employee_attendance_app/presentation/dashboard/viewmodel/dashboard_viewmodel.dart';
 import 'package:employee_attendance_app/presentation/dashboard/view/worker_list_screen.dart';
@@ -23,6 +26,8 @@ import 'package:employee_attendance_app/data/models/worker_model.dart';
 import 'package:employee_attendance_app/presentation/employee/view/enrollment_complete_screen.dart';
 import 'package:employee_attendance_app/presentation/common/widgets/app_bottom_nav_bar.dart';
 import 'package:employee_attendance_app/presentation/settings/view/settings_screen.dart';
+import 'package:employee_attendance_app/presentation/auth/viewmodel/supervisor_login_viewmodel.dart';
+import 'package:employee_attendance_app/data/repositories/supervisor_auth_repository.dart';
 import 'package:employee_attendance_app/data/repositories/supervisor_session_repository.dart';
 
 /// Stand-ins so the dashboard can be laid out without a sqflite plugin.
@@ -47,6 +52,27 @@ class _FakeEmployeeRepository extends EmployeeRepository {
   @override
   Future<bool> isEmployeeIdTaken(String employeeId) async =>
       takenEmployeeIds.contains(employeeId);
+}
+
+class _FakeLookupRepository extends LookupRepository {
+  @override
+  Future<List<Department>> getDepartments() async => const [];
+
+  @override
+  Future<void> syncFromRemote() async {}
+}
+
+/// Mimics the app's old hardcoded credential check, without the real
+/// network call SupervisorAuthRepository now makes.
+class _FakeSupervisorAuthRepository extends SupervisorAuthRepository {
+  @override
+  Future<String?> authenticate({
+    required String username,
+    required String password,
+  }) async {
+    if (username.trim() == 'sanket' && password == 'Pass@123') return null;
+    return 'Incorrect username or password';
+  }
 }
 
 class _FakeAttendanceRepository extends AttendanceRepository {
@@ -123,7 +149,16 @@ void main() {
   group('login screen', () {
     Future<void> pumpLogin(WidgetTester tester) {
       usePhoneSurface(tester);
-      return tester.pumpWidget(const MaterialApp(home: LoginScreen()));
+      return tester.pumpWidget(
+        MaterialApp(
+          home: LoginScreen(
+            viewModel: SupervisorLoginViewModel(
+              authRepository: _FakeSupervisorAuthRepository(),
+              lookupRepository: _FakeLookupRepository(),
+            ),
+          ),
+        ),
+      );
     }
 
     testWidgets('shows a username field, a password field and a login button', (
@@ -245,7 +280,13 @@ void main() {
     Future<void> pumpForm(WidgetTester tester) {
       usePhoneSurface(tester, logicalHeight: 1600);
       return tester.pumpWidget(
-        const MaterialApp(home: EnrollmentFormScreen()),
+        MaterialApp(
+          home: EnrollmentFormScreen(
+            formViewModel: EnrollmentFormViewModel(
+              lookupRepository: _FakeLookupRepository(),
+            ),
+          ),
+        ),
       );
     }
 
@@ -294,12 +335,13 @@ void main() {
       expect(find.text('Enter the full name'), findsOneWidget);
       expect(find.text('Enter the National ID'), findsOneWidget);
       expect(find.text('Enter the phone number'), findsOneWidget);
-      expect(find.text('Enter the department'), findsOneWidget);
+      expect(find.text('Select the department'), findsOneWidget);
       expect(find.text('Enter the address'), findsOneWidget);
     });
 
-    // Text field order on the form: Full Name, Date of Birth (read-only),
-    // National ID, Phone Number, Department, Address.
+    // TextFormField order on the form: Full Name, Date of Birth (read-only),
+    // National ID, Phone Number, Address — Department is a dropdown, not a
+    // TextFormField, so it isn't counted here.
     const fullNameField = 0;
     const nationalIdField = 2;
     const phoneField = 3;
@@ -432,6 +474,12 @@ void main() {
         initialRoute: AppRoutes.login,
         routes: {
           ...AppRoutes.routes,
+          AppRoutes.login: (_) => LoginScreen(
+            viewModel: SupervisorLoginViewModel(
+              authRepository: _FakeSupervisorAuthRepository(),
+              lookupRepository: _FakeLookupRepository(),
+            ),
+          ),
           AppRoutes.dashboard: (_) => DashboardScreen(
             viewModel: DashboardViewModel(
               employees: _FakeEmployeeRepository(48),
@@ -458,7 +506,13 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         initialRoute: AppRoutes.login,
-        routes: Map.of(AppRoutes.routes)..remove(AppRoutes.dashboard),
+        routes: (Map.of(AppRoutes.routes)..remove(AppRoutes.dashboard))
+          ..[AppRoutes.login] = (_) => LoginScreen(
+            viewModel: SupervisorLoginViewModel(
+              authRepository: _FakeSupervisorAuthRepository(),
+              lookupRepository: _FakeLookupRepository(),
+            ),
+          ),
       ),
     );
 

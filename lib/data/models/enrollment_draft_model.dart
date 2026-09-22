@@ -10,7 +10,9 @@ class EnrollmentDraft {
   final String phoneNumber;
   final String address;
   final PayType enrollmentType;
-  final String department;
+  final int departmentId;
+  final String departmentName;
+  final String nationalIdImagePath;
 
   const EnrollmentDraft({
     required this.fullName,
@@ -20,6 +22,8 @@ class EnrollmentDraft {
     required this.phoneNumber,
     required this.address,
     required this.enrollmentType,
-    required this.department,
+    required this.departmentId,
+    required this.departmentName,
+    required this.nationalIdImagePath,
   });
 }

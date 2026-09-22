@@ -9,20 +9,24 @@ class EmployeeRepository {
   EmployeeRepository({DatabaseHelper? dbHelper})
     : _dbHelper = dbHelper ?? DatabaseHelper();
 
-  /// Stores a new enrollment and returns it with its assigned row id.
+  /// Stores a new enrollment (in the `workers` table) and returns it with
+  /// its assigned row id.
   Future<Employee> create(Employee employee) async {
-    final id = await _dbHelper.insertAttendance(employee);
+    final id = await _dbHelper.insertWorkerRecord(employee);
     return employee.copyWith(id: id);
   }
 
-  Future<List<Employee>> getAll() => _dbHelper.getAllAttendance();
+  Future<List<Employee>> getAll() => _dbHelper.getAllWorkers();
 
-  Future<List<Employee>> getUnique() => _dbHelper.getUniqueEmployees();
+  /// `national_id` is unique on the `workers` table, so this is just every
+  /// worker — kept as a separate method name for the view models that ask
+  /// for "the unique roster" explicitly.
+  Future<List<Employee>> getUnique() => _dbHelper.getAllWorkers();
 
-  /// The most recent enrollment record for [employeeId], or null if that ID
-  /// has never been enrolled.
+  /// The enrollment record for [employeeId] (their National ID), or null if
+  /// that ID has never been enrolled.
   Future<Employee?> findByEmployeeId(String employeeId) =>
-      _dbHelper.getEmployeeByEmployeeId(employeeId);
+      _dbHelper.getWorkerByNationalId(employeeId);
 
   /// True if [employeeId] (the National ID) is already enrolled — checked
   /// before saving a new enrollment so two workers never share one ID.
@@ -31,7 +35,12 @@ class EmployeeRepository {
     return existing != null;
   }
 
-  /// Removes [employeeId]'s enrollment record(s) and attendance history.
+  /// Removes [employeeId]'s worker record and attendance history.
   Future<void> delete(String employeeId) =>
       _dbHelper.deleteEmployee(employeeId);
+
+  /// Marks [employeeId] as synced — call after a successful
+  /// `POST attendance/sync-worker` (see WorkerSyncRepository).
+  Future<void> markSynced(String employeeId) =>
+      _dbHelper.markWorkerSynced(employeeId);
 }

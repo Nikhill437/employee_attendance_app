@@ -4,9 +4,14 @@ import '../../../core/routes/app_routes.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/supervisor_login_viewmodel.dart';
 
-/// Supervisor login, checked against the single fixed supervisor account.
+/// Supervisor login, authenticated against the backend.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  /// Overridable so tests can inject a fake (avoids the real
+  /// SupervisorAuthRepository/LookupRepository, which need network access
+  /// the test environment doesn't provide).
+  final SupervisorLoginViewModel? viewModel;
+
+  const LoginScreen({super.key, this.viewModel});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -16,7 +21,13 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final SupervisorLoginViewModel _viewModel = SupervisorLoginViewModel();
+  late final SupervisorLoginViewModel _viewModel;
+
+  @override
+  void initState() {
+    super.initState();
+    _viewModel = widget.viewModel ?? SupervisorLoginViewModel();
+  }
 
   @override
   void dispose() {
