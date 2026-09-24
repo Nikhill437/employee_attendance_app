@@ -9,6 +9,7 @@ import '../../presentation/employee/view/create_employee_screen.dart';
 import '../../presentation/employee/view/enrollment_form_screen.dart';
 import '../../presentation/dashboard/view/dashboard_screen.dart';
 import '../../presentation/dashboard/view/worker_list_screen.dart';
+import '../../presentation/history/view/worker_history_screen.dart';
 import '../../presentation/settings/view/settings_screen.dart';
 
 class AppRoutes {
@@ -24,6 +25,7 @@ class AppRoutes {
   static const String createAttendance = '/create-attendance';
   static const String enrollmentForm = '/enrollment-form';
   static const String attendanceSummary = '/attendance-summary';
+  static const String workerHistory = '/worker-history';
 
   static Map<String, WidgetBuilder> get routes => {
     splash: (_) => SplashScreen(),
@@ -36,5 +38,6 @@ class AppRoutes {
     createAttendance: (_) => const CreateAttendanceScreen(),
     enrollmentForm: (_) => const EnrollmentFormScreen(),
     attendanceSummary: (_) => const AttendanceSummaryScreen(),
+    workerHistory: (_) => const WorkerHistoryScreen(),
   };
 }

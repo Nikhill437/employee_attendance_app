@@ -5,7 +5,11 @@ import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/worker_model.dart';
+import '../../auth/view/mark_attendance_screen.dart';
 import '../../common/widgets/common_widgets.dart';
+import '../../employee/view/enrollment_form_screen.dart';
+import '../../task/view/assign_task_screen.dart';
+import '../../task/view/worker_task_list_screen.dart';
 import '../viewmodel/worker_list_viewmodel.dart';
 
 class WorkerListScreen extends StatefulWidget {
@@ -114,6 +118,166 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     );
   }
 
+  /// Opens task assignment for [worker] — needs their department, so this
+  /// is a no-op (with an explanatory snackbar) for the rare row missing
+  /// one (e.g. a `Worker` not backed by a real DB record).
+  Future<void> _openAssignTask(Worker worker) async {
+    if (worker.workerId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This worker has no record to assign to')),
+      );
+      return;
+    }
+    final assigned = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AssignTaskScreen(
+          workerId: worker.workerId!,
+          workerName: worker.name,
+          initialDepartmentId: worker.departmentId,
+        ),
+      ),
+    );
+    if (assigned == true && mounted) await _viewModel.load();
+  }
+
+  /// Pushes [worker]'s task assignments to the backend — the endpoint only
+  /// takes one assignment per call, so this pushes each of the worker's
+  /// assigned tasks in turn (see TaskSyncRepository.syncWorkerTasks).
+  Future<void> _syncTasks(Worker worker) async {
+    final workerId = worker.workerId;
+    if (workerId == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final result = await _viewModel.syncTasks(worker.employeeId, workerId);
+      if (!mounted || result == null) return;
+      final message = result.total == 0
+          ? 'No tasks to sync for ${worker.name}'
+          : result.hasFailures
+          ? 'Synced ${result.succeeded} of ${result.total} tasks for '
+                '${worker.name} — ${result.failed.length} failed'
+          : 'Synced ${result.succeeded} task(s) for ${worker.name}';
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not sync tasks for ${worker.name}: $e')),
+      );
+    }
+  }
+
+  /// Pushes [worker]'s pending (Yes or No) task completions to the backend.
+  Future<void> _syncTaskCompletion(Worker worker) async {
+    final workerId = worker.workerId;
+    if (workerId == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final result = await _viewModel.syncTaskCompletion(
+        worker.employeeId,
+        workerId,
+      );
+      if (!mounted || result == null) return;
+      final message = result.total == 0
+          ? 'No task completions to sync for ${worker.name}'
+          : result.hasFailures
+          ? 'Synced ${result.succeeded} of ${result.total} task completions '
+                'for ${worker.name} — ${result.total - result.succeeded} failed'
+          : 'Synced ${result.succeeded} task completion(s) for ${worker.name}';
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not sync task completions for ${worker.name}: $e',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openWorkerTasks(Worker worker) async {
+    if (worker.workerId == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => WorkerTaskListScreen(
+          workerId: worker.workerId!,
+          workerName: worker.name,
+        ),
+      ),
+    );
+  }
+
+  /// Opens the enrollment form in edit mode for [worker] — only its
+  /// Department can actually change there (see EnrollmentFormScreen).
+  /// Available regardless of [WorkerListViewModel.canManageTasks], since
+  /// editing a worker's department isn't a task action.
+  Future<void> _openEditWorker(Worker worker) async {
+    final employee = await _viewModel.getEmployee(worker.employeeId);
+    if (!mounted || employee == null) return;
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EnrollmentFormScreen(editingWorker: employee),
+      ),
+    );
+    if (updated == true) await _viewModel.load();
+  }
+
+  /// Opens the same face-scan attendance flow used by the public kiosk
+  /// screen, pre-filled for [worker] — see
+  /// MarkAttendanceScreen.initialEmployeeId. Reloads the list on success so
+  /// the card picks up the new check-in/check-out state.
+  Future<void> _openMarkAttendance(Worker worker) async {
+    final marked = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            MarkAttendanceScreen(initialEmployeeId: worker.employeeId),
+      ),
+    );
+    if (marked == true && mounted) await _viewModel.load();
+  }
+
+  /// Pushes [worker]'s today's check-in/check-out record to the backend
+  /// (`POST attendance/check-in`).
+  Future<void> _syncAttendance(Worker worker) async {
+    final workerId = worker.workerId;
+    if (workerId == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final error = await _viewModel.syncAttendance(worker.employeeId, workerId);
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? '${worker.name}\'s attendance synced'
+              : 'Could not sync ${worker.name}\'s attendance: $error',
+        ),
+      ),
+    );
+  }
+
+  /// Fetches the full worker roster from the backend — existing workers
+  /// matched by National ID are updated, new ones inserted (see
+  /// DatabaseHelper.upsertRemoteWorkers).
+  Future<void> _fetchFromServer() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final count = await _viewModel.fetchFromServer();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Fetched $count workers from server')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not fetch workers: $e')),
+      );
+    }
+  }
+
   Widget _buildHeader() {
     return AppScreenHeader(
       title: 'Worker List',
@@ -130,6 +294,23 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
           onPressed: _pickAttendanceFilter,
           tooltip: 'Filter by attendance',
         ),
+        _viewModel.isFetchingFromServer
+            ? const Padding(
+                padding: EdgeInsets.all(10),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                ),
+              )
+            : CircleHeaderAction(
+                icon: Icons.cloud_download_outlined,
+                onPressed: _fetchFromServer,
+                tooltip: 'Fetch workers from server',
+              ),
       ],
     );
   }
@@ -221,6 +402,21 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
                 worker: worker,
                 isSyncing: _viewModel.isSyncing(worker.employeeId),
                 onSync: () => _syncWorker(worker),
+                onAssignTask: () => _openAssignTask(worker),
+                onViewTasks: () => _openWorkerTasks(worker),
+                isSyncingTasks: _viewModel.isSyncingTasks(worker.employeeId),
+                onSyncTasks: () => _syncTasks(worker),
+                canManageTasks: _viewModel.canManageTasks(worker),
+                onEdit: () => _openEditWorker(worker),
+                onMarkAttendance: () => _openMarkAttendance(worker),
+                isSyncingAttendance: _viewModel.isSyncingAttendance(
+                  worker.employeeId,
+                ),
+                onSyncAttendance: () => _syncAttendance(worker),
+                isSyncingTaskCompletion: _viewModel.isSyncingTaskCompletion(
+                  worker.employeeId,
+                ),
+                onSyncTaskCompletion: () => _syncTaskCompletion(worker),
               ),
             ),
             const SizedBox(height: 12),
@@ -328,11 +524,37 @@ class _WorkerCard extends StatelessWidget {
   final Worker worker;
   final bool isSyncing;
   final VoidCallback onSync;
+  final VoidCallback onAssignTask;
+  final VoidCallback onViewTasks;
+  final bool isSyncingTasks;
+  final VoidCallback onSyncTasks;
+
+  /// Whether Assign/View/Sync Task should show at all — approved status
+  /// and matching the supervisor's own department, both required (see
+  /// WorkerListViewModel.canManageTasks).
+  final bool canManageTasks;
+  final VoidCallback onEdit;
+  final VoidCallback onMarkAttendance;
+  final bool isSyncingAttendance;
+  final VoidCallback onSyncAttendance;
+  final bool isSyncingTaskCompletion;
+  final VoidCallback onSyncTaskCompletion;
 
   const _WorkerCard({
     required this.worker,
     required this.isSyncing,
     required this.onSync,
+    required this.onAssignTask,
+    required this.onViewTasks,
+    required this.isSyncingTasks,
+    required this.onSyncTasks,
+    required this.canManageTasks,
+    required this.onEdit,
+    required this.onMarkAttendance,
+    required this.isSyncingAttendance,
+    required this.onSyncAttendance,
+    required this.isSyncingTaskCompletion,
+    required this.onSyncTaskCompletion,
   });
 
   @override
@@ -347,13 +569,221 @@ class _WorkerCard extends StatelessWidget {
               _Avatar(worker: worker),
               const SizedBox(width: 12),
               Expanded(child: _buildIdentity()),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: 'Edit department',
+                child: IconButton(
+                  onPressed: onEdit,
+                  icon: const Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: AppColors.muted,
+                  ),
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.all(4),
+                ),
+              ),
+              const SizedBox(width: 4),
               _buildAttendance(),
             ],
           ),
           const Divider(height: 22, color: AppColors.cardBorder),
           _buildFooter(),
+          // Gated on approval alone — unlike Assign/View/Sync Task, marking
+          // attendance isn't department-scoped, so it doesn't need
+          // canManageTasks' department match too.
+          if (worker.status == 'approved') ...[
+            const Divider(height: 18, color: AppColors.cardBorder),
+            _buildMarkAttendanceAction(),
+          ],
+          if (canManageTasks) ...[
+            const Divider(height: 18, color: AppColors.cardBorder),
+            _buildTaskActions(),
+            _buildTaskCompletionSyncAction(),
+          ],
         ],
+      ),
+    );
+  }
+
+  /// Before today's first scan: "Check In". After that, until the second
+  /// scan: "Check Out". Once both are recorded there's nothing left to mark
+  /// today, so the button is disabled (tapping it again would just leave
+  /// the row unchanged — see WorkerScanOutcome.alreadyCheckedOut).
+  Widget _buildMarkAttendanceAction() {
+    final isComplete = worker.hasCheckedInToday && worker.hasCheckedOutToday;
+    final label = !worker.hasCheckedInToday
+        ? 'Check In'
+        : !worker.hasCheckedOutToday
+        ? 'Check Out'
+        : 'Attendance Complete';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: isComplete ? null : onMarkAttendance,
+              icon: const Icon(Icons.fingerprint, size: 16),
+              label: Text(label),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.deepGreen,
+                side: const BorderSide(color: AppColors.cardBorder),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                textStyle: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          // Nothing to push to the server until at least a check-in exists.
+          if (worker.hasCheckedInToday) ...[
+            const SizedBox(width: 8),
+            _buildAttendanceSyncAction(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Enabled/disabled by whether today's row already has the backend's
+  /// real `attendance_id` (see Worker.hasRealAttendanceIdToday) — not by
+  /// `isAttendanceSynced` alone, since a sync attempt can mark the row
+  /// synced without the response actually returning a usable id (see
+  /// DatabaseHelper.markWorkerAttendanceSynced), in which case this stays
+  /// tappable so it can be retried.
+  Widget _buildAttendanceSyncAction() {
+    if (isSyncingAttendance) {
+      return const Padding(
+        padding: EdgeInsets.all(8),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return Tooltip(
+      message: worker.hasRealAttendanceIdToday
+          ? 'Attendance synced'
+          : 'Sync attendance to server',
+      child: IconButton(
+        onPressed: worker.hasRealAttendanceIdToday ? null : onSyncAttendance,
+        icon: Icon(
+          worker.hasRealAttendanceIdToday
+              ? Icons.cloud_done_outlined
+              : Icons.cloud_upload_outlined,
+          size: 20,
+          color: worker.hasRealAttendanceIdToday
+              ? AppColors.success
+              : AppColors.deepGreen,
+        ),
+        constraints: const BoxConstraints(),
+        padding: const EdgeInsets.all(8),
+      ),
+    );
+  }
+
+  Widget _buildTaskActions() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: onAssignTask,
+              icon: const Icon(Icons.playlist_add, size: 16),
+              label: const Text('Assign Task'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.deepGreen,
+                side: const BorderSide(color: AppColors.cardBorder),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                textStyle: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'View assigned tasks',
+            child: IconButton(
+              onPressed: onViewTasks,
+              icon: const Icon(
+                Icons.visibility_outlined,
+                size: 20,
+                color: AppColors.deepGreen,
+              ),
+              constraints: const BoxConstraints(),
+              padding: const EdgeInsets.all(8),
+            ),
+          ),
+          const SizedBox(width: 4),
+          if (isSyncingTasks)
+            const Padding(
+              padding: EdgeInsets.all(8),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            Tooltip(
+              message: 'Sync tasks to server',
+              child: IconButton(
+                onPressed: onSyncTasks,
+                icon: const Icon(
+                  Icons.cloud_sync_outlined,
+                  size: 20,
+                  color: AppColors.deepGreen,
+                ),
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.all(8),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Pushes the worker's task-completion rows (Yes or No) recorded on
+  /// task_status_screen.dart to the backend — separate from
+  /// [_buildTaskActions]'s "Sync tasks" (which syncs the *assignment*,
+  /// `worker_tasks`) since this syncs the *completion*,
+  /// `worker_task_completion`.
+  Widget _buildTaskCompletionSyncAction() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: isSyncingTaskCompletion ? null : onSyncTaskCompletion,
+          icon: isSyncingTaskCompletion
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.fact_check_outlined, size: 16),
+          label: Text(
+            isSyncingTaskCompletion
+                ? 'Syncing Task Completion...'
+                : 'Sync Task Completion',
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.deepGreen,
+            side: const BorderSide(color: AppColors.cardBorder),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            textStyle: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -460,6 +890,7 @@ class _WorkerCard extends StatelessWidget {
   Color get _verificationColor => switch (worker.verification) {
     VerificationStatus.verified => AppColors.success,
     VerificationStatus.pending => AppColors.warning,
+    VerificationStatus.rejected => AppColors.danger,
     VerificationStatus.notVerified => AppColors.muted,
   };
 }

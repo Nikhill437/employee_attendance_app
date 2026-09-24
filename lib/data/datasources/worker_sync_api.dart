@@ -15,16 +15,27 @@ class WorkerSyncApi {
 
   /// POST attendance/sync-worker, as multipart/form-data — a plain JSON
   /// body can't carry the National ID photo file, so every field goes over
-  /// as form fields alongside it. Request/response shape not otherwise
-  /// confirmed yet — this sends the worker's fields using the same column
-  /// names as the backend's own `workers` table (the schema given earlier),
-  /// with `department_id` rather than the department's name, since that's
-  /// what the table's own FK actually stores. Adjust once the real contract
-  /// is confirmed, same as every other endpoint here so far.
-  Future<void> syncWorker(Employee worker) async {
+  /// as form fields alongside it. Request shape not otherwise confirmed
+  /// yet — this sends the worker's fields using the same column names as
+  /// the backend's own `workers` table (the schema given earlier), with
+  /// `department_id` rather than the department's name, since that's what
+  /// the table's own FK actually stores. Adjust once the real contract is
+  /// confirmed, same as every other endpoint here so far.
+  ///
+  /// Confirmed response on success: `{"message": ..., "worker_id": ...,
+  /// "status": true}` — returns that `worker_id`, or null if the response
+  /// doesn't have the expected shape.
+  Future<int?> syncWorker(Employee worker) async {
     final formData = await _toFormData(worker);
     log('Syncing worker ${worker.employeeId} to backend');
-    await _client.post(ApiRoutes.syncWorker, data: formData);
+    final response = await _client.post(ApiRoutes.syncWorker, data: formData);
+    return _extractId(response, 'worker_id');
+  }
+
+  int? _extractId(dynamic response, String key) {
+    if (response is! Map) return null;
+    final value = response[key];
+    return value is int ? value : int.tryParse(value.toString());
   }
 
   Future<FormData> _toFormData(Employee worker) async {

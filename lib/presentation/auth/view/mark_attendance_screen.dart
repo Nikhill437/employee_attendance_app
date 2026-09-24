@@ -4,17 +4,21 @@ import '../../../core/routes/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/input_formatters.dart';
 import '../../../data/models/auth/auth_user_model.dart';
+import '../../../data/models/worker_attendance_model.dart';
+import '../../../data/repositories/worker_attendance_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../face_scan/view/face_scan_screen.dart';
+import '../../task/view/task_status_screen.dart';
+import '../../task/view/worker_task_list_screen.dart';
 import '../viewmodel/login_viewmodel.dart';
 
-/// Employee-ID entry followed by a face scan, verified 1:1 against the
-/// profile enrolled for that ID. On a match the attendance log is written and
-/// the app returns to the (supervisor-only) login screen — an employee has
-/// no credentials for it, so this is also what keeps the dashboard behind
-/// the supervisor login rather than reachable from the attendance flow.
 class MarkAttendanceScreen extends StatefulWidget {
-  const MarkAttendanceScreen({super.key});
+  /// Non-null skips the National ID entry form and starts the scan for
+  /// this employeeId immediately — the "Mark Attendance" action on a
+  /// worker's card in worker_list_screen.dart.
+  final String? initialEmployeeId;
+
+  const MarkAttendanceScreen({super.key, this.initialEmployeeId});
 
   @override
   State<MarkAttendanceScreen> createState() => _MarkAttendanceScreenState();
@@ -26,6 +30,22 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   final _formKey = GlobalKey<FormState>();
   final _employeeIdController = TextEditingController();
   final LoginViewModel _viewModel = LoginViewModel();
+  final WorkerAttendanceRepository _attendanceRepository =
+      WorkerAttendanceRepository();
+
+  bool get _isSupervisorInitiated => widget.initialEmployeeId != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final initialId = widget.initialEmployeeId;
+    if (initialId != null) {
+      _employeeIdController.text = initialId;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _runScanFlow(initialId),
+      );
+    }
+  }
 
   @override
   void dispose() {
@@ -42,8 +62,12 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
 
   Future<void> _startScan() async {
     if (!_formKey.currentState!.validate()) return;
-    final employeeId = _employeeIdController.text.trim();
+    await _runScanFlow(_employeeIdController.text.trim());
+  }
 
+  /// The actual lookup → scan → mark-attendance sequence, shared by both
+  /// the manual-entry path and the supervisor-initiated one.
+  Future<void> _runScanFlow(String employeeId) async {
     if (!await _lookUpEmployee(employeeId)) return;
 
     final user = await _scanFace(employeeId);
@@ -52,7 +76,57 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     _viewModel.completeLogin(user);
     await Future.delayed(_successPause);
     if (!mounted) return;
-    _returnToLogin();
+
+    await _showTaskScreenIfNeeded(user);
+    if (!mounted) return;
+    _finish();
+  }
+
+  /// After attendance is marked, additionally shows the worker's assigned
+  /// tasks (on check-in) or lets the supervisor record which were
+  /// completed (on check-out). This is purely additive: it only reads and
+  /// writes `worker_attendance`/`worker_task_completion` (previously
+  /// unused, schema-only tables) via [WorkerAttendanceRepository] — the
+  /// existing attendance_logs write above (`_viewModel.completeLogin`,
+  /// backed by AuthRepository.login) is untouched.
+  Future<void> _showTaskScreenIfNeeded(AuthUser user) async {
+    final workerId = user.id;
+    if (workerId == null) return;
+
+    final record = await _attendanceRepository.recordScan(workerId);
+    if (!mounted) return;
+
+    switch (record.outcome) {
+      case WorkerScanOutcome.checkedIn:
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                WorkerTaskListScreen(workerId: workerId, workerName: user.name),
+          ),
+        );
+      case WorkerScanOutcome.checkedOut:
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => TaskStatusScreen(
+              workerId: workerId,
+              workerName: user.name,
+              attendanceId: record.attendanceId,
+              // The worker's own self-service checkout (public kiosk flow,
+              // no supervisor involved) only ever gets to see whatever
+              // Yes/No the supervisor already set — never to change it
+              // themselves. The supervisor-initiated flow (checking a
+              // worker out from worker_list_screen.dart) still gets the
+              // editable version.
+              readOnly: !_isSupervisorInitiated,
+            ),
+          ),
+        );
+      case WorkerScanOutcome.alreadyCheckedOut:
+      case null:
+        break;
+    }
   }
 
   /// Confirms the ID is enrolled before the camera is opened. Surfaces the
@@ -81,12 +155,18 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     );
   }
 
-  /// Swaps this screen for the (supervisor-only) login screen rather than
-  /// popping — an employee arrived here straight from the splash screen with
-  /// no login step of their own, so there is nothing to pop back to that
-  /// still makes sense once attendance is marked.
-  void _returnToLogin() {
-    Navigator.pushReplacementNamed(context, AppRoutes.splash);
+  /// Supervisor-initiated: pops back to whichever worker card this was
+  /// opened from, signalling success so the list reloads. Public kiosk
+  /// flow: swaps this screen for the (supervisor-only) login screen rather
+  /// than popping — an employee arrived here straight from the splash
+  /// screen with no login step of their own, so there is nothing to pop
+  /// back to that still makes sense once attendance is marked.
+  void _finish() {
+    if (_isSupervisorInitiated) {
+      Navigator.pop(context, true);
+    } else {
+      Navigator.pushReplacementNamed(context, AppRoutes.splash);
+    }
   }
 
   @override
@@ -107,6 +187,8 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
                     listenable: _viewModel,
                     builder: (context, _) => _viewModel.isAuthenticated
                         ? _buildSuccessView()
+                        : _isSupervisorInitiated
+                        ? _buildSupervisorLoadingState()
                         : _buildScanPrompt(),
                   ),
                 ),
@@ -151,6 +233,33 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
         Text(
           _viewModel.authenticatedUser?.name ?? '',
           style: const TextStyle(fontSize: 16, color: Colors.white70),
+        ),
+      ],
+    );
+  }
+
+  /// Shown briefly while the supervisor-initiated flow looks the worker up
+  /// and opens the camera — there's no form to fill in since the worker is
+  /// already known. Keeps a way back out in case the lookup fails (e.g. no
+  /// enrolled face) before the camera ever opens.
+  Widget _buildSupervisorLoadingState() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+        const BrandHeader(logoWidth: 220, logoHeight: 220, showTagline: false),
+        const SizedBox(height: 28),
+        const CircularProgressIndicator(color: Colors.white),
+        const SizedBox(height: 16),
+        const Text(
+          'Starting face verification...',
+          style: TextStyle(color: Colors.white70, fontSize: 14.5),
+        ),
+        const SizedBox(height: 24),
+        AppLinkText(
+          label: 'Cancel',
+          fontSize: 16,
+          onTap: () => Navigator.maybePop(context),
         ),
       ],
     );

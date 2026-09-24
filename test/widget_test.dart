@@ -11,9 +11,11 @@ import 'package:employee_attendance_app/presentation/auth/view/pin_screen.dart';
 import 'package:employee_attendance_app/data/models/attendance_log_model.dart';
 import 'package:employee_attendance_app/data/models/department_model.dart';
 import 'package:employee_attendance_app/data/models/employee_model.dart';
+import 'package:employee_attendance_app/data/models/worker_attendance_model.dart';
 import 'package:employee_attendance_app/data/repositories/attendance_repository.dart';
 import 'package:employee_attendance_app/data/repositories/employee_repository.dart';
 import 'package:employee_attendance_app/data/repositories/lookup_repository.dart';
+import 'package:employee_attendance_app/data/repositories/worker_attendance_repository.dart';
 import 'package:employee_attendance_app/presentation/employee/viewmodel/enrollment_form_viewmodel.dart';
 import 'package:employee_attendance_app/presentation/dashboard/view/dashboard_screen.dart';
 import 'package:employee_attendance_app/presentation/dashboard/viewmodel/dashboard_viewmodel.dart';
@@ -84,6 +86,12 @@ class _FakeAttendanceRepository extends AttendanceRepository {
 
   @override
   Future<int> countPresentOn(DateTime day) async => present;
+}
+
+class _FakeWorkerAttendanceRepository extends WorkerAttendanceRepository {
+  @override
+  Future<Map<int, WorkerAttendanceRecord>> getTodayAttendanceByWorker() async =>
+      const {};
 }
 
 /// The default 800x600 test window is shorter than any phone these screens
@@ -223,7 +231,11 @@ void main() {
   });
 
   testWidgets('dashboard shows the counts it loaded', (tester) async {
-    usePhoneSurface(tester, logicalHeight: 1400);
+    // Tall enough that every card — including the "Fetch Workers" and
+    // "Reference Data" ones added above the employee preview — is built,
+    // not just what would fit an actual phone's viewport (ListView only
+    // materializes onscreen + cache-extent children).
+    usePhoneSurface(tester, logicalHeight: 1900);
     await tester.pumpWidget(
       MaterialApp(
         home: DashboardScreen(
@@ -256,6 +268,7 @@ void main() {
           viewModel: WorkerListViewModel(
             employees: _FakeEmployeeRepository(2),
             attendance: _FakeAttendanceRepository(0),
+            workerAttendance: _FakeWorkerAttendanceRepository(),
           ),
         ),
       ),
@@ -535,6 +548,7 @@ void main() {
           viewModel: WorkerListViewModel(
             employees: _FakeEmployeeRepository(0),
             attendance: _FakeAttendanceRepository(0),
+            workerAttendance: _FakeWorkerAttendanceRepository(),
           ),
         ),
       ),
@@ -564,6 +578,7 @@ void main() {
               viewModel: WorkerListViewModel(
                 employees: _FakeEmployeeRepository(2),
                 attendance: _FakeAttendanceRepository(1),
+                workerAttendance: _FakeWorkerAttendanceRepository(),
               ),
             ),
           },

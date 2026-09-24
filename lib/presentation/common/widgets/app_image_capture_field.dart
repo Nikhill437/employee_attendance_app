@@ -16,6 +16,10 @@ class AppImageCaptureField extends StatelessWidget {
   final File? image;
   final VoidCallback onCapture;
 
+  /// False blocks capturing/retaking — still shows the existing image (if
+  /// any) and its full-screen preview, just not editable.
+  final bool enabled;
+
   const AppImageCaptureField({
     super.key,
     required this.label,
@@ -23,6 +27,7 @@ class AppImageCaptureField extends StatelessWidget {
     required this.onCapture,
     this.isRequired = false,
     this.image,
+    this.enabled = true,
   });
 
   @override
@@ -62,7 +67,7 @@ class AppImageCaptureField extends StatelessWidget {
   Widget _buildCaptureTarget() {
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: onCapture,
+      onTap: enabled ? onCapture : null,
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -103,11 +108,12 @@ class AppImageCaptureField extends StatelessWidget {
             ),
           ),
         ),
-        Positioned(
-          right: 8,
-          top: 8,
-          child: _RetakeChip(onTap: onCapture),
-        ),
+        if (enabled)
+          Positioned(
+            right: 8,
+            top: 8,
+            child: _RetakeChip(onTap: onCapture),
+          ),
       ],
     );
   }

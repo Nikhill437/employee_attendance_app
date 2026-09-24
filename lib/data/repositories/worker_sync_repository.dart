@@ -23,8 +23,9 @@ class WorkerSyncRepository {
     if (worker == null) {
       throw ArgumentError('No worker enrolled with National ID $employeeId');
     }
+    int? realWorkerId;
     try {
-      await _api.syncWorker(worker);
+      realWorkerId = await _api.syncWorker(worker);
     } on ApiException catch (e) {
       // 409 means the backend already has this National ID — a previous
       // sync succeeded server-side but the local `is_synced` flag never
@@ -33,6 +34,6 @@ class WorkerSyncRepository {
       // instead of rethrowing.
       if (e.statusCode != 409) rethrow;
     }
-    await _employees.markSynced(employeeId);
+    await _employees.markSynced(employeeId, realWorkerId: realWorkerId);
   }
 }

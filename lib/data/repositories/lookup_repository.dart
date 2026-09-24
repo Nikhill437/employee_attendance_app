@@ -18,10 +18,24 @@ class LookupRepository {
   /// lists. Lets any failure propagate — the caller (login) decides whether
   /// a failed sync should be silent or surfaced.
   Future<void> syncFromRemote() async {
+    await syncDepartmentsFromRemote();
+    await syncTasksFromRemote();
+  }
+
+  /// Refreshes just the local `departments` cache — the dashboard's
+  /// "Refresh Departments" button.
+  Future<int> syncDepartmentsFromRemote() async {
     final departments = await _api.fetchDepartments();
     await _dbHelper.replaceDepartments(departments);
+    return departments.length;
+  }
+
+  /// Refreshes just the local `tasks` cache — the dashboard's "Refresh
+  /// Tasks" button.
+  Future<int> syncTasksFromRemote() async {
     final tasks = await _api.fetchTasks();
     await _dbHelper.replaceTasks(tasks);
+    return tasks.length;
   }
 
   /// The locally cached departments, for the enrollment form's dropdown.

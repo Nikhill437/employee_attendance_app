@@ -41,6 +41,18 @@ class EmployeeRepository {
 
   /// Marks [employeeId] as synced — call after a successful
   /// `POST attendance/sync-worker` (see WorkerSyncRepository).
-  Future<void> markSynced(String employeeId) =>
-      _dbHelper.markWorkerSynced(employeeId);
+  /// [realWorkerId] is the backend's own id from that response, when known.
+  Future<void> markSynced(String employeeId, {int? realWorkerId}) =>
+      _dbHelper.markWorkerSynced(employeeId, realWorkerId: realWorkerId);
+
+  /// The backend's real id for the worker at local id [offlineWorkerId], or
+  /// null if they haven't been synced or imported yet.
+  Future<int?> getRemoteWorkerId(int offlineWorkerId) =>
+      _dbHelper.getRemoteWorkerId(offlineWorkerId);
+
+  /// Reassigns [workerId] (their local `offline_worker_id`) to
+  /// [departmentId] — called from the Assign Task screen when the
+  /// supervisor picks a different department than the worker's current one.
+  Future<void> updateDepartment(int workerId, int departmentId) =>
+      _dbHelper.updateWorkerDepartment(workerId, departmentId);
 }

@@ -50,6 +50,15 @@ class Task {
       name: (json['task_name'] ?? json['name']).toString(),
     );
   }
+
+  /// Reads back a local `tasks` row (see DatabaseHelper.getTasksByDepartment).
+  factory Task.fromMap(Map<String, dynamic> map) {
+    return Task(
+      id: map['task_id'] as int,
+      departmentId: map['department_id'] as int,
+      name: map['task_name'] as String,
+    );
+  }
 }
 
 int _asInt(dynamic value) {

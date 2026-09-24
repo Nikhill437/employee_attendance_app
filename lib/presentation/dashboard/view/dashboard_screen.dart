@@ -36,6 +36,56 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
+  /// Fetches the full worker roster from the backend and upserts it
+  /// locally by National ID.
+  Future<void> _importWorkers() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final count = await _viewModel.importWorkersFromServer();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Fetched $count workers from server')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not fetch workers: $e')),
+      );
+    }
+  }
+
+  Future<void> _fetchDepartments() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final count = await _viewModel.fetchDepartments();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Fetched $count departments from server')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not fetch departments: $e')),
+      );
+    }
+  }
+
+  Future<void> _fetchTasks() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final count = await _viewModel.fetchTasks();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Fetched $count tasks from server')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not fetch tasks: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -55,6 +105,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.pushNamed(context, AppRoutes.enrollmentForm),
                   onViewWorkers: () =>
                       Navigator.pushNamed(context, AppRoutes.workerList),
+                ),
+                const SizedBox(height: 14),
+                _ImportWorkersCard(
+                  isImporting: _viewModel.isImportingWorkers,
+                  onPressed: _importWorkers,
+                ),
+                const SizedBox(height: 14),
+                _RefreshLookupsCard(
+                  isFetchingDepartments: _viewModel.isFetchingDepartments,
+                  isFetchingTasks: _viewModel.isFetchingTasks,
+                  onFetchDepartments: _fetchDepartments,
+                  onFetchTasks: _fetchTasks,
                 ),
                 const SizedBox(height: 14),
                 _EmployeesPreviewCard(
@@ -275,6 +337,148 @@ class _EmployeeRow extends StatelessWidget {
           PayTypeChip(payType: employee.payType),
         ],
       ),
+    );
+  }
+}
+
+/// Fetches the full worker roster from the backend
+/// (`POST attendance/list`) and upserts it locally by National ID.
+class _ImportWorkersCard extends StatelessWidget {
+  final bool isImporting;
+  final VoidCallback onPressed;
+
+  const _ImportWorkersCard({required this.isImporting, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionLabel('WORKER DATA'),
+                SizedBox(height: 6),
+                Text(
+                  'Fetch the latest worker list from the server',
+                  style: TextStyle(fontSize: 13, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            onPressed: isImporting ? null : onPressed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.deepGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              shape: const StadiumBorder(),
+            ),
+            icon: isImporting
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.cloud_download_outlined, size: 16),
+            label: Text(isImporting ? 'Fetching...' : 'Fetch Workers'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Two independent refresh actions for the local `departments`/`tasks`
+/// caches — each hits its own endpoint
+/// (`attendance/searchDept`/`attendance/list_task`) and can be refreshed
+/// on its own.
+class _RefreshLookupsCard extends StatelessWidget {
+  final bool isFetchingDepartments;
+  final bool isFetchingTasks;
+  final VoidCallback onFetchDepartments;
+  final VoidCallback onFetchTasks;
+
+  const _RefreshLookupsCard({
+    required this.isFetchingDepartments,
+    required this.isFetchingTasks,
+    required this.onFetchDepartments,
+    required this.onFetchTasks,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel('REFERENCE DATA'),
+          const SizedBox(height: 12),
+          _RefreshRow(
+            label: 'Departments',
+            isFetching: isFetchingDepartments,
+            onPressed: onFetchDepartments,
+          ),
+          const Divider(height: 20, color: AppColors.cardBorder),
+          _RefreshRow(
+            label: 'Tasks',
+            isFetching: isFetchingTasks,
+            onPressed: onFetchTasks,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RefreshRow extends StatelessWidget {
+  final String label;
+  final bool isFetching;
+  final VoidCallback onPressed;
+
+  const _RefreshRow({
+    required this.label,
+    required this.isFetching,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 14.5, color: AppColors.ink),
+          ),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.cardBorder),
+          ),
+          child: IconButton(
+            onPressed: isFetching ? null : onPressed,
+            iconSize: 18,
+            color: AppColors.deepGreen,
+            icon: isFetching
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+            tooltip: 'Refresh $label',
+          ),
+        ),
+      ],
     );
   }
 }

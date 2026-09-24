@@ -32,6 +32,10 @@ class AppFormField extends StatelessWidget {
   /// what actually enforces the field.
   final bool isRequired;
 
+  /// False greys the field out and blocks editing — e.g. every field but
+  /// Department when editing an existing worker.
+  final bool enabled;
+
   const AppFormField({
     super.key,
     required this.label,
@@ -46,6 +50,7 @@ class AppFormField extends StatelessWidget {
     this.inputFormatters,
     this.maxLength,
     this.isRequired = false,
+    this.enabled = true,
   });
 
   @override
@@ -81,6 +86,7 @@ class AppFormField extends StatelessWidget {
           minLines: minLines,
           maxLines: maxLines,
           readOnly: onTap != null,
+          enabled: enabled,
           onTap: onTap,
           inputFormatters: inputFormatters,
           maxLength: maxLength,

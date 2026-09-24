@@ -44,6 +44,18 @@ class Employee {
   /// something the backend's own `workers` table tracks.
   final bool isSynced;
 
+  /// The backend's approval status ('pending' / 'approved' / 'rejected').
+  /// Only authoritative once [isSynced] is true and this row came from a
+  /// real backend response (`POST attendance/list` sets the real value;
+  /// `POST attendance/sync-worker` doesn't return one, so a sync-only
+  /// worker keeps whatever this already was). A worker enrolled locally
+  /// and never synced defaults to 'pending' — the schema's own default,
+  /// not a claim about real approval — since nothing here gates on it.
+  final String status;
+
+  /// Why the backend rejected this worker, when [status] is 'rejected'.
+  final String? rejectionReason;
+
   Employee({
     this.id,
     required this.name,
@@ -60,6 +72,8 @@ class Employee {
     this.departmentId,
     this.nationalIdImage,
     this.isSynced = false,
+    this.status = 'pending',
+    this.rejectionReason,
   });
 
   Employee copyWith({
@@ -78,6 +92,8 @@ class Employee {
     int? departmentId,
     String? nationalIdImage,
     bool? isSynced,
+    String? status,
+    String? rejectionReason,
   }) {
     return Employee(
       id: id ?? this.id,
@@ -95,6 +111,8 @@ class Employee {
       departmentId: departmentId ?? this.departmentId,
       nationalIdImage: nationalIdImage ?? this.nationalIdImage,
       isSynced: isSynced ?? this.isSynced,
+      status: status ?? this.status,
+      rejectionReason: rejectionReason ?? this.rejectionReason,
     );
   }
 
@@ -131,14 +149,15 @@ class Employee {
 
   /// Reads back a `workers` row, left-joined with `departments` so
   /// `department` carries the name rather than just the FK id.
+  ///
+  /// `id` comes from `offline_worker_id` (the always-populated local row
+  /// id), not `worker_id` (the backend's real id, null until this worker's
+  /// been synced or imported) — see the class doc comment above
+  /// DatabaseHelper._createWorkerTables.
   factory Employee.fromMap(Map<String, dynamic> map) {
-    final embeddings = map['face_detection'] != null
-        ? (jsonDecode(map['face_detection'] as String) as List)
-              .map((e) => List<double>.from(e))
-              .toList()
-        : <List<double>>[];
+    final embeddings = _decodeEmbeddings(map['face_detection']);
     return Employee(
-      id: map['worker_id'] as int?,
+      id: map['offline_worker_id'] as int?,
       name: map['full_name'] as String,
       number: map['phone_number'] as String? ?? '',
       employeeId: map['national_id'] as String,
@@ -162,7 +181,28 @@ class Employee {
       departmentId: map['department_id'] as int?,
       nationalIdImage: map['national_id_image'] as String?,
       isSynced: (map['is_synced'] as int? ?? 0) == 1,
+      status: map['status'] as String? ?? 'pending',
+      rejectionReason: map['rejection_reason'] as String?,
     );
+  }
+
+  /// `face_detection` isn't always real embeddings — a worker imported via
+  /// `POST attendance/list` (see WorkerImportRepository) can carry a
+  /// non-JSON placeholder string (e.g. "embedding_data_009") rather than
+  /// the actual feature vector, since the backend doesn't return real
+  /// biometric data over that endpoint. Failing closed to "no embeddings"
+  /// here (instead of letting jsonDecode throw) is correct either way: a
+  /// worker without a real, usable face profile should read as
+  /// unverified/not face-matchable, not crash the app.
+  static List<List<double>> _decodeEmbeddings(Object? raw) {
+    if (raw is! String) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded.map((e) => List<double>.from(e as List)).toList();
+    } on FormatException {
+      return const [];
+    }
   }
 
   static T _enumOrDefault<T extends Enum>(

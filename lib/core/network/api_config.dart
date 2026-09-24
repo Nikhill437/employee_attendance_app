@@ -5,7 +5,7 @@
 class ApiConfig {
   const ApiConfig._();
 
-  static const String baseUrl = 'http://192.168.1.108:3001/';
+  static const String baseUrl = 'http://192.168.1.107:3001/';
 
   static const Duration connectTimeout = Duration(seconds: 15);
   static const Duration receiveTimeout = Duration(seconds: 15);

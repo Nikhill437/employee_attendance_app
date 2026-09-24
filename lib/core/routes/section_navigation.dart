@@ -10,7 +10,7 @@ extension AppSectionRoute on AppSection {
     AppSection.dashboard => AppRoutes.dashboard,
     AppSection.workers => AppRoutes.workerList,
     AppSection.settings => AppRoutes.settings,
-    AppSection.reports => null,
+    AppSection.reports => AppRoutes.workerHistory,
   };
 }
 

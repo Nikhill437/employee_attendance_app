@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/app_routes.dart';
+import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 
 /// Landing screen: brand mark over the palm backdrop, with the two entry
 /// points into the app pinned to the bottom.
 class SplashScreen extends StatelessWidget {
-  const SplashScreen({super.key});
+  /// Overridable so tests can inject a fake, avoiding real SharedPreferences
+  /// access.
+  final SupervisorSessionRepository? sessionRepository;
+
+  const SplashScreen({super.key, this.sessionRepository});
 
   @override
   Widget build(BuildContext context) {
@@ -65,7 +70,7 @@ class SplashScreen extends StatelessWidget {
             supervisor: true,
             label: 'Supervisor Login',
             filled: false,
-            onTap: () => Navigator.pushNamed(context, AppRoutes.login),
+            onTap: () => _openSupervisorLogin(context),
           ),
           AppLinkText(
             label: 'Forget Password?',
@@ -76,6 +81,22 @@ class SplashScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// A supervisor who's still logged in (e.g. landed back here from some
+  /// other route without logging out — see main.dart's own startup check
+  /// for the same rule) goes straight to the dashboard instead of being
+  /// asked to log in again; only Settings > Logout ever clears the session
+  /// that makes this check true.
+  Future<void> _openSupervisorLogin(BuildContext context) async {
+    final repository = sessionRepository ?? SupervisorSessionRepository();
+    final isLoggedIn = await repository.isLoggedIn();
+    if (!context.mounted) return;
+    if (isLoggedIn) {
+      Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
+    } else {
+      Navigator.pushNamed(context, AppRoutes.login);
+    }
   }
 
   /// There is no password-reset flow yet, so this points the user at the one

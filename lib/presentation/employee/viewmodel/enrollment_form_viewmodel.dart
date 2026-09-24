@@ -6,6 +6,7 @@ import '../../../core/base/base_view_model.dart';
 import '../../../data/models/department_model.dart';
 import '../../../data/models/enrollment_draft_model.dart';
 import '../../../data/models/worker_model.dart';
+import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/lookup_repository.dart';
 
 /// Holds the selections on the enrollment form that aren't text fields.
@@ -13,12 +14,20 @@ import '../../../data/repositories/lookup_repository.dart';
 /// The text values stay in the view's controllers; this view model owns the
 /// choices (including the department, picked from the locally cached list
 /// synced at login — see LookupRepository) and assembles the finished
-/// [EnrollmentDraft].
+/// [EnrollmentDraft]. Also drives edit mode (see EnrollmentFormScreen):
+/// [initialDepartmentId] pre-selects a department once loaded, and
+/// [saveDepartmentOnly] updates just that on an existing worker.
 class EnrollmentFormViewModel extends BaseViewModel {
   final LookupRepository _lookupRepository;
+  final EmployeeRepository _employeeRepository;
+  final int? initialDepartmentId;
 
-  EnrollmentFormViewModel({LookupRepository? lookupRepository})
-    : _lookupRepository = lookupRepository ?? LookupRepository();
+  EnrollmentFormViewModel({
+    LookupRepository? lookupRepository,
+    EmployeeRepository? employeeRepository,
+    this.initialDepartmentId,
+  }) : _lookupRepository = lookupRepository ?? LookupRepository(),
+       _employeeRepository = employeeRepository ?? EmployeeRepository();
 
   Gender _gender = Gender.male;
   PayType _enrollmentType = PayType.daily;
@@ -26,6 +35,7 @@ class EnrollmentFormViewModel extends BaseViewModel {
   Department? _department;
   List<Department> _departments = const [];
   bool _isLoadingDepartments = true;
+  bool _isSavingDepartment = false;
   File? _nationalIdImage;
 
   Gender get gender => _gender;
@@ -34,15 +44,37 @@ class EnrollmentFormViewModel extends BaseViewModel {
   Department? get department => _department;
   List<Department> get departments => _departments;
   bool get isLoadingDepartments => _isLoadingDepartments;
+  bool get isSavingDepartment => _isSavingDepartment;
   File? get nationalIdImage => _nationalIdImage;
 
   /// Loads the departments cached from the last successful login sync —
-  /// call once from the screen's initState.
+  /// call once from the screen's initState. Pre-selects
+  /// [initialDepartmentId] once loaded, for edit mode.
   Future<void> loadDepartments() async {
     _isLoadingDepartments = true;
     safeNotify();
     _departments = await _lookupRepository.getDepartments();
+
+    final initialId = initialDepartmentId;
+    if (initialId != null) {
+      for (final department in _departments) {
+        if (department.id == initialId) {
+          _department = department;
+          break;
+        }
+      }
+    }
+
     _isLoadingDepartments = false;
+    safeNotify();
+  }
+
+  /// Edit mode only: sets the display-only Gender/Enrollment Type pills to
+  /// the worker's actual values — they're disabled in edit mode, but
+  /// should still show the truth rather than these fields' plain defaults.
+  void presetForEditing({required Gender gender, required PayType enrollmentType}) {
+    _gender = gender;
+    _enrollmentType = enrollmentType;
     safeNotify();
   }
 
@@ -112,5 +144,26 @@ class EnrollmentFormViewModel extends BaseViewModel {
       departmentName: department.name,
       nationalIdImagePath: nationalIdImage.path,
     );
+  }
+
+  /// Edit mode only: updates just [workerId]'s department — the only field
+  /// editing a worker is allowed to change. Returns an error message on
+  /// failure, or null on success.
+  Future<String?> saveDepartmentOnly(int workerId) async {
+    final department = _department;
+    if (department == null) return 'Select the department';
+    if (_isSavingDepartment) return null;
+
+    _isSavingDepartment = true;
+    safeNotify();
+    try {
+      await _employeeRepository.updateDepartment(workerId, department.id);
+      return null;
+    } catch (e) {
+      return e.toString();
+    } finally {
+      _isSavingDepartment = false;
+      safeNotify();
+    }
   }
 }

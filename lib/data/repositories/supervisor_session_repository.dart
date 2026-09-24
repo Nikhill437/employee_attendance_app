@@ -55,4 +55,34 @@ class SupervisorSessionRepository {
     if (raw == null) return null;
     return jsonDecode(raw) as Map<String, dynamic>;
   }
+
+  /// The supervisor's department id from the stored login response, for
+  /// gating task actions on the worker list (a worker's department must
+  /// match the supervisor's own). The confirmed login response sample
+  /// (`{"message", "user": {"id", "email", "name", "role", "timezone",
+  /// "district_id"}, "AccessTokenss", "RefreshToken"}`) didn't include a
+  /// department field at all, so this tries a few plausible key paths
+  /// defensively rather than assuming one — adjust once the real field
+  /// name is confirmed, the same way `AccessTokenss` was.
+  Future<int?> getSupervisorDepartmentId() async {
+    final session = await getSession();
+    if (session == null) return null;
+    final user = session['user'];
+
+    final candidates = <Object?>[
+      session['department_id'],
+      session['departmentId'],
+      if (user is Map) user['department_id'],
+      if (user is Map) user['departmentId'],
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate is int) return candidate;
+      if (candidate is String) {
+        final parsed = int.tryParse(candidate);
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
 }
