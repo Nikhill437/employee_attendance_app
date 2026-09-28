@@ -15,6 +15,7 @@ import 'package:employee_attendance_app/data/models/worker_attendance_model.dart
 import 'package:employee_attendance_app/data/repositories/attendance_repository.dart';
 import 'package:employee_attendance_app/data/repositories/employee_repository.dart';
 import 'package:employee_attendance_app/data/repositories/lookup_repository.dart';
+import 'package:employee_attendance_app/data/repositories/task_repository.dart';
 import 'package:employee_attendance_app/data/repositories/worker_attendance_repository.dart';
 import 'package:employee_attendance_app/presentation/employee/viewmodel/enrollment_form_viewmodel.dart';
 import 'package:employee_attendance_app/presentation/dashboard/view/dashboard_screen.dart';
@@ -86,6 +87,11 @@ class _FakeAttendanceRepository extends AttendanceRepository {
 
   @override
   Future<int> countPresentOn(DateTime day) async => present;
+}
+
+class _FakeTaskRepository extends TaskRepository {
+  @override
+  Future<Set<int>> getWorkerIdsWithAssignedTasks() async => const {};
 }
 
 class _FakeWorkerAttendanceRepository extends WorkerAttendanceRepository {
@@ -269,6 +275,7 @@ void main() {
             employees: _FakeEmployeeRepository(2),
             attendance: _FakeAttendanceRepository(0),
             workerAttendance: _FakeWorkerAttendanceRepository(),
+            tasks: _FakeTaskRepository(),
           ),
         ),
       ),
@@ -549,6 +556,7 @@ void main() {
             employees: _FakeEmployeeRepository(0),
             attendance: _FakeAttendanceRepository(0),
             workerAttendance: _FakeWorkerAttendanceRepository(),
+            tasks: _FakeTaskRepository(),
           ),
         ),
       ),
@@ -579,6 +587,7 @@ void main() {
                 employees: _FakeEmployeeRepository(2),
                 attendance: _FakeAttendanceRepository(1),
                 workerAttendance: _FakeWorkerAttendanceRepository(),
+                tasks: _FakeTaskRepository(),
               ),
             ),
           },

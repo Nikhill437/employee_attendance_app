@@ -27,4 +27,9 @@ class TaskRepository {
   /// Removes [taskIds] from [workerId]'s assignments.
   Future<void> unassignTasks(int workerId, List<int> taskIds) =>
       _dbHelper.unassignWorkerTasks(workerId, taskIds);
+
+  /// Every worker with at least one active task assignment — for the
+  /// worker list's "View Tasks" button, disabled otherwise.
+  Future<Set<int>> getWorkerIdsWithAssignedTasks() =>
+      _dbHelper.getWorkerIdsWithAssignedTasks();
 }

@@ -228,29 +228,29 @@ class _AttendanceDayRow extends StatelessWidget {
               ],
             ),
           ),
-          if (workerId != null)
-            TextButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => TaskStatusScreen(
-                    workerId: workerId!,
-                    workerName: workerName,
-                    attendanceId: record.attendanceId,
-                  ),
-                ),
-              ),
-              icon: const Icon(Icons.fact_check_outlined, size: 16),
-              label: const Text('Tasks'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.deepGreen,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                textStyle: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+          // if (workerId != null)
+          //   TextButton.icon(
+          //     onPressed: () => Navigator.push(
+          //       context,
+          //       MaterialPageRoute(
+          //         builder: (context) => TaskStatusScreen(
+          //           workerId: workerId!,
+          //           workerName: workerName,
+          //           attendanceId: record.attendanceId,
+          //         ),
+          //       ),
+          //     ),
+          //     icon: const Icon(Icons.fact_check_outlined, size: 16),
+          //     label: const Text('Tasks'),
+          //     style: TextButton.styleFrom(
+          //       foregroundColor: AppColors.deepGreen,
+          //       padding: const EdgeInsets.symmetric(horizontal: 8),
+          //       textStyle: const TextStyle(
+          //         fontSize: 12.5,
+          //         fontWeight: FontWeight.w600,
+          //       ),
+          //     ),
+          //   ),
         ],
       ),
     );

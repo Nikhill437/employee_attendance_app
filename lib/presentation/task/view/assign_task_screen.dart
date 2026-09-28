@@ -189,12 +189,12 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
           ),
           child: Row(
             children: [
-              const Icon(
-                Icons.task_alt_outlined,
-                size: 20,
-                color: AppColors.muted,
-              ),
-              const SizedBox(width: 10),
+              // const Icon(
+              //   Icons.task_alt_outlined,
+              //   size: 20,
+              //   color: AppColors.muted,
+              // ),
+              // const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   hint,
@@ -208,6 +208,10 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     );
   }
 
+  /// Same list look as the read-only worker_task_list_screen.dart (a card
+  /// of ListTiles, one per task) — but each row also gets a trailing
+  /// cross button, since a selected task here can be removed again before
+  /// saving.
   Widget _buildSelectedTasks() {
     final tasks = _viewModel.selectedTasks;
     return Column(
@@ -221,24 +225,28 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
             style: TextStyle(fontSize: 13, color: AppColors.muted),
           )
         else
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final task in tasks)
-                Chip(
-                  label: Text(task.name),
-                  deleteIcon: const Icon(Icons.close, size: 16),
-                  onDeleted: () => _viewModel.removeTask(task),
-                  backgroundColor: const Color(0xFFE7F6EC),
-                  labelStyle: const TextStyle(
-                    color: AppColors.deepGreen,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
+          AppCard(
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                for (final task in tasks) ...[
+                  ListTile(
+                    leading: const Icon(
+                      Icons.task_alt_outlined,
+                      color: AppColors.deepGreen,
+                    ),
+                    title: Text(task.name),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close, color: AppColors.muted),
+                      tooltip: 'Remove task',
+                      onPressed: () => _viewModel.removeTask(task),
+                    ),
                   ),
-                  side: BorderSide.none,
-                ),
-            ],
+                  if (task != tasks.last)
+                    const Divider(height: 1, color: AppColors.cardBorder),
+                ],
+              ],
+            ),
           ),
       ],
     );

@@ -9,7 +9,7 @@ import '../../auth/view/mark_attendance_screen.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../employee/view/enrollment_form_screen.dart';
 import '../../task/view/assign_task_screen.dart';
-import '../../task/view/worker_task_list_screen.dart';
+import '../../task/view/task_status_screen.dart';
 import '../viewmodel/worker_list_viewmodel.dart';
 
 class WorkerListScreen extends StatefulWidget {
@@ -196,14 +196,18 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     }
   }
 
+  /// Opens today's task status for [worker] — enabled only when both
+  /// [Worker.hasAssignedTasks] and [Worker.todayAttendanceId] hold (see the
+  /// `_WorkerCard` construction below), so this guard is just for safety.
   Future<void> _openWorkerTasks(Worker worker) async {
-    if (worker.workerId == null) return;
+    if (worker.workerId == null || worker.todayAttendanceId == null) return;
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => WorkerTaskListScreen(
+        builder: (context) => TaskStatusScreen(
           workerId: worker.workerId!,
           workerName: worker.name,
+          attendanceId: worker.todayAttendanceId!,
         ),
       ),
     );
@@ -403,7 +407,10 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
                 isSyncing: _viewModel.isSyncing(worker.employeeId),
                 onSync: () => _syncWorker(worker),
                 onAssignTask: () => _openAssignTask(worker),
-                onViewTasks: () => _openWorkerTasks(worker),
+                onViewTasks:
+                    worker.hasAssignedTasks && worker.todayAttendanceId != null
+                    ? () => _openWorkerTasks(worker)
+                    : null,
                 isSyncingTasks: _viewModel.isSyncingTasks(worker.employeeId),
                 onSyncTasks: () => _syncTasks(worker),
                 canManageTasks: _viewModel.canManageTasks(worker),
@@ -525,7 +532,11 @@ class _WorkerCard extends StatelessWidget {
   final bool isSyncing;
   final VoidCallback onSync;
   final VoidCallback onAssignTask;
-  final VoidCallback onViewTasks;
+
+  /// Null disables "View Tasks" — no active assignments, or the worker
+  /// hasn't checked in today (task_status_screen.dart needs that day's
+  /// attendance id).
+  final VoidCallback? onViewTasks;
   final bool isSyncingTasks;
   final VoidCallback onSyncTasks;
 
@@ -557,11 +568,28 @@ class _WorkerCard extends StatelessWidget {
     required this.onSyncTaskCompletion,
   });
 
+  // A bespoke container instead of the shared AppCard — a soft shadow (in
+  // place of AppCard's flat border-only look) and a touch more corner
+  // radius read as a more polished, "raised" card, scoped to this widget
+  // alone so nothing elsewhere in the app that uses AppCard is affected.
   @override
   Widget build(BuildContext context) {
-    return AppCard(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.ink.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -572,34 +600,66 @@ class _WorkerCard extends StatelessWidget {
               const SizedBox(width: 4),
               Tooltip(
                 message: 'Edit department',
-                child: IconButton(
-                  onPressed: onEdit,
-                  icon: const Icon(
-                    Icons.edit_outlined,
-                    size: 18,
-                    color: AppColors.muted,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: onEdit,
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(
+                      Icons.edit_outlined,
+                      size: 18,
+                      color: AppColors.muted,
+                    ),
                   ),
-                  constraints: const BoxConstraints(),
-                  padding: const EdgeInsets.all(4),
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: 2),
               _buildAttendance(),
+              const SizedBox(width: 4),
             ],
           ),
-          const Divider(height: 22, color: AppColors.cardBorder),
-          _buildFooter(),
+          SizedBox(height: 8),
+          Padding(
+            padding: EdgeInsets.only(
+              left: MediaQuery.of(context).size.width * 0.15,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _StatusText(
+                  label: worker.verification.label,
+                  color: _verificationColor,
+                  showDot: worker.verification != VerificationStatus.verified,
+                  alignEnd: true,
+                ),
+                const SizedBox(width: 10),
+                _SyncIndicator(
+                  isSyncing: isSyncing,
+                  isSynced: worker.isSynced,
+                  onTap: onSync,
+                ),
+              ],
+            ),
+          ),
+
           // Gated on approval alone — unlike Assign/View/Sync Task, marking
           // attendance isn't department-scoped, so it doesn't need
           // canManageTasks' department match too.
           if (worker.status == 'approved') ...[
-            const Divider(height: 18, color: AppColors.cardBorder),
-            _buildMarkAttendanceAction(),
+            const SizedBox(height: 12),
+            _ActionsPanel(child: _buildMarkAttendanceAction()),
           ],
           if (canManageTasks) ...[
-            const Divider(height: 18, color: AppColors.cardBorder),
-            _buildTaskActions(),
-            _buildTaskCompletionSyncAction(),
+            const SizedBox(height: 10),
+            _ActionsPanel(
+              child: Column(
+                children: [
+                  _buildTaskActions(),
+                  const SizedBox(height: 8),
+                  _buildTaskCompletionSyncAction(),
+                ],
+              ),
+            ),
           ],
         ],
       ),
@@ -618,33 +678,34 @@ class _WorkerCard extends StatelessWidget {
         ? 'Check Out'
         : 'Attendance Complete';
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: isComplete ? null : onMarkAttendance,
-              icon: const Icon(Icons.fingerprint, size: 16),
-              label: Text(label),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.deepGreen,
-                side: const BorderSide(color: AppColors.cardBorder),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                textStyle: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                ),
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: isComplete ? null : onMarkAttendance,
+            icon: const Icon(Icons.fingerprint, size: 16),
+            label: Text(label),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.deepGreen,
+              backgroundColor: Colors.white,
+              side: const BorderSide(color: AppColors.cardBorder),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              textStyle: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          // Nothing to push to the server until at least a check-in exists.
-          if (worker.hasCheckedInToday) ...[
-            const SizedBox(width: 8),
-            _buildAttendanceSyncAction(),
-          ],
+        ),
+        // Nothing to push to the server until at least a check-in exists.
+        if (worker.hasCheckedInToday) ...[
+          const SizedBox(width: 8),
+          _buildAttendanceSyncAction(),
         ],
-      ),
+      ],
     );
   }
 
@@ -656,11 +717,10 @@ class _WorkerCard extends StatelessWidget {
   /// tappable so it can be retried.
   Widget _buildAttendanceSyncAction() {
     if (isSyncingAttendance) {
-      return const Padding(
-        padding: EdgeInsets.all(8),
-        child: SizedBox(
-          width: 20,
-          height: 20,
+      return _RoundIconSlot(
+        child: const SizedBox(
+          width: 18,
+          height: 18,
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
       );
@@ -669,84 +729,82 @@ class _WorkerCard extends StatelessWidget {
       message: worker.hasRealAttendanceIdToday
           ? 'Attendance synced'
           : 'Sync attendance to server',
-      child: IconButton(
-        onPressed: worker.hasRealAttendanceIdToday ? null : onSyncAttendance,
-        icon: Icon(
+      child: _RoundIconSlot(
+        onTap: worker.hasRealAttendanceIdToday ? null : onSyncAttendance,
+        child: Icon(
           worker.hasRealAttendanceIdToday
               ? Icons.cloud_done_outlined
               : Icons.cloud_upload_outlined,
-          size: 20,
+          size: 19,
           color: worker.hasRealAttendanceIdToday
               ? AppColors.success
               : AppColors.deepGreen,
         ),
-        constraints: const BoxConstraints(),
-        padding: const EdgeInsets.all(8),
       ),
     );
   }
 
   Widget _buildTaskActions() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: onAssignTask,
-              icon: const Icon(Icons.playlist_add, size: 16),
-              label: const Text('Assign Task'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.deepGreen,
-                side: const BorderSide(color: AppColors.cardBorder),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                textStyle: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                ),
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: onAssignTask,
+            icon: const Icon(Icons.playlist_add, size: 16),
+            label: const Text('Assign Task'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.deepGreen,
+              backgroundColor: Colors.white,
+              side: const BorderSide(color: AppColors.cardBorder),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              textStyle: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          const SizedBox(width: 8),
+        ),
+        const SizedBox(width: 8),
+        Tooltip(
+          message: onViewTasks == null
+              ? 'No tasks to view'
+              : 'View task status',
+          child: _RoundIconSlot(
+            onTap: onViewTasks,
+            child: Icon(
+              Icons.visibility_outlined,
+              size: 19,
+              color: onViewTasks == null
+                  ? AppColors.muted
+                  : AppColors.deepGreen,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        if (isSyncingTasks)
+          _RoundIconSlot(
+            child: const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else
           Tooltip(
-            message: 'View assigned tasks',
-            child: IconButton(
-              onPressed: onViewTasks,
-              icon: const Icon(
-                Icons.visibility_outlined,
-                size: 20,
+            message: 'Sync tasks to server',
+            child: _RoundIconSlot(
+              onTap: onSyncTasks,
+              child: const Icon(
+                Icons.cloud_sync_outlined,
+                size: 19,
                 color: AppColors.deepGreen,
               ),
-              constraints: const BoxConstraints(),
-              padding: const EdgeInsets.all(8),
             ),
           ),
-          const SizedBox(width: 4),
-          if (isSyncingTasks)
-            const Padding(
-              padding: EdgeInsets.all(8),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          else
-            Tooltip(
-              message: 'Sync tasks to server',
-              child: IconButton(
-                onPressed: onSyncTasks,
-                icon: const Icon(
-                  Icons.cloud_sync_outlined,
-                  size: 20,
-                  color: AppColors.deepGreen,
-                ),
-                constraints: const BoxConstraints(),
-                padding: const EdgeInsets.all(8),
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -756,32 +814,33 @@ class _WorkerCard extends StatelessWidget {
   /// `worker_tasks`) since this syncs the *completion*,
   /// `worker_task_completion`.
   Widget _buildTaskCompletionSyncAction() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: SizedBox(
-        width: double.infinity,
-        child: OutlinedButton.icon(
-          onPressed: isSyncingTaskCompletion ? null : onSyncTaskCompletion,
-          icon: isSyncingTaskCompletion
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.fact_check_outlined, size: 16),
-          label: Text(
-            isSyncingTaskCompletion
-                ? 'Syncing Task Completion...'
-                : 'Sync Task Completion',
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: isSyncingTaskCompletion ? null : onSyncTaskCompletion,
+        icon: isSyncingTaskCompletion
+            ? const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.fact_check_outlined, size: 16),
+        label: Text(
+          isSyncingTaskCompletion
+              ? 'Syncing Task Completion...'
+              : 'Sync Task Completion',
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.deepGreen,
+          backgroundColor: Colors.white,
+          side: const BorderSide(color: AppColors.cardBorder),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
           ),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.deepGreen,
-            side: const BorderSide(color: AppColors.cardBorder),
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            textStyle: const TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-            ),
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          textStyle: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
@@ -845,48 +904,6 @@ class _WorkerCard extends StatelessWidget {
     );
   }
 
-  Widget _buildFooter() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: _StatusText(
-              prefix: 'Work: ',
-              label: worker.workStatus.label,
-              color: _workColor,
-              showDot: worker.workStatus != WorkStatus.completed,
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Flexible (not Expanded) so the verification label is the one
-          // that ellipsizes if space is tight — the sync pill next to it
-          // stays a fixed, always-fully-visible tap target.
-          Flexible(
-            child: _StatusText(
-              label: worker.verification.label,
-              color: _verificationColor,
-              showDot: worker.verification != VerificationStatus.verified,
-              alignEnd: true,
-            ),
-          ),
-          const SizedBox(width: 10),
-          _SyncIndicator(
-            isSyncing: isSyncing,
-            isSynced: worker.isSynced,
-            onTap: onSync,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Color get _workColor => switch (worker.workStatus) {
-    WorkStatus.completed => AppColors.success,
-    WorkStatus.inProgress => AppColors.warning,
-    WorkStatus.notStarted => AppColors.muted,
-  };
-
   Color get _verificationColor => switch (worker.verification) {
     VerificationStatus.verified => AppColors.success,
     VerificationStatus.pending => AppColors.warning,
@@ -939,6 +956,54 @@ class _SyncIndicator extends StatelessWidget {
   }
 }
 
+/// A light tinted, rounded panel grouping a card's action buttons — visually
+/// separates "what you can do" from the identity/status info above it,
+/// instead of the plain hairline dividers this replaced.
+class _ActionsPanel extends StatelessWidget {
+  final Widget child;
+
+  const _ActionsPanel({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F9F6),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// A small white, rounded tap target for a single icon action inside an
+/// [_ActionsPanel] — gives every icon button in the card the same "raised
+/// chip" footprint instead of a bare icon floating on the panel's tint.
+class _RoundIconSlot extends StatelessWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+
+  const _RoundIconSlot({required this.child, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: const BorderSide(color: AppColors.cardBorder),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(padding: const EdgeInsets.all(8), child: child),
+      ),
+    );
+  }
+}
+
 class _Avatar extends StatelessWidget {
   final Worker worker;
 
@@ -947,20 +1012,28 @@ class _Avatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final present = worker.isPresent;
+    final ringColor = present ? AppColors.success : AppColors.cardBorder;
     return Container(
-      width: 44,
-      height: 44,
-      alignment: Alignment.center,
+      width: 48,
+      height: 48,
+      padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: present ? const Color(0xFFE7F6EC) : const Color(0xFFEFEFEF),
+        border: Border.all(color: ringColor, width: 2),
       ),
-      child: Text(
-        worker.initials,
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-          color: present ? AppColors.deepGreen : AppColors.muted,
+      child: Container(
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: present ? const Color(0xFFE7F6EC) : const Color(0xFFEFEFEF),
+        ),
+        child: Text(
+          worker.initials,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: present ? AppColors.deepGreen : AppColors.muted,
+          ),
         ),
       ),
     );

@@ -7,6 +7,7 @@ import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_completion_sync_repository.dart';
+import '../../../data/repositories/task_repository.dart';
 import '../../../data/repositories/task_sync_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 import '../../../data/repositories/worker_import_repository.dart';
@@ -23,6 +24,7 @@ class WorkerListViewModel extends BaseViewModel {
   final SupervisorSessionRepository _session;
   final WorkerAttendanceRepository _workerAttendance;
   final TaskCompletionSyncRepository _taskCompletionSync;
+  final TaskRepository _tasks;
 
   WorkerListViewModel({
     EmployeeRepository? employees,
@@ -33,6 +35,7 @@ class WorkerListViewModel extends BaseViewModel {
     SupervisorSessionRepository? session,
     WorkerAttendanceRepository? workerAttendance,
     TaskCompletionSyncRepository? taskCompletionSync,
+    TaskRepository? tasks,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _sync = sync ?? WorkerSyncRepository(),
@@ -40,7 +43,8 @@ class WorkerListViewModel extends BaseViewModel {
        _taskSync = taskSync ?? TaskSyncRepository(),
        _session = session ?? SupervisorSessionRepository(),
        _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
-       _taskCompletionSync = taskCompletionSync ?? TaskCompletionSyncRepository();
+       _taskCompletionSync = taskCompletionSync ?? TaskCompletionSyncRepository(),
+       _tasks = tasks ?? TaskRepository();
 
   bool _isLoading = true;
   bool _isFetchingFromServer = false;
@@ -247,6 +251,7 @@ class WorkerListViewModel extends BaseViewModel {
     final employees = await _employees.getUnique();
     final checkIns = await _firstCheckInsToday();
     final todayAttendance = await _workerAttendance.getTodayAttendanceByWorker();
+    final assignedTaskWorkerIds = await _tasks.getWorkerIdsWithAssignedTasks();
     _supervisorDepartmentId = await _session.getSupervisorDepartmentId();
 
     _workers = [
@@ -270,6 +275,8 @@ class WorkerListViewModel extends BaseViewModel {
           isAttendanceSynced: todayAttendance[employee.id]?.isSynced ?? false,
           hasRealAttendanceIdToday:
               todayAttendance[employee.id]?.realAttendanceId != null,
+          todayAttendanceId: todayAttendance[employee.id]?.attendanceId,
+          hasAssignedTasks: assignedTaskWorkerIds.contains(employee.id),
         ),
     ];
 

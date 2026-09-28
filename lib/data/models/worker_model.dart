@@ -111,6 +111,16 @@ class Worker {
   /// after check-in/check-out are both done, so it can be retried.
   final bool hasRealAttendanceIdToday;
 
+  /// Today's `worker_attendance.offline_worker_id` — the local id
+  /// task_status_screen.dart needs to show/edit this worker's task
+  /// completions for today. Null if they haven't checked in yet today.
+  final int? todayAttendanceId;
+
+  /// Whether this worker has at least one active task assignment — the
+  /// worker list's "View Tasks" button disables otherwise, since there'd
+  /// be nothing to show.
+  final bool hasAssignedTasks;
+
   const Worker({
     required this.name,
     required this.employeeId,
@@ -129,6 +139,8 @@ class Worker {
     this.hasCheckedOutToday = false,
     this.isAttendanceSynced = false,
     this.hasRealAttendanceIdToday = false,
+    this.todayAttendanceId,
+    this.hasAssignedTasks = false,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;

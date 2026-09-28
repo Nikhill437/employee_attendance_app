@@ -566,6 +566,18 @@ class DatabaseHelper {
     );
   }
 
+  /// Every worker_id (local `offline_worker_id`) with at least one active
+  /// task assignment — one query for the whole worker list, so its "View
+  /// Tasks" button can disable itself for a worker with nothing assigned
+  /// without a query per card.
+  Future<Set<int>> getWorkerIdsWithAssignedTasks() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      "SELECT DISTINCT worker_id FROM worker_tasks WHERE status = 'active'",
+    );
+    return {for (final row in rows) row['worker_id'] as int};
+  }
+
   // --- Worker attendance (check-in / check-out) methods ---
   //
   // These are additive: they read/write only `worker_attendance` and
