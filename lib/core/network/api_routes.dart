@@ -6,11 +6,12 @@ class ApiRoutes {
   const ApiRoutes._();
 
   static const String login = '/auth/verifyUser';
-  static const String listDepartments = 'attendance/searchDept';
-  static const String listTasks = 'attendance/list_task';
+  static const String listDepartments = '/attendance/searchDept';
+  static const String listTasks = '/attendance/list_task';
   static const String syncWorker = '/attendance/sync-worker';
-  static const String workerList = 'attendance/list';
-  static const String assignTask = 'attendance/assigntask';
-  static const String checkIn = 'attendance/check-in';
-  static const String workerTaskCompletion = 'attendance/worker-task-completion';
+  static const String workerList = '/attendance/list';
+  static const String assignTask = '/attendance/assigntask';
+  static const String checkIn = '/attendance/check-in';
+  static const String workerTaskCompletion =
+      '/attendance/worker-task-completion';
 }
