@@ -53,7 +53,16 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    Navigator.pushReplacementNamed(context, AppRoutes.dashboard);
+    // Clears the whole stack (splash included), not just this screen —
+    // pushReplacementNamed alone would leave splash sitting right below
+    // Dashboard, so back/swipe-back could still escape to it. Dashboard
+    // becomes the sole route until Settings > Logout clears it the same
+    // way in the other direction.
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      AppRoutes.dashboard,
+      (route) => false,
+    );
   }
 
   @override

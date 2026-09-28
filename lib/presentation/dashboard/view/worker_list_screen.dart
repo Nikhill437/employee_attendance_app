@@ -234,12 +234,28 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   /// screen, pre-filled for [worker] — see
   /// MarkAttendanceScreen.initialEmployeeId. Reloads the list on success so
   /// the card picks up the new check-in/check-out state.
+  ///
+  /// Passes [Worker.remoteEmployeeId] (the numeric `employee_id`), not
+  /// [Worker.employeeId] (their National ID) — the attendance login flow
+  /// (see AuthRepository) matches on `employee_id`, same as when a worker
+  /// types it themselves on the public kiosk screen. The button that calls
+  /// this is already hidden until `remoteEmployeeId` is set (see the
+  /// `_WorkerCard` construction below), so this is just a safety net.
   Future<void> _openMarkAttendance(Worker worker) async {
+    final employeeId = worker.remoteEmployeeId;
+    if (employeeId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This worker has no employee ID to mark attendance with'),
+        ),
+      );
+      return;
+    }
     final marked = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) =>
-            MarkAttendanceScreen(initialEmployeeId: worker.employeeId),
+            MarkAttendanceScreen(initialEmployeeId: employeeId.toString()),
       ),
     );
     if (marked == true && mounted) await _viewModel.load();
