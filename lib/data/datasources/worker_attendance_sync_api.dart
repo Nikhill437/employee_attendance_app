@@ -1,5 +1,6 @@
 import '../../core/network/api_client.dart';
 import '../../core/network/api_routes.dart';
+import '../../core/utils/app_time.dart';
 import '../models/worker_attendance_model.dart';
 
 /// Remote datasource for pushing one day's check-in/check-out record to the
@@ -46,11 +47,17 @@ class WorkerAttendanceSyncApi {
   /// The backend wants a real ISO-8601 UTC timestamp (same fix as
   /// `completed_date` on the worker-task-completion sync — see
   /// TaskCompletionSyncApi). `check_in_time`/`check_out_time` are stored
-  /// locally as `DateTime.now().toIso8601String()` (no offset, so it parses
-  /// as local time); converting to UTC before formatting is what makes it
-  /// unambiguous for the backend. Null (no check-out yet) stays null.
+  /// locally as `AppTime.nowInUserZone().toIso8601String()` — a naive
+  /// string whose calendar fields are the supervisor's own timezone (from
+  /// their login response), not the device's. Parsing it and calling
+  /// plain `.toUtc()` would convert using the *device's* timezone instead
+  /// — wrong whenever that differs from the supervisor's — so this goes
+  /// through `AppTime.userWallTimeToUtc`, the actual inverse of
+  /// `nowInUserZone`, instead. Null (no check-out yet) stays null.
   String? _formatTimestamp(String? isoString) {
     if (isoString == null) return null;
-    return DateTime.parse(isoString).toUtc().toIso8601String();
+    return AppTime.userWallTimeToUtc(
+      DateTime.parse(isoString),
+    ).toIso8601String();
   }
 }

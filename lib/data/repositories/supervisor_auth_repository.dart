@@ -1,4 +1,5 @@
 import '../../core/network/api_exception.dart';
+import '../../core/utils/app_time.dart';
 import '../datasources/supervisor_auth_api.dart';
 import 'api_token_repository.dart';
 import 'supervisor_session_repository.dart';
@@ -40,6 +41,12 @@ class SupervisorAuthRepository {
       }
       await _tokenRepository.setToken(token);
       await _sessionRepository.saveSession(response);
+      // The confirmed login response includes the supervisor's own IANA
+      // timezone under user.timezone — activating it here (rather than
+      // only when AppTime.init() next runs, on the following app launch)
+      // means every timestamp shown for the rest of *this* session is
+      // already in their timezone too.
+      await AppTime.setTimeZone(_extractTimeZone(response));
       return null;
     } on ApiException catch (e) {
       return e.message;
@@ -58,6 +65,27 @@ class SupervisorAuthRepository {
     ]) {
       final value = response[key];
       if (value is String && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  /// The confirmed login response sample is `{"message", "user": {"id",
+  /// "email", "name", "role", "timezone", "district_id"}, ...}` — same
+  /// defensive multi-key-path approach as
+  /// SupervisorSessionRepository.getSupervisorDepartmentId, since the
+  /// field's exact placement isn't confirmed beyond that one sample.
+  String? _extractTimeZone(Map<String, dynamic> response) {
+    final user = response['user'];
+    final candidates = <Object?>[
+      response['timezone'],
+      response['time_zone'],
+      if (user is Map) user['timezone'],
+      if (user is Map) user['time_zone'],
+    ];
+    for (final candidate in candidates) {
+      if (candidate is String && candidate.trim().isNotEmpty) {
+        return candidate;
+      }
     }
     return null;
   }

@@ -76,7 +76,9 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       final dob = editing.dateOfBirth != null
           ? DateTime.tryParse(editing.dateOfBirth!)
           : null;
-      if (dob != null) _dobController.text = DateTimeFormatter.dayLabel(dob);
+      if (dob != null) {
+        _dobController.text = DateTimeFormatter.dateOfBirth(dob);
+      }
       _formViewModel.presetForEditing(
         gender: editing.gender,
         enrollmentType: editing.payType,
@@ -116,7 +118,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     if (selected == null) return;
 
     _formViewModel.selectDateOfBirth(selected);
-    _dobController.text = DateTimeFormatter.dayLabel(selected);
+    _dobController.text = DateTimeFormatter.dateOfBirth(selected);
   }
 
   /// Opens the camera, then hands the shot to the view model to copy into

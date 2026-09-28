@@ -1,5 +1,6 @@
 import '../../core/network/api_client.dart';
 import '../../core/network/api_routes.dart';
+import '../../core/utils/app_time.dart';
 import '../models/task_completion_sync_model.dart';
 
 /// Remote datasource for pushing one worker-task completion to the backend.
@@ -49,11 +50,17 @@ class TaskCompletionSyncApi {
 
   /// The backend rejects the plain `yyyy-MM-dd HH:mm:ss` form ("completed_date
   /// must be a valid date") — it wants a real ISO-8601 UTC timestamp.
-  /// `completed_at` is stored locally as `DateTime.now().toIso8601String()`
-  /// (no offset, so it parses as local time); converting to UTC before
-  /// formatting is what actually makes it unambiguous for the backend.
+  /// `completed_at` is stored locally as
+  /// `AppTime.nowInUserZone().toIso8601String()` — a naive string whose
+  /// calendar fields are the supervisor's own timezone (from their login
+  /// response), not the device's, so converting it via plain `.toUtc()`
+  /// (device-timezone-based) would be wrong whenever those differ; this
+  /// goes through `AppTime.userWallTimeToUtc` instead, the actual inverse
+  /// of `nowInUserZone`.
   String? _formatTimestamp(String? isoString) {
     if (isoString == null) return null;
-    return DateTime.parse(isoString).toUtc().toIso8601String();
+    return AppTime.userWallTimeToUtc(
+      DateTime.parse(isoString),
+    ).toIso8601String();
   }
 }

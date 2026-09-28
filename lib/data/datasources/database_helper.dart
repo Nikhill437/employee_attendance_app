@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import '../../core/utils/app_time.dart';
 import '../models/attendance_log_model.dart';
 import '../models/department_model.dart';
 import '../models/employee_model.dart';
@@ -32,7 +33,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 11,
+      version: 12,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -124,6 +125,19 @@ class DatabaseHelper {
           await db.execute('DROP TABLE IF EXISTS worker_task_completion');
           await _createWorkerTables(db);
         }
+        if (oldVersion < 12 && oldVersion >= 7) {
+          // `workers.employee_id` — the backend's employee id, distinct
+          // from `worker_id` and `national_id` — is what the attendance
+          // login flow now matches on instead of national_id (see
+          // AuthRepository/DatabaseHelper.getWorkerByEmployeeId). SQLite's
+          // ALTER TABLE can't add a UNIQUE column, unlike the CREATE TABLE
+          // in _createWorkerTables a fresh install gets it from; nothing
+          // here depends on that constraint being DB-enforced, so a plain
+          // nullable column is fine for an upgrade.
+          await db.execute(
+            'ALTER TABLE workers ADD COLUMN employee_id INTEGER',
+          );
+        }
       },
     );
   }
@@ -201,6 +215,7 @@ class DatabaseHelper {
         created_by INTEGER NOT NULL,
         approved_by INTEGER,
         approved_at TEXT,
+        employee_id INTEGER UNIQUE,
         created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         modified_date TEXT,
         server_time TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -465,6 +480,22 @@ class DatabaseHelper {
     return Employee.fromMap(maps.first);
   }
 
+  /// Looks up a single worker by their `employee_id` (the backend's id,
+  /// stored via [upsertRemoteWorkers]) — what the attendance login flow
+  /// matches on instead of national_id (see AuthRepository). Unlike
+  /// national_id, `employee_id` is only ever populated once a worker has
+  /// been imported/synced, so a worker enrolled purely offline and never
+  /// synced won't be found this way yet.
+  Future<Employee?> getWorkerByEmployeeId(int employeeId) async {
+    final db = await database;
+    final maps = await db.rawQuery(
+      '$_workerSelect WHERE workers.employee_id = ? LIMIT 1',
+      [employeeId],
+    );
+    if (maps.isEmpty) return null;
+    return Employee.fromMap(maps.first);
+  }
+
   // --- Attendance log (Login / face scan) methods ---
 
   Future<int> insertAttendanceLog(AttendanceLog log) async {
@@ -542,11 +573,20 @@ class DatabaseHelper {
   /// UNIQUE(worker_id, task_id) — callers don't need to filter first.
   Future<void> assignWorkerTasks(int workerId, List<int> taskIds) async {
     final db = await database;
+    // Passed explicitly rather than left to the column's own
+    // DEFAULT CURRENT_TIMESTAMP — that default is SQLite's own UTC clock,
+    // not the supervisor's timezone (see AppTime), and every other
+    // recorded timestamp in this file goes through AppTime for the same
+    // reason.
+    final now = AppTime.nowInUserZone().toIso8601String();
     final batch = db.batch();
     for (final taskId in taskIds) {
       batch.insert('worker_tasks', {
         'worker_id': workerId,
         'task_id': taskId,
+        'assigned_at': now,
+        'created_at': now,
+        'updated_at': now,
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
@@ -586,9 +626,13 @@ class DatabaseHelper {
   // methods above — the existing attendance-marking flow is unchanged.
 
   /// `worker_attendance.attendance_date` is a DATE column — a plain
-  /// yyyy-MM-dd key, not a full timestamp.
+  /// yyyy-MM-dd key, not a full timestamp. Keyed off the supervisor's own
+  /// timezone (see AppTime), set from the login response — not the
+  /// device's raw system clock, so the attendance-day boundary is
+  /// consistent regardless of what timezone a given device happens to be
+  /// set to.
   String _todayDateKey() {
-    final now = DateTime.now();
+    final now = AppTime.nowInUserZone();
     return '${now.year.toString().padLeft(4, '0')}-'
         '${now.month.toString().padLeft(2, '0')}-'
         '${now.day.toString().padLeft(2, '0')}';
@@ -616,7 +660,7 @@ class DatabaseHelper {
     );
 
     if (existing.isEmpty) {
-      final now = DateTime.now().toIso8601String();
+      final now = AppTime.nowInUserZone().toIso8601String();
       final row = {
         'worker_id': workerId,
         'attendance_date': today,
@@ -633,7 +677,7 @@ class DatabaseHelper {
 
     final row = existing.first;
     if (row['check_out_time'] == null) {
-      final now = DateTime.now().toIso8601String();
+      final now = AppTime.nowInUserZone().toIso8601String();
       await db.update(
         'worker_attendance',
         {
@@ -767,7 +811,7 @@ class DatabaseHelper {
   }) async {
     final db = await database;
     final status = isCompleted ? 'yes' : 'no';
-    final now = DateTime.now().toIso8601String();
+    final now = AppTime.nowInUserZone().toIso8601String();
     final existing = await db.query(
       'worker_task_completion',
       where: 'worker_task_id = ? AND attendance_id = ?',
@@ -882,6 +926,10 @@ class DatabaseHelper {
           // is purely bookkeeping (see the class doc comment above
           // _createWorkerTables); nothing local keys off it.
           'worker_id': worker.workerId,
+          // Distinct from worker_id and national_id — this is what the
+          // attendance login flow matches on instead of national_id (see
+          // AuthRepository/DatabaseHelper.getWorkerByEmployeeId).
+          'employee_id': worker.employeeId,
           'full_name': worker.fullName,
           'birth_date': worker.birthDate ?? '',
           'gender': worker.gender,
@@ -896,7 +944,7 @@ class DatabaseHelper {
           'approved_by': worker.approvedBy,
           'approved_at': worker.approvedAt,
           'created_date':
-              worker.createdDate ?? DateTime.now().toIso8601String(),
+              worker.createdDate ?? AppTime.nowInUserZone().toIso8601String(),
           'modified_date': worker.modifiedDate,
           // This row only exists locally because the server already has
           // it, so there's nothing left to push.

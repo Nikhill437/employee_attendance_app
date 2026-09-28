@@ -1,4 +1,5 @@
 import '../../../core/base/base_view_model.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 
 /// Drives the settings screen.
@@ -19,6 +20,7 @@ class SettingsViewModel extends BaseViewModel {
     safeNotify();
 
     await _sessionRepository.logout();
+    await AppTime.clear();
 
     _isLoggingOut = false;
     safeNotify();

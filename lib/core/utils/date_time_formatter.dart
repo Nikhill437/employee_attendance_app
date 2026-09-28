@@ -23,6 +23,12 @@ class DateTimeFormatter {
   static String dayLabel(DateTime date) =>
       '${_monthAbbreviations[date.month - 1]} ${date.day}, ${date.year}';
 
+  /// `24/10/2026` — day-month-year, used for Date of Birth.
+  static String dateOfBirth(DateTime date) =>
+      '${date.day.toString().padLeft(2, '0')}/'
+      '${date.month.toString().padLeft(2, '0')}/'
+      '${date.year}';
+
   /// `10:30 AM` — the 12-hour clock used by the "Last synced" captions.
   static String clock(DateTime time) {
     final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;

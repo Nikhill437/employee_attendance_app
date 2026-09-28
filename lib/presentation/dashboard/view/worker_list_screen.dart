@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/routes/app_routes.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/worker_model.dart';
 import '../../auth/view/mark_attendance_screen.dart';
@@ -285,7 +286,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   Widget _buildHeader() {
     return AppScreenHeader(
       title: 'Worker List',
-      subtitle: 'Today, ${DateTimeFormatter.dayLabel(DateTime.now())}',
+      subtitle: 'Today, ${DateTimeFormatter.dayLabel(AppTime.nowInUserZone())}',
       titleOverride: _isSearching ? _buildSearchField() : null,
       actions: [
         CircleHeaderAction(
@@ -644,12 +645,17 @@ class _WorkerCard extends StatelessWidget {
 
           // Gated on approval alone — unlike Assign/View/Sync Task, marking
           // attendance isn't department-scoped, so it doesn't need
-          // canManageTasks' department match too.
-          if (worker.status == 'approved') ...[
+          // canManageTasks' department match too. Both this and the task
+          // actions below additionally require a real employee_id — Check
+          // In/Out and every task action stay hidden until this worker's
+          // been imported/synced from the server and we actually have one
+          // (see Worker.remoteEmployeeId).
+          if (worker.status == 'approved' &&
+              worker.remoteEmployeeId != null) ...[
             const SizedBox(height: 12),
             _ActionsPanel(child: _buildMarkAttendanceAction()),
           ],
-          if (canManageTasks) ...[
+          if (canManageTasks && worker.remoteEmployeeId != null) ...[
             const SizedBox(height: 10),
             _ActionsPanel(
               child: Column(
@@ -867,6 +873,15 @@ class _WorkerCard extends StatelessWidget {
           '${worker.employeeId} • ${worker.department?.isNotEmpty == true ? worker.department : worker.role}',
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 13, color: AppColors.muted),
+        ),
+        const SizedBox(height: 2),
+        // remoteEmployeeId is only populated once this worker's been
+        // imported/synced from the server — null/empty for anyone else,
+        // shown as an em dash rather than left blank.
+        Text(
+          'Employee ID: ${worker.remoteEmployeeId?.toString() ?? '—'}',
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
         ),
         const SizedBox(height: 6),
         PayTypeChip(payType: worker.payType),

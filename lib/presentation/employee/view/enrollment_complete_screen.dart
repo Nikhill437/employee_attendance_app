@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/routes/app_routes.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/worker_model.dart';
 import '../../common/widgets/common_widgets.dart';
@@ -162,7 +163,7 @@ class EnrollmentCompleteScreen extends StatelessWidget {
   /// prefix when the record is viewed later.
   String get _registrationLabel {
     final date = DateTimeFormatter.dayLabel(registeredAt);
-    return DateTimeFormatter.isSameDay(registeredAt, DateTime.now())
+    return DateTimeFormatter.isSameDay(registeredAt, AppTime.nowInUserZone())
         ? 'Today, $date'
         : date;
   }

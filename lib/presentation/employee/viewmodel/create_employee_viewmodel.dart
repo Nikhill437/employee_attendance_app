@@ -1,4 +1,5 @@
 import '../../../core/base/base_view_model.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/employee_repository.dart';
@@ -53,7 +54,7 @@ class CreateEmployeeViewModel extends BaseViewModel {
         name: name,
         number: number,
         employeeId: employeeId,
-        attendanceTime: DateTime.now().toIso8601String(),
+        attendanceTime: AppTime.nowInUserZone().toIso8601String(),
         faceVerified: true,
         faceEmbeddings: embeddings,
         dateOfBirth: dateOfBirth,

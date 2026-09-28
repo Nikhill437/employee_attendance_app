@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/routes/app_routes.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/dashboard_summary_model.dart';
 import '../../../data/models/employee_model.dart';
@@ -179,7 +180,7 @@ class _DashboardHeader extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Today, ${DateTimeFormatter.dayLabel(DateTime.now())}',
+                'Today, ${DateTimeFormatter.dayLabel(AppTime.nowInUserZone())}',
                 style: const TextStyle(fontSize: 14, color: AppColors.muted),
               ),
             ],

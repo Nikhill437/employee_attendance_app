@@ -202,6 +202,15 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen>
     final headline = viewModel == null
         ? "Position the worker's face within the frame."
         : viewModel.statusMessage;
+    // statusColor's neutral value is Colors.white, meant for FaceScanScreen's
+    // dark backdrop — on this panel's light background that would be
+    // invisible, so neutral states fall back to the same ink used before
+    // this validation failure/success colouring existed; failure/success
+    // states (e.g. red for "Please open your eyes") still come through.
+    final headlineColor =
+        viewModel == null || viewModel.statusColor == Colors.white
+        ? AppColors.ink
+        : viewModel.statusColor;
 
     return Container(
       width: double.infinity,
@@ -215,10 +224,10 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen>
         children: [
           Text(
             headline,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
-              color: AppColors.ink,
+              color: headlineColor,
             ),
           ),
           const SizedBox(height: 6),

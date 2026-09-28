@@ -1,4 +1,5 @@
 import '../../../core/base/base_view_model.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/attendance_log_model.dart';
 import '../../../data/models/employee_model.dart';
@@ -277,6 +278,7 @@ class WorkerListViewModel extends BaseViewModel {
               todayAttendance[employee.id]?.realAttendanceId != null,
           todayAttendanceId: todayAttendance[employee.id]?.attendanceId,
           hasAssignedTasks: assignedTaskWorkerIds.contains(employee.id),
+          remoteEmployeeId: employee.remoteEmployeeId,
         ),
     ];
 
@@ -301,7 +303,7 @@ class WorkerListViewModel extends BaseViewModel {
 
   /// Earliest log per employee for today, keyed by employee ID.
   Future<Map<String, DateTime>> _firstCheckInsToday() async {
-    final today = DateTime.now();
+    final today = AppTime.nowInUserZone();
     final logs = await _attendance.getAllLogs();
     final earliest = <String, DateTime>{};
 

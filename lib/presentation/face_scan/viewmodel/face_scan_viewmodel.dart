@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:image/image.dart' as img;
 
 import '../../../core/base/base_view_model.dart';
 import '../../../core/services/face_recognition_service.dart';
@@ -45,6 +46,14 @@ enum ScanStatus {
   notRecognized,
   livenessFailed,
   error,
+
+  /// The captured photo failed the post-capture quality check — see
+  /// FaceScanViewModel._validateCapturedPhoto. Distinct statuses (rather
+  /// than reusing e.g. [faceObstructed]) so each has its own precise
+  /// message, even though several of them can also be reached live.
+  faceOutOfFrame,
+  faceTooSmall,
+  poseInvalid,
 }
 
 /// Verifies a captured embedding for [FaceScanMode.attendance]. Returns the
@@ -142,6 +151,9 @@ class FaceScanViewModel extends BaseViewModel {
       case ScanStatus.notRecognized:
       case ScanStatus.livenessFailed:
       case ScanStatus.error:
+      case ScanStatus.faceOutOfFrame:
+      case ScanStatus.faceTooSmall:
+      case ScanStatus.poseInvalid:
         return 0;
       case ScanStatus.singleFace:
         return (_stableSingleFaceFrames / _holdFramesRequired).clamp(0.0, 1.0);
@@ -264,6 +276,129 @@ class FaceScanViewModel extends BaseViewModel {
     return left >= _eyeOpenThreshold && right >= _eyeOpenThreshold;
   }
 
+  // --- Post-capture quality validation ---
+  //
+  // The live loop above only decides *when* to trigger a capture; it never
+  // re-checks the frame that's actually captured. Between the last "good"
+  // preview frame and the shutter, quality can change (a blink, a hand
+  // moving into frame, a step back), and InspireFace's own analysis (see
+  // FaceRecognitionService.getFaceAnalysis) only reports face count,
+  // embedding, and liveness — nothing about eyes, occlusion, framing, or
+  // size. So the captured photo is re-validated here, with the same
+  // landmark/eye checks used live plus framing/size/orientation checks the
+  // live loop can't reliably do (see below) — this is the one point both
+  // FaceCaptureScreen (enroll) and FaceScanScreen (attendance) funnel
+  // through via [_captureAndProcess], so fixing it here covers both.
+
+  /// Unlike [_liveDetector] ("fast" mode, tuned for per-frame preview
+  /// performance), this one runs "accurate" mode — it only ever processes
+  /// one still image per capture attempt, so the extra cost doesn't affect
+  /// the live preview's frame rate, and accurate mode is what makes
+  /// headEulerAngleY (yaw) reliable enough to gate on (see
+  /// _orientationAcceptable and the class-level note on why the live loop
+  /// can't use yaw).
+  final FaceDetector _captureDetector = FaceDetector(
+    options: FaceDetectorOptions(
+      performanceMode: FaceDetectorMode.accurate,
+      enableClassification: true,
+      enableLandmarks: true,
+    ),
+  );
+
+  /// Required margin between the face's bounding box and the photo's
+  /// edges — a face box touching or crossing an edge means part of it
+  /// (forehead, chin, an ear) is cut off, even when the core landmarks
+  /// [_faceFullyVisible] checks still resolve.
+  static const double _frameMarginRatio = 0.03;
+
+  /// The face's bounding box must be at least this fraction of the photo's
+  /// width — below it, the face is too small/far for a reliable embedding.
+  static const double _minFaceWidthRatio = 0.28;
+
+  static const double _maxYawDegrees = 20.0;
+  static const double _maxRollDegrees = 18.0;
+
+  bool _faceWithinFrame(Face face, int imageWidth, int imageHeight) {
+    final marginX = imageWidth * _frameMarginRatio;
+    final marginY = imageHeight * _frameMarginRatio;
+    final box = face.boundingBox;
+    return box.left >= marginX &&
+        box.top >= marginY &&
+        box.right <= imageWidth - marginX &&
+        box.bottom <= imageHeight - marginY;
+  }
+
+  bool _faceLargeEnough(Face face, int imageWidth) {
+    return face.boundingBox.width >= imageWidth * _minFaceWidthRatio;
+  }
+
+  /// Enrollment's own left/right poses are intentionally off-axis (that's
+  /// the point of capturing them) and are already gated by a deliberate
+  /// hold time instead of a yaw threshold (see the class-level note above
+  /// _turnHoldFramesRequired) — so this general front-facing check skips
+  /// them and only applies to front/up/down poses and every attendance
+  /// capture, none of which should be significantly turned or tilted.
+  bool _orientationAcceptable(Face face) {
+    if (mode == FaceScanMode.enroll &&
+        (currentPose == EnrollPose.left || currentPose == EnrollPose.right)) {
+      return true;
+    }
+    final yaw = face.headEulerAngleY;
+    final roll = face.headEulerAngleZ;
+    if (yaw == null || roll == null) return false;
+    return yaw.abs() <= _maxYawDegrees && roll.abs() <= _maxRollDegrees;
+  }
+
+  /// Runs every quality check against the just-captured photo, returning
+  /// the [ScanStatus] to resume scanning with if it fails any of them, or
+  /// null if it passes all of them and recognition should proceed.
+  Future<ScanStatus?> _validateCapturedPhoto(File photoFile) async {
+    img.Image? decoded;
+    try {
+      decoded = img.decodeImage(await photoFile.readAsBytes());
+    } catch (_) {
+      decoded = null;
+    }
+    if (decoded == null) return ScanStatus.error;
+    // Only used below for the frame-margin/size ratio checks, which need
+    // to know the upright width/height — the detector itself reads
+    // [photoFile] directly (see below), not these decoded pixels.
+    decoded = img.bakeOrientation(decoded);
+
+    List<Face> faces;
+    try {
+      // InputImage.fromFilePath, not fromBytes: ML Kit reads the JPEG (and
+      // its EXIF orientation) itself, on whichever pixel format its native
+      // Android/iOS implementation actually wants. Building an
+      // InputImage.fromBytes here instead — as this used to — meant
+      // choosing that format ourselves, and hardcoding bgra8888 broke
+      // every capture on Android (PlatformException), since Android's ML
+      // Kit only accepts nv21/yv12 for byte-buffer images (see
+      // LiveFaceDetector.preferredFormat, which already draws this exact
+      // platform line for the live preview).
+      faces = await _captureDetector.processImage(
+        InputImage.fromFilePath(photoFile.path),
+      );
+    } catch (_) {
+      return ScanStatus.error;
+    }
+    if (isDisposed) return ScanStatus.error;
+
+    if (faces.isEmpty) return ScanStatus.noFace;
+    if (faces.length > 1) return ScanStatus.multipleFaces;
+
+    final face = faces.first;
+    if (!_faceFullyVisible(face)) return ScanStatus.faceObstructed;
+    if (!_eyesOpenSatisfied(face)) return ScanStatus.eyesClosed;
+    if (!_faceWithinFrame(face, decoded.width, decoded.height)) {
+      return ScanStatus.faceOutOfFrame;
+    }
+    if (!_faceLargeEnough(face, decoded.width)) return ScanStatus.faceTooSmall;
+    if (!_orientationAcceptable(face)) return ScanStatus.poseInvalid;
+
+    return null;
+  }
+
   Future<void> _processFrame(CameraImage image) async {
     final inputImage = _liveDetector.inputImageFromCameraImage(
       image: image,
@@ -324,6 +459,12 @@ class FaceScanViewModel extends BaseViewModel {
       await stopStream();
       final photo = await _controller!.takePicture();
       photoFile = File(photo.path);
+
+      final qualityFailure = await _validateCapturedPhoto(photoFile);
+      if (qualityFailure != null) {
+        await _resumeAfterFailure(status: qualityFailure);
+        return;
+      }
 
       final analysis = await _faceService.getFaceAnalysis(photoFile);
 
@@ -434,9 +575,9 @@ class FaceScanViewModel extends BaseViewModel {
             ? enrollStepLabel
             : 'Please position your face inside the frame';
       case ScanStatus.multipleFaces:
-        return 'Only one face should be visible';
+        return 'Keep only one face in the frame';
       case ScanStatus.faceObstructed:
-        return 'Face partially covered — remove any obstruction and try again';
+        return 'Face is partially covered — remove any obstruction and try again';
       case ScanStatus.eyesClosed:
         return 'Please open your eyes';
       case ScanStatus.singleFace:
@@ -455,6 +596,12 @@ class FaceScanViewModel extends BaseViewModel {
         return 'Face Recognition Failed';
       case ScanStatus.livenessFailed:
         return 'Liveness check failed — use a live camera, not a photo';
+      case ScanStatus.faceOutOfFrame:
+        return 'Show your complete face inside the frame';
+      case ScanStatus.faceTooSmall:
+        return 'Move closer to the camera';
+      case ScanStatus.poseInvalid:
+        return 'Face the camera directly';
       case ScanStatus.error:
         return _errorMessage ?? 'Something went wrong';
     }
@@ -471,6 +618,9 @@ class FaceScanViewModel extends BaseViewModel {
       case ScanStatus.multipleFaces:
       case ScanStatus.faceObstructed:
       case ScanStatus.eyesClosed:
+      case ScanStatus.faceOutOfFrame:
+      case ScanStatus.faceTooSmall:
+      case ScanStatus.poseInvalid:
         return Colors.redAccent;
       case ScanStatus.singleFace:
         return Colors.lightGreenAccent;
@@ -484,6 +634,7 @@ class FaceScanViewModel extends BaseViewModel {
     stopStream();
     _controller?.dispose();
     _liveDetector.dispose();
+    _captureDetector.close();
     super.dispose();
   }
 }

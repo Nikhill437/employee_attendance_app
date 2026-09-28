@@ -121,6 +121,11 @@ class Worker {
   /// be nothing to show.
   final bool hasAssignedTasks;
 
+  /// The backend's `employee_id` (`workers.employee_id`) — distinct from
+  /// [employeeId] (their National ID). Null until this worker has been
+  /// imported/synced from the server.
+  final int? remoteEmployeeId;
+
   const Worker({
     required this.name,
     required this.employeeId,
@@ -141,6 +146,7 @@ class Worker {
     this.hasRealAttendanceIdToday = false,
     this.todayAttendanceId,
     this.hasAssignedTasks = false,
+    this.remoteEmployeeId,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;

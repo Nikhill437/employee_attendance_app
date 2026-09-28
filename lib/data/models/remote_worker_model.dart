@@ -6,6 +6,15 @@
 /// approved_by/at) the app doesn't set for its own local enrollments yet.
 class RemoteWorkerRecord {
   final int workerId;
+
+  /// The backend's `employee_id` for this worker — distinct from
+  /// [workerId] (the row's own id) and from [nationalId]; null if this
+  /// response row didn't include one. Stored locally in `workers.employee_id`
+  /// (see DatabaseHelper.upsertRemoteWorkers) and used to match a worker
+  /// during the attendance login flow instead of national_id (see
+  /// AuthRepository).
+  final int? employeeId;
+
   final String fullName;
   final String? birthDate;
   final String gender;
@@ -26,6 +35,7 @@ class RemoteWorkerRecord {
 
   const RemoteWorkerRecord({
     required this.workerId,
+    required this.employeeId,
     required this.fullName,
     required this.birthDate,
     required this.gender,
@@ -48,6 +58,14 @@ class RemoteWorkerRecord {
   factory RemoteWorkerRecord.fromJson(Map<String, dynamic> json) {
     return RemoteWorkerRecord(
       workerId: json['worker_id'] as int,
+      // Tolerant of either shape (int or numeric string) — unlike workerId,
+      // this field's exact type hasn't been confirmed against a real
+      // response yet.
+      employeeId: switch (json['employee_id']) {
+        final int v => v,
+        final String v => int.tryParse(v),
+        _ => null,
+      },
       fullName: json['full_name'] as String,
       birthDate: json['birth_date'] as String?,
       gender: (json['gender'] as String?) ?? 'other',

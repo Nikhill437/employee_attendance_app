@@ -204,6 +204,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
 
   Widget _buildSuccessView() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Container(
@@ -289,13 +290,13 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Enter the National ID your supervisor assigned you, to continue',
+            'Enter the Employee ID your supervisor assigned you, to continue',
             style: TextStyle(fontSize: 14.5, color: Colors.white70),
           ),
           const SizedBox(height: 32),
           AppTextField(
-            label: 'National ID',
-            hint: 'eg. National ID Card Number',
+            label: 'Employee ID',
+            hint: 'eg. Employee ID Number',
             icon: Icons.badge_outlined,
             controller: _employeeIdController,
             keyboardType: TextInputType.visiblePassword,
@@ -303,7 +304,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
             inputFormatters: AppInputFormatters.alphanumericUppercase,
             onSubmitted: (_) => _startScan(),
             validator: (v) => (v == null || v.trim().isEmpty)
-                ? 'Enter your National ID'
+                ? 'Enter your Employee ID'
                 : null,
           ),
           const SizedBox(height: 28),

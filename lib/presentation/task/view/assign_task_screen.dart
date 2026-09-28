@@ -189,12 +189,12 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
           ),
           child: Row(
             children: [
-              // const Icon(
-              //   Icons.task_alt_outlined,
-              //   size: 20,
-              //   color: AppColors.muted,
-              // ),
-              // const SizedBox(width: 10),
+              const Icon(
+                Icons.task_alt_outlined,
+                size: 20,
+                color: AppColors.muted,
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   hint,
@@ -231,13 +231,17 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
               children: [
                 for (final task in tasks) ...[
                   ListTile(
-                    leading: const Icon(
-                      Icons.task_alt_outlined,
-                      color: AppColors.deepGreen,
-                    ),
-                    title: Text(task.name),
+                    // leading: const Icon(
+                    //   Icons.task_alt_outlined,
+                    //   color: AppColors.deepGreen,
+                    // ),
+                    title: Text(task.name, style: TextStyle(fontSize: 14)),
                     trailing: IconButton(
-                      icon: const Icon(Icons.close, color: AppColors.muted),
+                      icon: const Icon(
+                        Icons.close,
+                        color: AppColors.muted,
+                        size: 20,
+                      ),
                       tooltip: 'Remove task',
                       onPressed: () => _viewModel.removeTask(task),
                     ),

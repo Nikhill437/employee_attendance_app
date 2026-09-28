@@ -1,3 +1,4 @@
+import '../../../core/utils/app_time.dart';
 import '../employee_model.dart';
 
 /// The identity of an employee who has successfully authenticated by face.
@@ -28,7 +29,7 @@ class AuthUser {
       employeeId: employee.employeeId,
       name: employee.name,
       number: employee.number,
-      authenticatedAt: (at ?? DateTime.now()).toIso8601String(),
+      authenticatedAt: (at ?? AppTime.nowInUserZone()).toIso8601String(),
     );
   }
 

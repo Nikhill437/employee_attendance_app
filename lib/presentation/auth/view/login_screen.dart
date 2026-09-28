@@ -58,6 +58,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Hidden while the keyboard is up — otherwise the Column just
+    // compresses to fit both the form and the footer image into the
+    // shrunken space, squeezing the form and inviting overflow instead of
+    // giving the form (and the keyboard) the room they need.
+    final isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: BackgroundScreen(
@@ -67,8 +73,10 @@ class _LoginScreenState extends State<LoginScreen> {
               // Expanded so the form scrolls within the space left over when
               // the keyboard opens, instead of overflowing.
               Expanded(child: _buildForm()),
-              const SizedBox(height: 23),
-              const AppFooterImage(),
+              if (!isKeyboardVisible) ...[
+                const SizedBox(height: 23),
+                const AppFooterImage(),
+              ],
             ],
           ),
         ),
@@ -107,7 +115,9 @@ class _LoginScreenState extends State<LoginScreen> {
               controller: _passwordController,
               obscureText: true,
               validator: _validateRequired,
-              onSubmitted: (_) => _login(),
+              // No onSubmitted → _login(): login only ever runs from the
+              // explicit tap on the Login button below, not from pressing
+              // the keyboard's done/return action.
             ),
             const SizedBox(height: 28),
             AppPrimaryButton(label: 'Login', onPressed: _login),

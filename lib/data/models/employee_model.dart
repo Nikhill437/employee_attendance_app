@@ -56,6 +56,14 @@ class Employee {
   /// Why the backend rejected this worker, when [status] is 'rejected'.
   final String? rejectionReason;
 
+  /// The backend's `employee_id` for this worker (`workers.employee_id`) —
+  /// distinct from [employeeId] (their National ID) and from the local
+  /// [id]. Only set once this worker has been imported/synced from the
+  /// server (see DatabaseHelper.upsertRemoteWorkers); null otherwise. This
+  /// is what the attendance login flow matches on instead of National ID
+  /// (see AuthRepository).
+  final int? remoteEmployeeId;
+
   Employee({
     this.id,
     required this.name,
@@ -74,6 +82,7 @@ class Employee {
     this.isSynced = false,
     this.status = 'pending',
     this.rejectionReason,
+    this.remoteEmployeeId,
   });
 
   Employee copyWith({
@@ -94,6 +103,7 @@ class Employee {
     bool? isSynced,
     String? status,
     String? rejectionReason,
+    int? remoteEmployeeId,
   }) {
     return Employee(
       id: id ?? this.id,
@@ -113,6 +123,7 @@ class Employee {
       isSynced: isSynced ?? this.isSynced,
       status: status ?? this.status,
       rejectionReason: rejectionReason ?? this.rejectionReason,
+      remoteEmployeeId: remoteEmployeeId ?? this.remoteEmployeeId,
     );
   }
 
@@ -183,6 +194,7 @@ class Employee {
       isSynced: (map['is_synced'] as int? ?? 0) == 1,
       status: map['status'] as String? ?? 'pending',
       rejectionReason: map['rejection_reason'] as String?,
+      remoteEmployeeId: map['employee_id'] as int?,
     );
   }
 

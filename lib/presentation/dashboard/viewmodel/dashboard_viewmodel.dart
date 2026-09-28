@@ -1,4 +1,5 @@
 import '../../../core/base/base_view_model.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../data/models/dashboard_summary_model.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
@@ -44,7 +45,9 @@ class DashboardViewModel extends BaseViewModel {
     safeNotify();
 
     final enrolled = await _employees.getUnique();
-    final presentToday = await _attendance.countPresentOn(DateTime.now());
+    final presentToday = await _attendance.countPresentOn(
+      AppTime.nowInUserZone(),
+    );
 
     _roster = enrolled;
     // Every stored log is a check-in — there is no check-out or offline sync

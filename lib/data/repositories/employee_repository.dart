@@ -28,6 +28,14 @@ class EmployeeRepository {
   Future<Employee?> findByEmployeeId(String employeeId) =>
       _dbHelper.getWorkerByNationalId(employeeId);
 
+  /// The enrollment record for [employeeId] (the backend's numeric
+  /// `employee_id`, distinct from National ID), or null if no worker has
+  /// that id — either because it's never been imported/synced, or because
+  /// no such id exists. Used by the attendance login flow (see
+  /// AuthRepository) instead of [findByEmployeeId].
+  Future<Employee?> findByRemoteEmployeeId(int employeeId) =>
+      _dbHelper.getWorkerByEmployeeId(employeeId);
+
   /// True if [employeeId] (the National ID) is already enrolled — checked
   /// before saving a new enrollment so two workers never share one ID.
   Future<bool> isEmployeeIdTaken(String employeeId) async {

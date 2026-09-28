@@ -4,6 +4,7 @@ import '../models/auth/auth_session_model.dart';
 import '../models/auth/auth_user_model.dart';
 import '../models/auth/login_request_model.dart';
 import '../models/auth/login_result_model.dart';
+import '../models/employee_model.dart';
 import 'attendance_repository.dart';
 import 'employee_repository.dart';
 
@@ -28,12 +29,23 @@ class AuthRepository {
 
   void signOut() => _session = const AuthSession.signedOut();
 
+  /// Looks the worker up by the backend's `employee_id` (see
+  /// EmployeeRepository.findByRemoteEmployeeId) rather than National ID —
+  /// what the entered/scanned value on mark_attendance_screen.dart is now
+  /// treated as. [enteredId] not parsing as an integer (or not matching any
+  /// worker) both mean "not found", same as before.
+  Future<Employee?> _findByEnteredEmployeeId(String enteredId) async {
+    final parsedId = int.tryParse(enteredId.trim());
+    if (parsedId == null) return null;
+    return _employees.findByRemoteEmployeeId(parsedId);
+  }
+
   /// Pre-scan check: confirms [employeeId] is enrolled and has a face profile,
   /// so the camera isn't opened for an attempt that can't possibly succeed.
   /// Returns the rejecting [LoginResult], or null when the ID is ready to
   /// scan.
   Future<LoginResult?> checkCanLogin(String employeeId) async {
-    final employee = await _employees.findByEmployeeId(employeeId);
+    final employee = await _findByEnteredEmployeeId(employeeId);
     if (employee == null) return const LoginResult.employeeNotFound();
     if (employee.faceEmbeddings.isEmpty) {
       return const LoginResult.noEnrolledFace();
@@ -45,7 +57,7 @@ class AuthRepository {
   /// claimed employeeId only (1:1), and on a match records the attendance log
   /// and opens the session.
   Future<LoginResult> login(LoginRequest request) async {
-    final employee = await _employees.findByEmployeeId(request.employeeId);
+    final employee = await _findByEnteredEmployeeId(request.employeeId);
     if (employee == null) return const LoginResult.employeeNotFound();
     if (employee.faceEmbeddings.isEmpty) {
       return const LoginResult.noEnrolledFace();
