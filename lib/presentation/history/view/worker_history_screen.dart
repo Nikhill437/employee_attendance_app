@@ -100,11 +100,12 @@ class _WorkerHistoryCard extends StatelessWidget {
     // paints its background/ink splashes on the nearest Material ancestor,
     // and a Container's DecoratedBox sitting in between would paint over
     // and hide them (see the "ListTile background color or ink splashes
-    // may be invisible" assertion this replaces).
+    // may be invisible" assertion this replaces). Radius/border match the
+    // card look used on worker_report_screen.dart's day cards.
     return Material(
       color: Colors.white,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         side: const BorderSide(color: AppColors.cardBorder),
       ),
       clipBehavior: Clip.antiAlias,
@@ -189,9 +190,9 @@ class _WorkerHistoryCard extends StatelessWidget {
   }
 }
 
-/// One attendance day: its check-in/check-out times, and a button to the
-/// tasks assigned for that day (task_status_screen.dart), so a supervisor
-/// can review or fix a Yes/No call from any past day, not just at checkout.
+/// One attendance day, styled the same as worker_report_screen.dart's day
+/// card: date/weekday and a Synced/Not synced pill up top, a divider, then
+/// check-in/check-out times.
 class _AttendanceDayRow extends StatelessWidget {
   final WorkerAttendanceRecord record;
   final int? workerId;
@@ -205,70 +206,162 @@ class _AttendanceDayRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
+    final date = DateTime.tryParse(record.attendanceDate);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _timeLine(
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    date == null ? record.attendanceDate : _shortDate(date),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    date == null ? '' : _weekday(date),
+                    style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                  ),
+                ],
+              ),
+              _StatusPill(
+                label: record.isSynced ? 'Synced' : 'Not synced',
+                color: record.isSynced ? AppColors.success : AppColors.warning,
+                background: record.isSynced
+                    ? const Color(0xFFE7F6EC)
+                    : const Color(0xFFFDF3E3),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Divider(height: 1, color: AppColors.cardBorder),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _TimeColumn(
                   icon: Icons.login,
-                  label: 'Check In',
+                  label: 'Check in',
                   time: record.checkInTime,
                 ),
-                const SizedBox(height: 4),
-                _timeLine(
+              ),
+              Expanded(
+                child: _TimeColumn(
                   icon: Icons.logout,
-                  label: 'Check Out',
+                  label: 'Check out',
                   time: record.checkOutTime,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          // if (workerId != null)
-          //   TextButton.icon(
-          //     onPressed: () => Navigator.push(
-          //       context,
-          //       MaterialPageRoute(
-          //         builder: (context) => TaskStatusScreen(
-          //           workerId: workerId!,
-          //           workerName: workerName,
-          //           attendanceId: record.attendanceId,
-          //         ),
-          //       ),
-          //     ),
-          //     icon: const Icon(Icons.fact_check_outlined, size: 16),
-          //     label: const Text('Tasks'),
-          //     style: TextButton.styleFrom(
-          //       foregroundColor: AppColors.deepGreen,
-          //       padding: const EdgeInsets.symmetric(horizontal: 8),
-          //       textStyle: const TextStyle(
-          //         fontSize: 12.5,
-          //         fontWeight: FontWeight.w600,
-          //       ),
-          //     ),
-          //   ),
         ],
       ),
     );
   }
 
-  Widget _timeLine({
-    required IconData icon,
-    required String label,
-    required String? time,
-  }) {
-    return Row(
+  static const _weekdayNames = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  static const _monthAbbreviations = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  String _weekday(DateTime date) => _weekdayNames[date.weekday - 1];
+  String _shortDate(DateTime date) =>
+      '${_monthAbbreviations[date.month - 1]} ${date.day}';
+}
+
+/// Same look as worker_report_screen.dart's own `_TimeColumn`.
+class _TimeColumn extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String? time;
+
+  const _TimeColumn({
+    required this.icon,
+    required this.label,
+    required this.time,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 14, color: AppColors.muted),
-        const SizedBox(width: 6),
+        Row(
+          children: [
+            Icon(icon, size: 13, color: AppColors.muted),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: AppColors.muted),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
         Text(
-          '$label: ${time == null ? 'Not yet' : DateTimeFormatter.format(time)}',
-          style: const TextStyle(fontSize: 13, color: AppColors.slate),
+          time == null ? '—' : DateTimeFormatter.clock(DateTime.parse(time!)),
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: AppColors.ink,
+          ),
         ),
       ],
+    );
+  }
+}
+
+/// Same look as worker_report_screen.dart's own `_StatusPill`.
+class _StatusPill extends StatelessWidget {
+  final String label;
+  final Color color;
+  final Color background;
+
+  const _StatusPill({
+    required this.label,
+    required this.color,
+    required this.background,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
+      ),
     );
   }
 }

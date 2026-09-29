@@ -8,9 +8,9 @@ import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/worker_model.dart';
 import '../../auth/view/mark_attendance_screen.dart';
 import '../../common/widgets/common_widgets.dart';
-import '../../employee/view/enrollment_form_screen.dart';
+import '../../history/view/worker_history_screen.dart';
+import '../../history/view/worker_report_screen.dart';
 import '../../task/view/assign_task_screen.dart';
-import '../../task/view/task_status_screen.dart';
 import '../viewmodel/worker_list_viewmodel.dart';
 
 class WorkerListScreen extends StatefulWidget {
@@ -106,7 +106,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   /// "sync everyone" action.
   Future<void> _syncWorker(Worker worker) async {
     final messenger = ScaffoldMessenger.of(context);
-    final error = await _viewModel.syncWorker(worker.employeeId);
+    final error = await _viewModel.syncWorker(worker.employeeId, worker.workerId);
     if (!mounted) return;
     messenger.showSnackBar(
       SnackBar(
@@ -119,10 +119,11 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     );
   }
 
-  /// Opens task assignment for [worker] — needs their department, so this
-  /// is a no-op (with an explanatory snackbar) for the rare row missing
-  /// one (e.g. a `Worker` not backed by a real DB record).
-  Future<void> _openAssignTask(Worker worker) async {
+  /// Opens [worker]'s Day Details/assign-task screen — always reachable,
+  /// even with nothing assigned yet or no check-in today, since that's
+  /// exactly where a supervisor assigns a worker's first task from. Only
+  /// needs a real local record to assign against.
+  Future<void> _openTasks(Worker worker) async {
     if (worker.workerId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('This worker has no record to assign to')),
@@ -135,99 +136,12 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
         builder: (context) => AssignTaskScreen(
           workerId: worker.workerId!,
           workerName: worker.name,
+          employeeId: worker.employeeId,
           initialDepartmentId: worker.departmentId,
         ),
       ),
     );
     if (assigned == true && mounted) await _viewModel.load();
-  }
-
-  /// Pushes [worker]'s task assignments to the backend — the endpoint only
-  /// takes one assignment per call, so this pushes each of the worker's
-  /// assigned tasks in turn (see TaskSyncRepository.syncWorkerTasks).
-  Future<void> _syncTasks(Worker worker) async {
-    final workerId = worker.workerId;
-    if (workerId == null) return;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final result = await _viewModel.syncTasks(worker.employeeId, workerId);
-      if (!mounted || result == null) return;
-      final message = result.total == 0
-          ? 'No tasks to sync for ${worker.name}'
-          : result.hasFailures
-          ? 'Synced ${result.succeeded} of ${result.total} tasks for '
-                '${worker.name} — ${result.failed.length} failed'
-          : 'Synced ${result.succeeded} task(s) for ${worker.name}';
-      messenger.showSnackBar(SnackBar(content: Text(message)));
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('Could not sync tasks for ${worker.name}: $e')),
-      );
-    }
-  }
-
-  /// Pushes [worker]'s pending (Yes or No) task completions to the backend.
-  Future<void> _syncTaskCompletion(Worker worker) async {
-    final workerId = worker.workerId;
-    if (workerId == null) return;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final result = await _viewModel.syncTaskCompletion(
-        worker.employeeId,
-        workerId,
-      );
-      if (!mounted || result == null) return;
-      final message = result.total == 0
-          ? 'No task completions to sync for ${worker.name}'
-          : result.hasFailures
-          ? 'Synced ${result.succeeded} of ${result.total} task completions '
-                'for ${worker.name} — ${result.total - result.succeeded} failed'
-          : 'Synced ${result.succeeded} task completion(s) for ${worker.name}';
-      messenger.showSnackBar(SnackBar(content: Text(message)));
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not sync task completions for ${worker.name}: $e',
-          ),
-        ),
-      );
-    }
-  }
-
-  /// Opens today's task status for [worker] — enabled only when both
-  /// [Worker.hasAssignedTasks] and [Worker.todayAttendanceId] hold (see the
-  /// `_WorkerCard` construction below), so this guard is just for safety.
-  Future<void> _openWorkerTasks(Worker worker) async {
-    if (worker.workerId == null || worker.todayAttendanceId == null) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => TaskStatusScreen(
-          workerId: worker.workerId!,
-          workerName: worker.name,
-          attendanceId: worker.todayAttendanceId!,
-        ),
-      ),
-    );
-  }
-
-  /// Opens the enrollment form in edit mode for [worker] — only its
-  /// Department can actually change there (see EnrollmentFormScreen).
-  /// Available regardless of [WorkerListViewModel.canManageTasks], since
-  /// editing a worker's department isn't a task action.
-  Future<void> _openEditWorker(Worker worker) async {
-    final employee = await _viewModel.getEmployee(worker.employeeId);
-    if (!mounted || employee == null) return;
-    final updated = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EnrollmentFormScreen(editingWorker: employee),
-      ),
-    );
-    if (updated == true) await _viewModel.load();
   }
 
   /// Opens the same face-scan attendance flow used by the public kiosk
@@ -246,7 +160,9 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     if (employeeId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('This worker has no employee ID to mark attendance with'),
+          content: Text(
+            'This worker has no employee ID to mark attendance with',
+          ),
         ),
       );
       return;
@@ -261,20 +177,28 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     if (marked == true && mounted) await _viewModel.load();
   }
 
-  /// Pushes [worker]'s today's check-in/check-out record to the backend
-  /// (`POST attendance/check-in`).
-  Future<void> _syncAttendance(Worker worker) async {
+  /// Opens [worker]'s own attendance/task/sync report — falls back to the
+  /// all-workers Reports screen for the rare row with no local record (e.g.
+  /// a `Worker` not backed by a real DB row), since there's no per-day
+  /// history to key a per-worker report off without one.
+  Future<void> _openWorkerReport(Worker worker) async {
     final workerId = worker.workerId;
-    if (workerId == null) return;
-    final messenger = ScaffoldMessenger.of(context);
-    final error = await _viewModel.syncAttendance(worker.employeeId, workerId);
-    if (!mounted) return;
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          error == null
-              ? '${worker.name}\'s attendance synced'
-              : 'Could not sync ${worker.name}\'s attendance: $error',
+    if (workerId == null) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const WorkerHistoryScreen()),
+      );
+      return;
+    }
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => WorkerReportScreen(
+          workerId: workerId,
+          workerName: worker.name,
+          employeeId: worker.employeeId,
+          department: worker.department,
+          status: worker.status,
         ),
       ),
     );
@@ -398,8 +322,9 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
         children: [
           _SummaryCard(
             total: _viewModel.total,
-            present: _viewModel.presentCount,
-            absent: _viewModel.absentCount,
+            checkedIn: _viewModel.presentCount,
+            synced: _viewModel.syncedCount,
+            notSynced: _viewModel.notSyncedCount,
           ),
           const SizedBox(height: 16),
           if (_viewModel.workers.isEmpty)
@@ -423,24 +348,9 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
                 worker: worker,
                 isSyncing: _viewModel.isSyncing(worker.employeeId),
                 onSync: () => _syncWorker(worker),
-                onAssignTask: () => _openAssignTask(worker),
-                onViewTasks:
-                    worker.hasAssignedTasks && worker.todayAttendanceId != null
-                    ? () => _openWorkerTasks(worker)
-                    : null,
-                isSyncingTasks: _viewModel.isSyncingTasks(worker.employeeId),
-                onSyncTasks: () => _syncTasks(worker),
-                canManageTasks: _viewModel.canManageTasks(worker),
-                onEdit: () => _openEditWorker(worker),
+                onViewTasks: () => _openTasks(worker),
                 onMarkAttendance: () => _openMarkAttendance(worker),
-                isSyncingAttendance: _viewModel.isSyncingAttendance(
-                  worker.employeeId,
-                ),
-                onSyncAttendance: () => _syncAttendance(worker),
-                isSyncingTaskCompletion: _viewModel.isSyncingTaskCompletion(
-                  worker.employeeId,
-                ),
-                onSyncTaskCompletion: () => _syncTaskCompletion(worker),
+                onOpenWorkerReport: () => _openWorkerReport(worker),
               ),
             ),
             const SizedBox(height: 12),
@@ -463,16 +373,19 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   }
 }
 
-/// Total / present / absent headcounts, split by hairline dividers.
+/// Total / checked-in / synced / not-synced headcounts, split by hairline
+/// dividers.
 class _SummaryCard extends StatelessWidget {
   final int total;
-  final int present;
-  final int absent;
+  final int checkedIn;
+  final int synced;
+  final int notSynced;
 
   const _SummaryCard({
     required this.total,
-    required this.present,
-    required this.absent,
+    required this.checkedIn,
+    required this.synced,
+    required this.notSynced,
   });
 
   @override
@@ -492,17 +405,25 @@ class _SummaryCard extends StatelessWidget {
             const VerticalDivider(width: 1, color: AppColors.cardBorder),
             Expanded(
               child: _SummaryTile(
-                label: 'PRESENT',
-                value: present,
+                label: 'CHECKED IN',
+                value: checkedIn,
                 color: AppColors.success,
               ),
             ),
             const VerticalDivider(width: 1, color: AppColors.cardBorder),
             Expanded(
               child: _SummaryTile(
-                label: 'ABSENT',
-                value: absent,
-                color: AppColors.danger,
+                label: 'SYNCED',
+                value: synced,
+                color: AppColors.deepGreen,
+              ),
+            ),
+            const VerticalDivider(width: 1, color: AppColors.cardBorder),
+            Expanded(
+              child: _SummaryTile(
+                label: 'NOT SYNCED',
+                value: notSynced,
+                color: AppColors.warning,
               ),
             ),
           ],
@@ -528,12 +449,21 @@ class _SummaryTile extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SectionLabel(label),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.4,
+            color: AppColors.muted,
+          ),
+        ),
         const SizedBox(height: 6),
         Text(
           '$value',
           style: TextStyle(
-            fontSize: 22,
+            fontSize: 20,
             fontWeight: FontWeight.w700,
             color: color,
           ),
@@ -548,41 +478,17 @@ class _WorkerCard extends StatelessWidget {
   final Worker worker;
   final bool isSyncing;
   final VoidCallback onSync;
-  final VoidCallback onAssignTask;
-
-  /// Null disables "View Tasks" — no active assignments, or the worker
-  /// hasn't checked in today (task_status_screen.dart needs that day's
-  /// attendance id).
-  final VoidCallback? onViewTasks;
-  final bool isSyncingTasks;
-  final VoidCallback onSyncTasks;
-
-  /// Whether Assign/View/Sync Task should show at all — approved status
-  /// and matching the supervisor's own department, both required (see
-  /// WorkerListViewModel.canManageTasks).
-  final bool canManageTasks;
-  final VoidCallback onEdit;
+  final VoidCallback onViewTasks;
   final VoidCallback onMarkAttendance;
-  final bool isSyncingAttendance;
-  final VoidCallback onSyncAttendance;
-  final bool isSyncingTaskCompletion;
-  final VoidCallback onSyncTaskCompletion;
+  final VoidCallback onOpenWorkerReport;
 
   const _WorkerCard({
     required this.worker,
     required this.isSyncing,
     required this.onSync,
-    required this.onAssignTask,
     required this.onViewTasks,
-    required this.isSyncingTasks,
-    required this.onSyncTasks,
-    required this.canManageTasks,
-    required this.onEdit,
     required this.onMarkAttendance,
-    required this.isSyncingAttendance,
-    required this.onSyncAttendance,
-    required this.isSyncingTaskCompletion,
-    required this.onSyncTaskCompletion,
+    required this.onOpenWorkerReport,
   });
 
   // A bespoke container instead of the shared AppCard — a soft shadow (in
@@ -614,257 +520,184 @@ class _WorkerCard extends StatelessWidget {
               _Avatar(worker: worker),
               const SizedBox(width: 12),
               Expanded(child: _buildIdentity()),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: 'Edit department',
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: onEdit,
-                  child: const Padding(
-                    padding: EdgeInsets.all(6),
-                    child: Icon(
-                      Icons.edit_outlined,
-                      size: 18,
-                      color: AppColors.muted,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 2),
+              const SizedBox(width: 8),
               _buildAttendance(),
-              const SizedBox(width: 4),
             ],
           ),
-          SizedBox(height: 8),
-          Padding(
-            padding: EdgeInsets.only(
-              left: MediaQuery.of(context).size.width * 0.15,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _StatusText(
-                  label: worker.verification.label,
-                  color: _verificationColor,
-                  showDot: worker.verification != VerificationStatus.verified,
-                  alignEnd: true,
-                ),
-                const SizedBox(width: 10),
-                _SyncIndicator(
-                  isSyncing: isSyncing,
-                  isSynced: worker.isSynced,
-                  onTap: onSync,
-                ),
-              ],
-            ),
-          ),
-
-          // Gated on approval alone — unlike Assign/View/Sync Task, marking
-          // attendance isn't department-scoped, so it doesn't need
-          // canManageTasks' department match too. Both this and the task
-          // actions below additionally require a real employee_id — Check
-          // In/Out and every task action stay hidden until this worker's
-          // been imported/synced from the server and we actually have one
-          // (see Worker.remoteEmployeeId).
-          if (worker.status == 'approved' &&
-              worker.remoteEmployeeId != null) ...[
-            const SizedBox(height: 12),
-            _ActionsPanel(child: _buildMarkAttendanceAction()),
-          ],
-          if (canManageTasks && worker.remoteEmployeeId != null) ...[
-            const SizedBox(height: 10),
-            _ActionsPanel(
-              child: Column(
-                children: [
-                  _buildTaskActions(),
-                  const SizedBox(height: 8),
-                  _buildTaskCompletionSyncAction(),
-                ],
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: AppColors.cardBorder),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _StatusText(
+                prefix: 'Work: ',
+                label: worker.workStatus.label,
+                color: _workStatusColor,
+                showDot: worker.workStatus != WorkStatus.completed,
               ),
-            ),
-          ],
+              const SizedBox(width: 10),
+              _StatusText(
+                label: worker.verification.label,
+                color: _verificationColor,
+                showDot: worker.verification != VerificationStatus.verified,
+                alignEnd: true,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: AppColors.cardBorder),
+          const SizedBox(height: 12),
+          _buildSyncRow(),
+          const SizedBox(height: 12),
+          _buildActionButtons(),
         ],
       ),
     );
   }
 
-  /// Before today's first scan: "Check In". After that, until the second
-  /// scan: "Check Out". Once both are recorded there's nothing left to mark
-  /// today, so the button is disabled (tapping it again would just leave
-  /// the row unchanged — see WorkerScanOutcome.alreadyCheckedOut).
-  Widget _buildMarkAttendanceAction() {
-    final isComplete = worker.hasCheckedInToday && worker.hasCheckedOutToday;
-    final label = !worker.hasCheckedInToday
-        ? 'Check In'
-        : !worker.hasCheckedOutToday
-        ? 'Check Out'
-        : 'Attendance Complete';
-
+  Widget _buildSyncRow() {
+    final isSynced = worker.isSynced;
     return Row(
       children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: isComplete ? null : onMarkAttendance,
-            icon: const Icon(Icons.fingerprint, size: 16),
-            label: Text(label),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.deepGreen,
-              backgroundColor: Colors.white,
-              side: const BorderSide(color: AppColors.cardBorder),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 9),
-              textStyle: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-        // Nothing to push to the server until at least a check-in exists.
-        if (worker.hasCheckedInToday) ...[
-          const SizedBox(width: 8),
-          _buildAttendanceSyncAction(),
-        ],
-      ],
-    );
-  }
-
-  /// Enabled/disabled by whether today's row already has the backend's
-  /// real `attendance_id` (see Worker.hasRealAttendanceIdToday) — not by
-  /// `isAttendanceSynced` alone, since a sync attempt can mark the row
-  /// synced without the response actually returning a usable id (see
-  /// DatabaseHelper.markWorkerAttendanceSynced), in which case this stays
-  /// tappable so it can be retried.
-  Widget _buildAttendanceSyncAction() {
-    if (isSyncingAttendance) {
-      return _RoundIconSlot(
-        child: const SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-    return Tooltip(
-      message: worker.hasRealAttendanceIdToday
-          ? 'Attendance synced'
-          : 'Sync attendance to server',
-      child: _RoundIconSlot(
-        onTap: worker.hasRealAttendanceIdToday ? null : onSyncAttendance,
-        child: Icon(
-          worker.hasRealAttendanceIdToday
-              ? Icons.cloud_done_outlined
-              : Icons.cloud_upload_outlined,
-          size: 19,
-          color: worker.hasRealAttendanceIdToday
-              ? AppColors.success
-              : AppColors.deepGreen,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTaskActions() {
-    return Row(
-      children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: onAssignTask,
-            icon: const Icon(Icons.playlist_add, size: 16),
-            label: const Text('Assign Task'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.deepGreen,
-              backgroundColor: Colors.white,
-              side: const BorderSide(color: AppColors.cardBorder),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 9),
-              textStyle: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
+        Icon(
+          Icons.circle,
+          size: 8,
+          color: isSynced ? AppColors.success : AppColors.warning,
         ),
         const SizedBox(width: 8),
-        Tooltip(
-          message: onViewTasks == null
-              ? 'No tasks to view'
-              : 'View task status',
-          child: _RoundIconSlot(
-            onTap: onViewTasks,
-            child: Icon(
-              Icons.visibility_outlined,
-              size: 19,
-              color: onViewTasks == null
-                  ? AppColors.muted
-                  : AppColors.deepGreen,
-            ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isSynced ? 'Synced' : 'Not synced',
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  color: isSynced ? AppColors.success : AppColors.warning,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                worker.syncedAt == null
+                    ? 'Never'
+                    : isSynced
+                    ? DateTimeFormatter.clock(worker.syncedAt!)
+                    : 'Since ${DateTimeFormatter.clock(worker.syncedAt!)}',
+                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 6),
-        if (isSyncingTasks)
-          _RoundIconSlot(
-            child: const SizedBox(
-              width: 18,
-              height: 18,
+        if (isSyncing)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 10),
+            child: SizedBox(
+              width: 20,
+              height: 20,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
           )
         else
-          Tooltip(
-            message: 'Sync tasks to server',
-            child: _RoundIconSlot(
-              onTap: onSyncTasks,
-              child: const Icon(
-                Icons.cloud_sync_outlined,
-                size: 19,
-                color: AppColors.deepGreen,
+          ElevatedButton(
+            onPressed: onSync,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isSynced
+                  ? AppColors.deepGreen
+                  : AppColors.warning,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              minimumSize: const Size(0, 34),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
               ),
             ),
+            child: Text(isSynced ? 'Sync' : 'Not synced'),
           ),
       ],
     );
   }
 
-  /// Pushes the worker's task-completion rows (Yes or No) recorded on
-  /// task_status_screen.dart to the backend — separate from
-  /// [_buildTaskActions]'s "Sync tasks" (which syncs the *assignment*,
-  /// `worker_tasks`) since this syncs the *completion*,
-  /// `worker_task_completion`.
-  Widget _buildTaskCompletionSyncAction() {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        onPressed: isSyncingTaskCompletion ? null : onSyncTaskCompletion,
-        icon: isSyncingTaskCompletion
-            ? const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.fact_check_outlined, size: 16),
-        label: Text(
-          isSyncingTaskCompletion
-              ? 'Syncing Task Completion...'
-              : 'Sync Task Completion',
-        ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.deepGreen,
-          backgroundColor: Colors.white,
-          side: const BorderSide(color: AppColors.cardBorder),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 9),
-          textStyle: const TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+  /// The three actions every card offers. Once today's attendance is fully
+  /// recorded (both check-in and check-out) there's nothing left to mark,
+  /// so that middle button drops out rather than staying disabled.
+  Widget _buildActionButtons() {
+    final isAttendanceComplete =
+        worker.hasCheckedInToday && worker.hasCheckedOutToday;
+    return Row(
+      children: [
+        Expanded(child: _buildViewTasksButton()),
+        if (!isAttendanceComplete) ...[
+          const SizedBox(width: 8),
+          Expanded(child: _buildMarkAttendanceButton()),
+        ],
+        const SizedBox(width: 8),
+        Expanded(child: _buildWorkerReportButton()),
+      ],
+    );
+  }
+
+  static const _actionButtonPadding = EdgeInsets.symmetric(
+    vertical: 9,
+    horizontal: 4,
+  );
+  static const _actionButtonTextStyle = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w600,
+  );
+
+  Widget _buildViewTasksButton() {
+    return OutlinedButton.icon(
+      onPressed: onViewTasks,
+      icon: const Icon(Icons.search, size: 16),
+      label: const Text('View tasks', overflow: TextOverflow.ellipsis),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: AppColors.deepGreen,
+        foregroundColor: Colors.white,
+        side: const BorderSide(color: AppColors.deepGreen),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: _actionButtonPadding,
+        textStyle: _actionButtonTextStyle,
+      ),
+    );
+  }
+
+  Widget _buildMarkAttendanceButton() {
+    final label = worker.hasCheckedInToday ? 'Check out' : 'Check in';
+    final icon = worker.hasCheckedInToday ? Icons.logout : Icons.login;
+    return OutlinedButton.icon(
+      onPressed: onMarkAttendance,
+      icon: Icon(icon, size: 16),
+      label: Text(label, overflow: TextOverflow.ellipsis),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: const Color(0xFFE7F6EC),
+        foregroundColor: AppColors.deepGreen,
+        side: BorderSide.none,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: _actionButtonPadding,
+        textStyle: _actionButtonTextStyle,
+      ),
+    );
+  }
+
+  Widget _buildWorkerReportButton() {
+    return OutlinedButton.icon(
+      onPressed: onOpenWorkerReport,
+      icon: const Icon(Icons.grid_view_outlined, size: 16),
+      label: const Text('Worker report', overflow: TextOverflow.ellipsis),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.deepGreen,
+        side: const BorderSide(color: AppColors.cardBorder),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: _actionButtonPadding,
+        textStyle: _actionButtonTextStyle,
       ),
     );
   }
@@ -890,15 +723,6 @@ class _WorkerCard extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 13, color: AppColors.muted),
         ),
-        const SizedBox(height: 2),
-        // remoteEmployeeId is only populated once this worker's been
-        // imported/synced from the server — null/empty for anyone else,
-        // shown as an em dash rather than left blank.
-        Text(
-          'Employee ID: ${worker.remoteEmployeeId?.toString() ?? '—'}',
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
-        ),
         const SizedBox(height: 6),
         PayTypeChip(payType: worker.payType),
       ],
@@ -911,7 +735,7 @@ class _WorkerCard extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         _Pill(
-          label: worker.attendance.label,
+          label: present ? 'Checked in' : 'Not checked in',
           foreground: present ? AppColors.success : AppColors.danger,
           background: present
               ? const Color(0xFFE7F6EC)
@@ -935,104 +759,18 @@ class _WorkerCard extends StatelessWidget {
     );
   }
 
+  Color get _workStatusColor => switch (worker.workStatus) {
+    WorkStatus.completed => AppColors.success,
+    WorkStatus.inProgress => AppColors.warning,
+    WorkStatus.notStarted => AppColors.muted,
+  };
+
   Color get _verificationColor => switch (worker.verification) {
     VerificationStatus.verified => AppColors.success,
     VerificationStatus.pending => AppColors.warning,
     VerificationStatus.rejected => AppColors.danger,
     VerificationStatus.notVerified => AppColors.muted,
   };
-}
-
-/// Small per-card tap target that pushes that one worker to the backend —
-/// a spinner while the sync is in flight, then a "Synced" pill once it has
-/// (still tappable, to push again). Reuses [_Pill]'s look for visual
-/// consistency with the attendance pill above it.
-class _SyncIndicator extends StatelessWidget {
-  final bool isSyncing;
-  final bool isSynced;
-  final VoidCallback onTap;
-
-  const _SyncIndicator({
-    required this.isSyncing,
-    required this.isSynced,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (isSyncing) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 4),
-        child: SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-    return Tooltip(
-      message: isSynced ? 'Synced — tap to sync again' : 'Sync worker',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onTap,
-        child: _Pill(
-          label: isSynced ? 'SYNCED' : 'NOT SYNCED',
-          foreground: isSynced ? AppColors.success : AppColors.deepGreen,
-          background: isSynced
-              ? const Color(0xFFE7F6EC)
-              : const Color(0xFFEFF6F0),
-        ),
-      ),
-    );
-  }
-}
-
-/// A light tinted, rounded panel grouping a card's action buttons — visually
-/// separates "what you can do" from the identity/status info above it,
-/// instead of the plain hairline dividers this replaced.
-class _ActionsPanel extends StatelessWidget {
-  final Widget child;
-
-  const _ActionsPanel({required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF6F9F6),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: child,
-    );
-  }
-}
-
-/// A small white, rounded tap target for a single icon action inside an
-/// [_ActionsPanel] — gives every icon button in the card the same "raised
-/// chip" footprint instead of a bare icon floating on the panel's tint.
-class _RoundIconSlot extends StatelessWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-
-  const _RoundIconSlot({required this.child, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: const BorderSide(color: AppColors.cardBorder),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(padding: const EdgeInsets.all(8), child: child),
-      ),
-    );
-  }
 }
 
 class _Avatar extends StatelessWidget {

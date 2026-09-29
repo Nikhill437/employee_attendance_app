@@ -14,4 +14,5 @@ class ApiRoutes {
   static const String checkIn = '/attendance/check-in';
   static const String workerTaskCompletion =
       '/attendance/worker-task-completion';
+  static const String submitAttendance = '/attendance/submit-attendance';
 }

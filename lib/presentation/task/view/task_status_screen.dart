@@ -99,22 +99,22 @@ class _TaskStatusScreenState extends State<TaskStatusScreen> {
               builder: (context, _) => _buildBody(),
             ),
           ),
-          if (!widget.readOnly)
-            ListenableBuilder(
-              listenable: _viewModel,
-              builder: (context, _) =>
-                  !_viewModel.isLoading && _viewModel.completions.isNotEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: AppPrimaryButton(
-                        label: 'Save',
-                        icon: Icons.save_outlined,
-                        isBusy: _viewModel.isSaving,
-                        onPressed: _save,
-                      ),
-                    )
-                  : const SizedBox.shrink(),
-            ),
+          // if (!widget.readOnly)
+          //   ListenableBuilder(
+          //     listenable: _viewModel,
+          //     builder: (context, _) =>
+          //         !_viewModel.isLoading && _viewModel.completions.isNotEmpty
+          //         ? Padding(
+          //             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          //             child: AppPrimaryButton(
+          //               label: 'Save',
+          //               icon: Icons.save_outlined,
+          //               isBusy: _viewModel.isSaving,
+          //               onPressed: _save,
+          //             ),
+          //           )
+          //         : const SizedBox.shrink(),
+          //   ),
         ],
       ),
     );
@@ -180,7 +180,10 @@ class _TaskStatusCard extends StatelessWidget {
           const SizedBox(width: 12),
           readOnly
               ? _StatusBadge(isCompleted: completion.isCompleted)
-              : _YesNoToggle(value: completion.isCompleted, onChanged: onChanged),
+              : _YesNoToggle(
+                  value: completion.isCompleted,
+                  onChanged: onChanged,
+                ),
         ],
       ),
     );

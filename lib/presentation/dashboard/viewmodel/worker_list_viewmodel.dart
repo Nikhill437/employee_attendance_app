@@ -5,6 +5,7 @@ import '../../../data/models/attendance_log_model.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
+import '../../../data/repositories/attendance_submission_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_completion_sync_repository.dart';
@@ -25,6 +26,7 @@ class WorkerListViewModel extends BaseViewModel {
   final SupervisorSessionRepository _session;
   final WorkerAttendanceRepository _workerAttendance;
   final TaskCompletionSyncRepository _taskCompletionSync;
+  final AttendanceSubmissionRepository _attendanceSubmission;
   final TaskRepository _tasks;
 
   WorkerListViewModel({
@@ -36,6 +38,7 @@ class WorkerListViewModel extends BaseViewModel {
     SupervisorSessionRepository? session,
     WorkerAttendanceRepository? workerAttendance,
     TaskCompletionSyncRepository? taskCompletionSync,
+    AttendanceSubmissionRepository? attendanceSubmission,
     TaskRepository? tasks,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
@@ -45,6 +48,8 @@ class WorkerListViewModel extends BaseViewModel {
        _session = session ?? SupervisorSessionRepository(),
        _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
        _taskCompletionSync = taskCompletionSync ?? TaskCompletionSyncRepository(),
+       _attendanceSubmission =
+           attendanceSubmission ?? AttendanceSubmissionRepository(),
        _tasks = tasks ?? TaskRepository();
 
   bool _isLoading = true;
@@ -93,10 +98,13 @@ class WorkerListViewModel extends BaseViewModel {
   bool isSyncingTaskCompletion(String employeeId) =>
       _syncingTaskCompletionIds.contains(employeeId);
 
-  /// The list after the current search term and attendance filter.
+  /// The list after the current search term and attendance filter, with
+  /// not-yet-synced workers surfaced above synced ones (stable within each
+  /// group) — a worker needing a push to the backend shouldn't get buried
+  /// under ones that don't.
   List<Worker> get workers {
     final term = _query.toLowerCase();
-    return _workers.where((worker) {
+    final filtered = _workers.where((worker) {
       final matchesFilter =
           _attendanceFilter == null || worker.attendance == _attendanceFilter;
       final matchesTerm =
@@ -104,12 +112,21 @@ class WorkerListViewModel extends BaseViewModel {
           worker.name.toLowerCase().contains(term) ||
           worker.employeeId.toLowerCase().contains(term);
       return matchesFilter && matchesTerm;
-    }).toList();
+    });
+
+    final notSynced = <Worker>[];
+    final synced = <Worker>[];
+    for (final worker in filtered) {
+      (worker.isSynced ? synced : notSynced).add(worker);
+    }
+    return [...notSynced, ...synced];
   }
 
   int get total => workers.length;
   int get presentCount => workers.where((w) => w.isPresent).length;
   int get absentCount => total - presentCount;
+  int get syncedCount => workers.where((w) => w.isSynced).length;
+  int get notSyncedCount => total - syncedCount;
 
   void search(String query) {
     _query = query.trim();
@@ -135,17 +152,32 @@ class WorkerListViewModel extends BaseViewModel {
   Future<Employee?> getEmployee(String employeeId) =>
       _employees.findByEmployeeId(employeeId);
 
-  /// Pushes [employeeId]'s worker record to the backend. Returns null on
-  /// success, or an error message on failure. Guards against a second tap
-  /// on the same card while its sync is already running.
-  Future<String?> syncWorker(String employeeId) async {
+  /// Pushes [employeeId]'s data to the backend and returns null on success,
+  /// or an error message on failure. Guards against a second tap on the
+  /// same card while its sync is already running.
+  ///
+  /// If [workerId] has attendance recorded today, this pushes that day's
+  /// attendance plus any pending task completions together
+  /// (`POST attendance/submit-attendance`), syncing the worker's own
+  /// profile first if it doesn't have a real backend id yet. Otherwise it
+  /// falls back to the plain worker-profile sync
+  /// (`POST attendance/sync-worker`) — there's nothing attendance-related
+  /// to push yet.
+  Future<String?> syncWorker(String employeeId, int? workerId) async {
     if (_syncingIds.contains(employeeId)) return null;
     _syncingIds.add(employeeId);
     safeNotify();
 
     String? error;
     try {
-      await _sync.syncWorker(employeeId);
+      final hasAttendanceToday =
+          workerId != null &&
+          await _workerAttendance.getTodayAttendance(workerId) != null;
+      if (hasAttendanceToday) {
+        await _attendanceSubmission.submitAttendance(employeeId, workerId);
+      } else {
+        await _sync.syncWorker(employeeId);
+      }
     } catch (e) {
       error = e.toString();
     }
@@ -267,6 +299,7 @@ class WorkerListViewModel extends BaseViewModel {
               ? AttendanceStatus.present
               : AttendanceStatus.absent,
           isSynced: employee.isSynced,
+          syncedAt: employee.syncedAt,
           workerId: employee.id,
           departmentId: employee.departmentId,
           status: employee.status,

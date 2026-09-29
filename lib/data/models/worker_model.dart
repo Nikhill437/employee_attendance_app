@@ -83,6 +83,11 @@ class Worker {
   /// drives the "Synced" pill on the worker card.
   final bool isSynced;
 
+  /// When [isSynced] was last true — null if never synced. Kept even after
+  /// a later local change (check-in/out, task assignment) sets [isSynced]
+  /// back to false, so the sync row can still show "last synced at".
+  final DateTime? syncedAt;
+
   /// The local `workers.offline_worker_id` — the FK task assignment/
   /// completion rows key off, distinct from [employeeId] (their National
   /// ID). Null only for a `Worker` built without a persisted record behind
@@ -137,6 +142,7 @@ class Worker {
     this.workStatus = WorkStatus.notStarted,
     this.verification = VerificationStatus.notVerified,
     this.isSynced = false,
+    this.syncedAt,
     this.workerId,
     this.departmentId,
     this.status = 'pending',

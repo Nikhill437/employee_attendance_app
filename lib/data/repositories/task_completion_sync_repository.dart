@@ -34,6 +34,23 @@ class TaskCompletionSyncRepository {
   /// getRemoteWorkerTaskId/getRemoteAttendanceId/getRemoteWorkerId) —
   /// one that isn't synced yet is skipped and left for a later attempt,
   /// same as a completion whose own push fails.
+  /// Whether [workerId] has any pending (unsynced) completion whose
+  /// attendance day hasn't itself reached the backend yet (see
+  /// DatabaseHelper.getRemoteAttendanceId) — the completion payload needs
+  /// that day's real `attendance_id`, so a caller can check this first and
+  /// tell the supervisor to sync attendance instead of quietly skipping
+  /// those rows the way [syncWorkerTaskCompletions] does.
+  Future<bool> hasCompletionsAwaitingAttendanceSync(int workerId) async {
+    final pending = await _dbHelper.getUnsyncedTaskCompletions(workerId);
+    for (final record in pending) {
+      final realAttendanceId = await _dbHelper.getRemoteAttendanceId(
+        record.attendanceId,
+      );
+      if (realAttendanceId == null) return true;
+    }
+    return false;
+  }
+
   Future<TaskCompletionSyncResult> syncWorkerTaskCompletions(
     int workerId,
   ) async {

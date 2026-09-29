@@ -33,6 +33,12 @@ class RemoteWorkerRecord {
   final String? createdDate;
   final String? modifiedDate;
 
+  /// Task ids (the backend's own `tasks.task_id`) already assigned to this
+  /// worker server-side — empty if the response row didn't include any.
+  /// [DatabaseHelper.upsertRemoteWorkers] assigns whichever of these match
+  /// a locally-known task.
+  final List<int> taskIds;
+
   const RemoteWorkerRecord({
     required this.workerId,
     required this.employeeId,
@@ -53,6 +59,7 @@ class RemoteWorkerRecord {
     required this.approvedAt,
     required this.createdDate,
     required this.modifiedDate,
+    this.taskIds = const [],
   });
 
   factory RemoteWorkerRecord.fromJson(Map<String, dynamic> json) {
@@ -87,6 +94,17 @@ class RemoteWorkerRecord {
       approvedAt: json['approved_at'] as String?,
       createdDate: json['created_date'] as String?,
       modifiedDate: json['modified_date'] as String?,
+      taskIds: switch (json['task_ids']) {
+        final List v => v
+            .map((e) => switch (e) {
+                  final int i => i,
+                  final String s => int.tryParse(s),
+                  _ => null,
+                })
+            .whereType<int>()
+            .toList(),
+        _ => const [],
+      },
     );
   }
 }

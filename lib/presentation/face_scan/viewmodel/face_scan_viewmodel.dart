@@ -58,8 +58,7 @@ enum ScanStatus {
 
 /// Verifies a captured embedding for [FaceScanMode.attendance]. Returns the
 /// authenticated user on a match, or null to keep scanning.
-typedef FaceMatchCallback =
-    Future<AuthUser?> Function(List<double> embedding);
+typedef FaceMatchCallback = Future<AuthUser?> Function(List<double> embedding);
 
 /// Owns the camera, the live-detection loop, and the capture/verify state
 /// machine behind the face scan screen. The view only renders what this
@@ -261,9 +260,7 @@ class FaceScanViewModel extends BaseViewModel {
   ];
 
   bool _faceFullyVisible(Face face) {
-    return _requiredLandmarks.every(
-      (type) => face.landmarks[type] != null,
-    );
+    return _requiredLandmarks.every((type) => face.landmarks[type] != null);
   }
 
   /// Both eyes must be open — required for every pose in both enroll and
@@ -611,7 +608,7 @@ class FaceScanViewModel extends BaseViewModel {
     switch (_status) {
       case ScanStatus.success:
       case ScanStatus.poseCaptured:
-        return Colors.greenAccent;
+        return Colors.black;
       case ScanStatus.notRecognized:
       case ScanStatus.livenessFailed:
       case ScanStatus.error:
@@ -623,7 +620,7 @@ class FaceScanViewModel extends BaseViewModel {
       case ScanStatus.poseInvalid:
         return Colors.redAccent;
       case ScanStatus.singleFace:
-        return Colors.lightGreenAccent;
+        return Colors.black;
       default:
         return Colors.white;
     }

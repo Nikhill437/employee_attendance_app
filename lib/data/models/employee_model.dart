@@ -44,6 +44,12 @@ class Employee {
   /// something the backend's own `workers` table tracks.
   final bool isSynced;
 
+  /// When [isSynced] was last set true — null until the first successful
+  /// sync. Kept even after a later local change (check-in/out, task
+  /// assignment) sets [isSynced] back to false, so "last synced at" can
+  /// still be shown.
+  final DateTime? syncedAt;
+
   /// The backend's approval status ('pending' / 'approved' / 'rejected').
   /// Only authoritative once [isSynced] is true and this row came from a
   /// real backend response (`POST attendance/list` sets the real value;
@@ -80,6 +86,7 @@ class Employee {
     this.departmentId,
     this.nationalIdImage,
     this.isSynced = false,
+    this.syncedAt,
     this.status = 'pending',
     this.rejectionReason,
     this.remoteEmployeeId,
@@ -101,6 +108,7 @@ class Employee {
     int? departmentId,
     String? nationalIdImage,
     bool? isSynced,
+    DateTime? syncedAt,
     String? status,
     String? rejectionReason,
     int? remoteEmployeeId,
@@ -121,6 +129,7 @@ class Employee {
       departmentId: departmentId ?? this.departmentId,
       nationalIdImage: nationalIdImage ?? this.nationalIdImage,
       isSynced: isSynced ?? this.isSynced,
+      syncedAt: syncedAt ?? this.syncedAt,
       status: status ?? this.status,
       rejectionReason: rejectionReason ?? this.rejectionReason,
       remoteEmployeeId: remoteEmployeeId ?? this.remoteEmployeeId,
@@ -192,6 +201,7 @@ class Employee {
       departmentId: map['department_id'] as int?,
       nationalIdImage: map['national_id_image'] as String?,
       isSynced: (map['is_synced'] as int? ?? 0) == 1,
+      syncedAt: DateTime.tryParse((map['synced_at'] as String?) ?? ''),
       status: map['status'] as String? ?? 'pending',
       rejectionReason: map['rejection_reason'] as String?,
       remoteEmployeeId: map['employee_id'] as int?,
