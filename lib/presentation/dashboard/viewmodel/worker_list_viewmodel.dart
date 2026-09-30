@@ -1,6 +1,8 @@
 import '../../../core/base/base_view_model.dart';
+import '../../../core/network/api_exception.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
+import '../../../core/utils/network_status.dart';
 import '../../../data/models/attendance_log_model.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/models/worker_model.dart';
@@ -80,6 +82,23 @@ class WorkerListViewModel extends BaseViewModel {
     return worker.departmentId == supervisorDepartmentId;
   }
 
+  /// Whether [worker] should still show in the list once its department
+  /// change has actually reached the backend. A worker still pending sync
+  /// stays visible regardless of department — that's exactly the "Not
+  /// synced" state a supervisor needs to see and act on. Only once
+  /// [Worker.isSynced] is true does a department mismatch hide it (moved
+  /// out of the supervisor's department, confirmed server-side) — this
+  /// only affects what this list shows, never the local `workers` row
+  /// itself. Fails open (never hides) if either department can't be
+  /// determined, rather than guessing.
+  bool _matchesSupervisorDepartment(Worker worker) {
+    if (!worker.isSynced) return true;
+    final supervisorDepartmentId = _supervisorDepartmentId;
+    if (supervisorDepartmentId == null) return true;
+    if (worker.departmentId == null) return true;
+    return worker.departmentId == supervisorDepartmentId;
+  }
+
   /// Whether [employeeId]'s worker is mid-sync — drives that card's sync
   /// button.
   bool isSyncing(String employeeId) => _syncingIds.contains(employeeId);
@@ -98,10 +117,10 @@ class WorkerListViewModel extends BaseViewModel {
   bool isSyncingTaskCompletion(String employeeId) =>
       _syncingTaskCompletionIds.contains(employeeId);
 
-  /// The list after the current search term and attendance filter, with
-  /// not-yet-synced workers surfaced above synced ones (stable within each
-  /// group) — a worker needing a push to the backend shouldn't get buried
-  /// under ones that don't.
+  /// The list after the current search term, attendance filter, and
+  /// department filter, with not-yet-synced workers surfaced above synced
+  /// ones (stable within each group) — a worker needing a push to the
+  /// backend shouldn't get buried under ones that don't.
   List<Worker> get workers {
     final term = _query.toLowerCase();
     final filtered = _workers.where((worker) {
@@ -111,7 +130,7 @@ class WorkerListViewModel extends BaseViewModel {
           term.isEmpty ||
           worker.name.toLowerCase().contains(term) ||
           worker.employeeId.toLowerCase().contains(term);
-      return matchesFilter && matchesTerm;
+      return matchesFilter && matchesTerm && _matchesSupervisorDepartment(worker);
     });
 
     final notSynced = <Worker>[];
@@ -169,17 +188,21 @@ class WorkerListViewModel extends BaseViewModel {
     safeNotify();
 
     String? error;
-    try {
-      final hasAttendanceToday =
-          workerId != null &&
-          await _workerAttendance.getTodayAttendance(workerId) != null;
-      if (hasAttendanceToday) {
-        await _attendanceSubmission.submitAttendance(employeeId, workerId);
-      } else {
-        await _sync.syncWorker(employeeId);
+    if (!await NetworkStatus.isOnline()) {
+      error = 'No internet connection. Please check your network and try again.';
+    } else {
+      try {
+        final hasAttendanceToday =
+            workerId != null &&
+            await _workerAttendance.getTodayAttendance(workerId) != null;
+        if (hasAttendanceToday) {
+          await _attendanceSubmission.submitAttendance(employeeId, workerId);
+        } else {
+          await _sync.syncWorker(employeeId);
+        }
+      } catch (e) {
+        error = ApiException.messageFor(e);
       }
-    } catch (e) {
-      error = e.toString();
     }
 
     _syncingIds.remove(employeeId);
@@ -268,6 +291,11 @@ class WorkerListViewModel extends BaseViewModel {
     _isFetchingFromServer = true;
     safeNotify();
     try {
+      if (!await NetworkStatus.isOnline()) {
+        throw const ApiException(
+          'No internet connection. Please check your network and try again.',
+        );
+      }
       final count = await _import.importFromRemote();
       await load();
       return count;
@@ -285,6 +313,7 @@ class WorkerListViewModel extends BaseViewModel {
     final checkIns = await _firstCheckInsToday();
     final todayAttendance = await _workerAttendance.getTodayAttendanceByWorker();
     final assignedTaskWorkerIds = await _tasks.getWorkerIdsWithAssignedTasks();
+    final pendingReviewWorkerIds = await _tasks.getWorkerIdsWithPendingTaskReview();
     _supervisorDepartmentId = await _session.getSupervisorDepartmentId();
 
     _workers = [
@@ -312,6 +341,7 @@ class WorkerListViewModel extends BaseViewModel {
           todayAttendanceId: todayAttendance[employee.id]?.attendanceId,
           hasAssignedTasks: assignedTaskWorkerIds.contains(employee.id),
           remoteEmployeeId: employee.remoteEmployeeId,
+          taskStatusReviewCompleted: !pendingReviewWorkerIds.contains(employee.id),
         ),
     ];
 
@@ -319,19 +349,21 @@ class WorkerListViewModel extends BaseViewModel {
     safeNotify();
   }
 
-  /// A worker with no confirmed server contact yet (never synced or
-  /// imported) has nothing real to show, so stays "Not Verified" —
-  /// otherwise this reflects the backend's actual approval status
-  /// (Employee.status), which `upsertRemoteWorkers` (a full import) sets
-  /// authoritatively; a worker only ever pushed via sync-worker (which
-  /// returns no status) just keeps whatever it already had.
+  /// Purely a sync-state indicator, not the approval workflow
+  /// ([Employee.status], untouched — still what task-action gating and the
+  /// worker report's status pill check): a worker imported from the server
+  /// (`upsertRemoteWorkers` always sets `is_synced = 1`) or successfully
+  /// pushed there (`WorkerSyncRepository.syncWorker`) is "Verified"; a
+  /// worker enrolled locally and not yet synced — or edited since its last
+  /// sync — is "Not Verified". Backed by the same persisted
+  /// `workers.is_synced` column [Worker.isSynced] reads, so this doesn't
+  /// drift or revert on a plain list refresh — only an actual sync (or an
+  /// edit that flips `is_synced` back to 0 — see
+  /// DatabaseHelper.markWorkerUnsynced) changes it.
   VerificationStatus _verificationFor(Employee employee) {
-    if (!employee.isSynced) return VerificationStatus.notVerified;
-    return switch (employee.status) {
-      'approved' => VerificationStatus.verified,
-      'rejected' => VerificationStatus.rejected,
-      _ => VerificationStatus.pending,
-    };
+    return employee.isSynced
+        ? VerificationStatus.verified
+        : VerificationStatus.notVerified;
   }
 
   /// Earliest log per employee for today, keyed by employee ID.

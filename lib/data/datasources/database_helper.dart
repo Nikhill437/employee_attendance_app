@@ -33,7 +33,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 13,
+      version: 15,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -142,6 +142,26 @@ class DatabaseHelper {
           // See the `synced_at` column doc comment in _createWorkerTables.
           await db.execute('ALTER TABLE workers ADD COLUMN synced_at TEXT');
         }
+        if (oldVersion < 14 && oldVersion >= 7) {
+          // See the `isdefault`/`assignment_type` column doc comments in
+          // _createWorkerTables.
+          await db.execute(
+            "ALTER TABLE tasks ADD COLUMN isdefault TEXT NOT NULL DEFAULT 'no'",
+          );
+          await db.execute(
+            "ALTER TABLE worker_tasks ADD COLUMN assignment_type TEXT NOT NULL DEFAULT 'default'",
+          );
+        }
+        if (oldVersion < 15 && oldVersion >= 7) {
+          // See the `numeric_value`/`image_path` column doc comments on
+          // worker_task_completion in _createWorkerTables.
+          await db.execute(
+            'ALTER TABLE worker_task_completion ADD COLUMN numeric_value REAL',
+          );
+          await db.execute(
+            'ALTER TABLE worker_task_completion ADD COLUMN image_path TEXT',
+          );
+        }
       },
     );
   }
@@ -195,6 +215,12 @@ class DatabaseHelper {
         modified_date TEXT,
         modified_by INTEGER,
         created_by INTEGER,
+        -- 'yes'/'no' from the backend's own `POST attendance/list_task`
+        -- response (see replaceTasks) — whether this task is one every
+        -- worker in its department gets by default, vs one a supervisor
+        -- assigns as needed. Drives the Assign Task screen's default
+        -- pre-selection for a newly-picked task's assignment_type.
+        isdefault TEXT NOT NULL DEFAULT 'no',
         UNIQUE(department_id, task_name),
         FOREIGN KEY (department_id) REFERENCES departments(department_id)
           ON UPDATE CASCADE
@@ -248,6 +274,13 @@ class DatabaseHelper {
         assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        -- 'default' (available to the worker every day — see
+        -- getWorkerTasks/getTaskCompletions' applicability filter) or
+        -- 'temporary' (only for the day named by `assigned_at`'s own date;
+        -- re-assigning refreshes that date rather than adding a second
+        -- row — see assignWorkerTask). Always exactly one row per
+        -- (worker_id, task_id) regardless of type.
+        assignment_type TEXT NOT NULL DEFAULT 'default',
         UNIQUE(worker_id, task_id),
         FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE CASCADE,
         FOREIGN KEY (worker_id) REFERENCES workers(offline_worker_id) ON UPDATE CASCADE
@@ -287,6 +320,14 @@ class DatabaseHelper {
         worker_id INTEGER,
         completed_at TEXT,
         remarks TEXT,
+        -- A free-form numeric reading captured alongside the task's
+        -- Yes/No status (e.g. a count or measurement) — see
+        -- task_status_screen.dart.
+        numeric_value REAL,
+        -- Local file path of a photo captured for this task on
+        -- task_status_screen.dart, copied into permanent app storage the
+        -- same way EnrollmentFormViewModel.captureNationalIdImage does.
+        image_path TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         -- Local-only bookkeeping, not part of the backend's schema: whether
@@ -360,6 +401,7 @@ class DatabaseHelper {
         'task_id': task.id,
         'department_id': task.departmentId,
         'task_name': task.name,
+        'isdefault': task.isDefault ? 'yes' : 'no',
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -521,8 +563,11 @@ class DatabaseHelper {
 
   /// Reassigns [workerId] to [departmentId] — called from the Assign Task
   /// screen when the supervisor picks a different department than the
-  /// worker's current one, so the `workers` table stays in sync with
-  /// whichever department their tasks actually ended up assigned from.
+  /// worker's current one, and from the Edit Worker flow
+  /// (EnrollmentFormViewModel.saveDepartmentOnly), so the `workers` table
+  /// stays in sync with whichever department their tasks/profile actually
+  /// came from. Also flags the worker as needing a re-sync (see
+  /// markWorkerUnsynced) — the backend needs to hear about this change too.
   Future<void> updateWorkerDepartment(int workerId, int departmentId) async {
     final db = await database;
     await db.update(
@@ -531,6 +576,7 @@ class DatabaseHelper {
       where: 'offline_worker_id = ?',
       whereArgs: [workerId],
     );
+    await markWorkerUnsynced(workerId);
   }
 
   /// Looks up a single worker by their National ID, for 1:1 login
@@ -622,13 +668,19 @@ class DatabaseHelper {
     final maps = await db.rawQuery(
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
-             tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status
+             tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
+             worker_tasks.assignment_type
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
+        AND (
+          worker_tasks.assignment_type = 'default'
+          OR (worker_tasks.assignment_type = 'temporary'
+              AND substr(worker_tasks.assigned_at, 1, 10) = ?)
+        )
       ORDER BY tasks.task_name COLLATE NOCASE
     ''',
-      [workerId],
+      [workerId, _todayDateKey()],
     );
     return List.generate(maps.length, (i) => WorkerTask.fromMap(maps[i]));
   }
@@ -643,7 +695,8 @@ class DatabaseHelper {
     final maps = await db.rawQuery(
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
-             tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status
+             tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
+             worker_tasks.assignment_type
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
@@ -695,6 +748,57 @@ class DatabaseHelper {
     await markWorkerUnsynced(workerId);
   }
 
+  /// Assigns [taskId] to [workerId] with the given [assignmentType]
+  /// ('default' or 'temporary') — an upsert by (worker_id, task_id), so
+  /// re-assigning an already-assigned task (e.g. a 'temporary' task
+  /// scheduled again on a later day) updates that single row's
+  /// `assigned_at`/`assignment_type` rather than creating a second one, per
+  /// the table's own UNIQUE(worker_id, task_id). If the assignment type
+  /// actually changes, `worker_task_id` is reset to null so
+  /// [getUnsyncedWorkerTasks] re-picks up the row for the backend, which
+  /// needs to hear about the change.
+  Future<void> assignWorkerTask({
+    required int workerId,
+    required int taskId,
+    required String assignmentType,
+  }) async {
+    final db = await database;
+    final now = AppTime.nowInUserZone().toIso8601String();
+    final existing = await db.query(
+      'worker_tasks',
+      where: 'worker_id = ? AND task_id = ?',
+      whereArgs: [workerId, taskId],
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await db.insert('worker_tasks', {
+        'worker_id': workerId,
+        'task_id': taskId,
+        'assignment_type': assignmentType,
+        'status': 'active',
+        'assigned_at': now,
+        'created_at': now,
+        'updated_at': now,
+      });
+    } else {
+      final row = existing.first;
+      final typeChanged = row['assignment_type'] != assignmentType;
+      await db.update(
+        'worker_tasks',
+        {
+          'assignment_type': assignmentType,
+          'status': 'active',
+          'assigned_at': now,
+          'updated_at': now,
+          if (typeChanged) 'worker_task_id': null,
+        },
+        where: 'offline_worker_id = ?',
+        whereArgs: [row['offline_worker_id']],
+      );
+    }
+    await markWorkerUnsynced(workerId);
+  }
+
   /// Every worker_id (local `offline_worker_id`) with at least one active
   /// task assignment — one query for the whole worker list, so its "View
   /// Tasks" button can disable itself for a worker with nothing assigned
@@ -702,7 +806,56 @@ class DatabaseHelper {
   Future<Set<int>> getWorkerIdsWithAssignedTasks() async {
     final db = await database;
     final rows = await db.rawQuery(
-      "SELECT DISTINCT worker_id FROM worker_tasks WHERE status = 'active'",
+      '''
+      SELECT DISTINCT worker_id FROM worker_tasks
+      WHERE status = 'active'
+        AND (
+          assignment_type = 'default'
+          OR (assignment_type = 'temporary' AND substr(assigned_at, 1, 10) = ?)
+        )
+    ''',
+      [_todayDateKey()],
+    );
+    return {for (final row in rows) row['worker_id'] as int};
+  }
+
+  /// Every worker_id with at least one of today's applicable tasks still
+  /// missing a submitted `worker_task_completion` row for today's
+  /// attendance day — i.e. the supervisor hasn't finished reviewing
+  /// (Yes/No + remark, see task_status_screen.dart) every task yet. A
+  /// worker with no attendance today, or no tasks at all, isn't in this
+  /// set — nothing to review yet isn't the same as an incomplete review,
+  /// and [WorkerListViewModel]'s sync-button gating already checks
+  /// check-in/checkout separately.
+  ///
+  /// A task counts as "reviewed" purely by a completion row existing for
+  /// it (`worker_task_completion.offline_worker_id IS NOT NULL`) —
+  /// task_status_screen.dart only ever writes one once the supervisor taps
+  /// that task's Save, same signal [DatabaseHelper.getTaskCompletions]
+  /// uses for a single worker's checklist.
+  Future<Set<int>> getWorkerIdsWithPendingTaskReview() async {
+    final db = await database;
+    final today = _todayDateKey();
+    final rows = await db.rawQuery(
+      '''
+      SELECT worker_tasks.worker_id
+      FROM worker_tasks
+      JOIN worker_attendance
+        ON worker_attendance.worker_id = worker_tasks.worker_id
+        AND worker_attendance.attendance_date = ?
+      LEFT JOIN worker_task_completion
+        ON worker_task_completion.worker_task_id = worker_tasks.offline_worker_id
+        AND worker_task_completion.attendance_id = worker_attendance.offline_worker_id
+      WHERE worker_tasks.status = 'active'
+        AND (
+          worker_tasks.assignment_type = 'default'
+          OR (worker_tasks.assignment_type = 'temporary'
+              AND substr(worker_tasks.assigned_at, 1, 10) = ?)
+        )
+      GROUP BY worker_tasks.worker_id
+      HAVING COUNT(*) > COUNT(worker_task_completion.offline_worker_id)
+    ''',
+      [today, today],
     );
     return {for (final row in rows) row['worker_id'] as int};
   }
@@ -728,11 +881,24 @@ class DatabaseHelper {
   }
 
   /// Records a face-scan event for [workerId] against today's
-  /// `worker_attendance` row: the first scan of the day checks them in, the
-  /// next one checks them out, and any further scan that same day is left
-  /// alone (see [WorkerScanOutcome]). The `UNIQUE(worker_id,
+  /// `worker_attendance` row: the first scan of the day checks them in (once
+  /// — a second scan never inserts another check-in row, so a worker can
+  /// only check in once per day), and every scan after that updates the
+  /// same row's checkout to now, so a worker can check out multiple times a
+  /// day and the row always holds the latest one. The `UNIQUE(worker_id,
   /// attendance_date)` constraint is exactly why there's only ever one row
-  /// per worker per day to update rather than insert again.
+  /// per worker per day to update rather than insert again — and why
+  /// syncing this row to the server (see AttendanceSubmissionRepository)
+  /// automatically sends that latest checkout rather than an earlier one.
+  ///
+  /// Deliberately does NOT call [markWorkerUnsynced] (the *worker's own*
+  /// `workers.is_synced`/[VerificationStatus] flag) — a worker who's already
+  /// Verified stays Verified through check-in/checkout; only an actual
+  /// profile/task change (see markWorkerUnsynced's other call sites) should
+  /// revert that. Each row's own `worker_attendance.is_synced` (reset to 0
+  /// on both check-in and every checkout) is the separate, per-day signal
+  /// [WorkerListViewModel]'s sync-button gating actually reads to know this
+  /// day's attendance still needs pushing.
   ///
   /// Both `_face_verified` flags are always written `true` here — this is
   /// only ever reached after [FaceScanScreen]'s 1:1 match succeeds (see
@@ -756,9 +922,9 @@ class DatabaseHelper {
         'check_in_time': now,
         'check_in_face_verified': 1,
         'status': 'checked_in',
+        'is_synced': 0,
       };
       final id = await db.insert('worker_attendance', row);
-      await markWorkerUnsynced(workerId);
       return WorkerAttendanceRecord.fromMap({
         ...row,
         'offline_worker_id': id,
@@ -766,31 +932,26 @@ class DatabaseHelper {
     }
 
     final row = existing.first;
-    if (row['check_out_time'] == null) {
-      final now = AppTime.nowInUserZone().toIso8601String();
-      await db.update(
-        'worker_attendance',
-        {
-          'check_out_time': now,
-          'check_out_face_verified': 1,
-          'status': 'checked_out',
-        },
-        where: 'offline_worker_id = ?',
-        whereArgs: [row['offline_worker_id']],
-      );
-      await markWorkerUnsynced(workerId);
-      return WorkerAttendanceRecord.fromMap({
-        ...row,
+    final now = AppTime.nowInUserZone().toIso8601String();
+    await db.update(
+      'worker_attendance',
+      {
         'check_out_time': now,
         'check_out_face_verified': 1,
         'status': 'checked_out',
-      }, outcome: WorkerScanOutcome.checkedOut);
-    }
-
-    return WorkerAttendanceRecord.fromMap(
-      row,
-      outcome: WorkerScanOutcome.alreadyCheckedOut,
+        // A later checkout means this day's attendance needs pushing again,
+        // even if an earlier checkout had already been synced.
+        'is_synced': 0,
+      },
+      where: 'offline_worker_id = ?',
+      whereArgs: [row['offline_worker_id']],
     );
+    return WorkerAttendanceRecord.fromMap({
+      ...row,
+      'check_out_time': now,
+      'check_out_face_verified': 1,
+      'status': 'checked_out',
+    }, outcome: WorkerScanOutcome.checkedOut);
   }
 
   /// Today's `worker_attendance` row for [workerId], or null if they
@@ -870,16 +1031,25 @@ class DatabaseHelper {
     final maps = await db.rawQuery(
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, tasks.task_id, tasks.task_name,
-             worker_task_completion.offline_worker_id AS completion_id, worker_task_completion.status
+             worker_task_completion.offline_worker_id AS completion_id, worker_task_completion.status,
+             worker_task_completion.remarks
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       LEFT JOIN worker_task_completion
         ON worker_task_completion.worker_task_id = worker_tasks.offline_worker_id
         AND worker_task_completion.attendance_id = ?
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
+        AND (
+          worker_tasks.assignment_type = 'default'
+          OR (worker_tasks.assignment_type = 'temporary'
+              AND substr(worker_tasks.assigned_at, 1, 10) = (
+                SELECT attendance_date FROM worker_attendance
+                WHERE offline_worker_id = ?
+              ))
+        )
       ORDER BY tasks.task_name COLLATE NOCASE
     ''',
-      [attendanceId, workerId],
+      [attendanceId, workerId, attendanceId],
     );
     return List.generate(
       maps.length,
@@ -887,18 +1057,22 @@ class DatabaseHelper {
     );
   }
 
-  /// Sets [workerTaskId]'s completion status for [attendanceId] — updates
-  /// the existing `worker_task_completion` row for this (task, attendance
-  /// day) pair if one exists (a re-toggle), otherwise inserts one, so
-  /// reopening this screen and changing the status again never creates a
-  /// duplicate record. Any change (insert or re-toggle) resets `is_synced`
-  /// to 0 — a row already pushed to the backend needs pushing again once
-  /// its status changes.
+  /// Sets [workerTaskId]'s completion status (plus an optional remark) for
+  /// [attendanceId] — updates the existing `worker_task_completion` row for
+  /// this (task, attendance day) pair if one exists (a re-toggle),
+  /// otherwise inserts one, so reopening this screen and changing anything
+  /// again never creates a duplicate record. Any change (insert or
+  /// re-toggle) resets `is_synced` to 0 — a row already pushed to the
+  /// backend needs pushing again once its status changes. A row existing at
+  /// all — regardless of Yes or No — is what
+  /// [getWorkerIdsWithPendingTaskReview] reads as "the supervisor has
+  /// reviewed this task."
   Future<void> setTaskCompletion({
     required int workerTaskId,
     required int workerId,
     required int attendanceId,
     required bool isCompleted,
+    String? remarks,
   }) async {
     final db = await database;
     final status = isCompleted ? 'yes' : 'no';
@@ -917,6 +1091,7 @@ class DatabaseHelper {
         'supervisor_id': _placeholderCreatedBy,
         'status': status,
         'completed_at': isCompleted ? now : null,
+        'remarks': remarks,
         'is_synced': 0,
       });
     } else {
@@ -925,6 +1100,7 @@ class DatabaseHelper {
         {
           'status': status,
           'completed_at': isCompleted ? now : null,
+          'remarks': remarks,
           'is_synced': 0,
         },
         where: 'offline_worker_id = ?',

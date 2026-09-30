@@ -39,4 +39,29 @@ class WorkerListApi {
 
     return results;
   }
+
+  /// POST attendance/worker_data — the dashboard's "Fetch Workers" button,
+  /// mirroring AttendanceLookupApi.fetchServertimeDepartment/Task. Not
+  /// paginated (no `totalPages` in the response), unlike [fetchAll].
+  Future<List<RemoteWorkerRecord>> fetchServerWorkers() async {
+    final results = <RemoteWorkerRecord>[];
+    try {
+      final currentUtcTime = DateTime.now().toUtc().toIso8601String();
+      final data = await _client.post(
+        ApiRoutes.serverTimeWorkers,
+        data: {'date': currentUtcTime},
+      );
+      if (data is! Map || data['data'] is! List) return results;
+      log(data.toString(), name: 'WorkerListApi.fetchServerWorkers');
+      final rows = data['data'] as List;
+      results.addAll(
+        rows.map(
+          (row) => RemoteWorkerRecord.fromJson(row as Map<String, dynamic>),
+        ),
+      );
+    } catch (e) {
+      log('Error fetching server-time workers: $e', name: 'WorkerListApi.fetchServerWorkers');
+    }
+    return results;
+  }
 }

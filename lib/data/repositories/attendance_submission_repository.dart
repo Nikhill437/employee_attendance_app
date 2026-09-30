@@ -21,11 +21,6 @@ class AttendanceSubmissionRepository {
        _api = api ?? AttendanceSubmissionApi(),
        _workerSync = workerSync ?? WorkerSyncRepository();
 
-  /// Every `worker_task` entry's fixed shape — this app doesn't track a
-  /// real "assignment type" anywhere locally, so this is the only value
-  /// ever sent.
-  static const _defaultAssignmentType = 'default';
-
   /// Throws if there's no attendance recorded today for [workerId], if the
   /// worker can't be resolved to a real backend id (including if an
   /// automatic profile sync attempt fails), or lets the network call's
@@ -88,7 +83,7 @@ class AttendanceSubmissionRepository {
             'task_id': assignment.taskId,
             'status': assignment.status,
             'department_id': assignment.departmentId,
-            'assignment_type': _defaultAssignmentType,
+            'assignment_type': assignment.assignmentType,
           },
         )
         .toList();

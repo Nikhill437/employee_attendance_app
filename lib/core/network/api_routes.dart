@@ -7,9 +7,13 @@ class ApiRoutes {
 
   static const String login = '/auth/verifyUser';
   static const String listDepartments = '/attendance/searchDept';
-  static const String listTasks = '/attendance/list_task';
+  static const String serverTimeDepartment = 'attendance/department_data';
+  static const String deptTasks = '/attendance/dept_task';
+  static const String serverTimeTasks = '/attendance/task_data';
   static const String syncWorker = '/attendance/sync-worker';
+  static const String serverTimeWorkers = '/attendance/worker_data';
   static const String workerList = '/attendance/list';
+  static const String count = '/attendance/updated-counts';
   static const String assignTask = '/attendance/assigntask';
   static const String checkIn = '/attendance/check-in';
   static const String workerTaskCompletion =

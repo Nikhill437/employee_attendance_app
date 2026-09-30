@@ -12,6 +12,10 @@ class WorkerTaskCompletion {
   final String taskName;
   final bool isCompleted;
 
+  /// The supervisor's optional note for this task — null until one's been
+  /// saved (see task_status_screen.dart).
+  final String? remarks;
+
   const WorkerTaskCompletion({
     this.completionId,
     required this.workerTaskId,
@@ -19,6 +23,7 @@ class WorkerTaskCompletion {
     required this.taskId,
     required this.taskName,
     required this.isCompleted,
+    this.remarks,
   });
 
   /// [attendanceId] is passed in rather than read from the row because a
@@ -36,10 +41,15 @@ class WorkerTaskCompletion {
       taskId: map['task_id'] as int,
       taskName: map['task_name'] as String,
       isCompleted: map['status'] == 'yes',
+      remarks: map['remarks'] as String?,
     );
   }
 
-  WorkerTaskCompletion copyWith({int? completionId, bool? isCompleted}) {
+  WorkerTaskCompletion copyWith({
+    int? completionId,
+    bool? isCompleted,
+    String? remarks,
+  }) {
     return WorkerTaskCompletion(
       completionId: completionId ?? this.completionId,
       workerTaskId: workerTaskId,
@@ -47,6 +57,7 @@ class WorkerTaskCompletion {
       taskId: taskId,
       taskName: taskName,
       isCompleted: isCompleted ?? this.isCompleted,
+      remarks: remarks ?? this.remarks,
     );
   }
 }

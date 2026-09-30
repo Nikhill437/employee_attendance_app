@@ -71,16 +71,22 @@ class WorkerAttendanceRepository {
     attendanceId: attendanceId,
   );
 
-  /// Sets one task's completion status for [attendanceId].
+  /// Sets one task's completion status (plus an optional remark) for
+  /// [attendanceId] — a caller not touching [remarks] (e.g.
+  /// AssignTaskViewModel.saveTaskStatus, which only edits Yes/No) should
+  /// pass through the value already on the [WorkerTaskCompletion] it
+  /// loaded, so it doesn't wipe out a remark task_status_screen.dart saved.
   Future<void> setTaskCompletion({
     required int workerTaskId,
     required int workerId,
     required int attendanceId,
     required bool isCompleted,
+    String? remarks,
   }) => _dbHelper.setTaskCompletion(
     workerTaskId: workerTaskId,
     workerId: workerId,
     attendanceId: attendanceId,
     isCompleted: isCompleted,
+    remarks: remarks,
   );
 }

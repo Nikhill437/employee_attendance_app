@@ -18,4 +18,13 @@ class WorkerImportRepository {
     await _dbHelper.upsertRemoteWorkers(workers);
     return workers.length;
   }
+
+  /// The dashboard's "Fetch Workers" button (`POST attendance/worker_data`)
+  /// — same upsert-by-National-ID as [importFromRemote], just backed by
+  /// [WorkerListApi.fetchServerWorkers] instead of the full paginated list.
+  Future<int> importFromServerTime() async {
+    final workers = await _api.fetchServerWorkers();
+    await _dbHelper.upsertRemoteWorkers(workers);
+    return workers.length;
+  }
 }

@@ -4,7 +4,9 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/worker_task_completion_model.dart';
+import '../../../data/repositories/employee_repository.dart';
 import '../../common/widgets/common_widgets.dart';
+import '../../employee/view/enrollment_form_screen.dart';
 import '../viewmodel/worker_report_viewmodel.dart';
 
 /// One worker's attendance/task/sync report over a date range — reached
@@ -40,6 +42,7 @@ class WorkerReportScreen extends StatefulWidget {
 
 class _WorkerReportScreenState extends State<WorkerReportScreen> {
   late final WorkerReportViewModel _viewModel;
+  final EmployeeRepository _employees = EmployeeRepository();
 
   @override
   void initState() {
@@ -53,6 +56,30 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
   void dispose() {
     _viewModel.dispose();
     super.dispose();
+  }
+
+  /// Opens the enrollment form in edit mode — only the worker's Department
+  /// can actually change there (see EnrollmentFormScreen); every other
+  /// field is shown read-only for context. On a successful save, pops this
+  /// screen too (with `true`) so the worker list above it reloads and
+  /// picks up the new "Not synced" state.
+  Future<void> _openEditWorker() async {
+    final employeeId = widget.employeeId;
+    if (employeeId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This worker has no record to edit')),
+      );
+      return;
+    }
+    final employee = await _employees.findByEmployeeId(employeeId);
+    if (!mounted || employee == null) return;
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EnrollmentFormScreen(editingWorker: employee),
+      ),
+    );
+    if (updated == true && mounted) Navigator.pop(context, true);
   }
 
   Future<void> _pickRange() async {
@@ -100,7 +127,7 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
   Widget _buildHeader() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      padding: const EdgeInsets.fromLTRB(10, 12, 20, 20),
       decoration: const BoxDecoration(
         color: AppColors.gradientTop,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
@@ -119,7 +146,7 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
                 ),
                 const Expanded(
                   child: Text(
-                    'Worker Report',
+                    'Worker Profile',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 18,
@@ -128,18 +155,17 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
                     ),
                   ),
                 ),
-                Container(
-                  width: 36,
-                  height: 36,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: 0.16),
-                  ),
-                  child: const Icon(
-                    Icons.share_outlined,
-                    size: 18,
-                    color: Colors.white,
+                Material(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  shape: const CircleBorder(),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: _openEditWorker,
+                    child: const SizedBox(
+                      width: 36,
+                      height: 36,
+                      child: Icon(Icons.edit, size: 18, color: Colors.white),
+                    ),
                   ),
                 ),
               ],
@@ -267,8 +293,8 @@ class _HeaderAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 44,
-      height: 44,
+      width: 50,
+      height: 50,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
@@ -277,7 +303,7 @@ class _HeaderAvatar extends StatelessWidget {
       child: Text(
         _initials,
         style: const TextStyle(
-          fontSize: 15,
+          fontSize: 18,
           fontWeight: FontWeight.w700,
           color: Colors.white,
         ),

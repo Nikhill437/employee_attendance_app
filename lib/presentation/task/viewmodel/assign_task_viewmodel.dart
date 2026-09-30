@@ -1,49 +1,84 @@
 import '../../../core/base/base_view_model.dart';
+import '../../../core/network/api_exception.dart';
+import '../../../core/utils/network_status.dart';
 import '../../../data/models/department_model.dart';
 import '../../../data/models/worker_attendance_model.dart';
 import '../../../data/models/worker_task_completion_model.dart';
-import '../../../data/repositories/employee_repository.dart';
-import '../../../data/repositories/lookup_repository.dart';
+import '../../../data/models/worker_task_model.dart';
 import '../../../data/repositories/task_completion_sync_repository.dart';
 import '../../../data/repositories/task_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 
-/// Drives the Assign Task screen: the department picker, that department's
-/// task pool, and the worker's existing/newly-selected assignments within
-/// whichever department is currently active.
+/// A task shown on the Assign Task screen, along with whether it should
+/// apply just for today ('temporary') or every day ('default') — see the
+/// `worker_tasks.assignment_type` column doc comment in DatabaseHelper.
+///
+/// Populated from three sources (see [AssignTaskViewModel.loadTasks]):
+/// tasks the worker is already assigned (real `worker_tasks` row —
+/// [originalAssignmentType] set to that row's own type), the department's
+/// own default tasks not yet assigned to this worker (preselected
+/// 'default', [originalAssignmentType] null), and whatever the supervisor
+/// picks from the dropdown ([originalAssignmentType] null). [save] only
+/// writes rows whose [assignmentType] no longer matches
+/// [originalAssignmentType], and only an entry with no
+/// [originalAssignmentType] yet (nothing to lose) can be removed from the
+/// list before saving.
+///
+/// [numericValue]/[note] are screen state only, kept alongside the task
+/// while it's selected/pending here so they're ready to send once the
+/// database work for them is scoped separately — [save] doesn't read or
+/// write either anywhere yet.
+class PendingTaskAssignment {
+  final Task task;
+  final String assignmentType;
+  final String? originalAssignmentType;
+  final double? numericValue;
+  final String note;
+
+  const PendingTaskAssignment({
+    required this.task,
+    required this.assignmentType,
+    this.originalAssignmentType,
+    this.numericValue,
+    this.note = '',
+  });
+
+  bool get isAlreadyAssigned => originalAssignmentType != null;
+
+  PendingTaskAssignment copyWith({
+    String? assignmentType,
+    double? numericValue,
+    String? note,
+  }) => PendingTaskAssignment(
+    task: task,
+    assignmentType: assignmentType ?? this.assignmentType,
+    originalAssignmentType: originalAssignmentType,
+    numericValue: numericValue ?? this.numericValue,
+    note: note ?? this.note,
+  );
+}
+
+/// Drives the Assign Task screen: the worker's (fixed, not editable here)
+/// department's task pool, the tasks the supervisor is about to assign, and
+/// today's already-assigned checklist.
 class AssignTaskViewModel extends BaseViewModel {
   final int workerId;
   final int? initialDepartmentId;
   final TaskRepository _taskRepository;
-  final LookupRepository _lookupRepository;
-  final EmployeeRepository _employeeRepository;
   final TaskCompletionSyncRepository _taskCompletionSync;
   final WorkerAttendanceRepository _workerAttendance;
-
-  /// The worker's department as currently known — starts as
-  /// [initialDepartmentId], then follows every successful [save] that
-  /// changes it, so re-saving without touching the dropdown again never
-  /// re-triggers an update.
-  int? _currentWorkerDepartmentId;
 
   AssignTaskViewModel({
     required this.workerId,
     this.initialDepartmentId,
     TaskRepository? taskRepository,
-    LookupRepository? lookupRepository,
-    EmployeeRepository? employeeRepository,
     TaskCompletionSyncRepository? taskCompletionSync,
     WorkerAttendanceRepository? workerAttendance,
   }) : _taskRepository = taskRepository ?? TaskRepository(),
-       _lookupRepository = lookupRepository ?? LookupRepository(),
-       _employeeRepository = employeeRepository ?? EmployeeRepository(),
        _taskCompletionSync = taskCompletionSync ?? TaskCompletionSyncRepository(),
-       _workerAttendance = workerAttendance ?? WorkerAttendanceRepository() {
-    _currentWorkerDepartmentId = initialDepartmentId;
-  }
+       _workerAttendance = workerAttendance ?? WorkerAttendanceRepository();
 
-  bool _isLoadingDepartments = true;
-  bool _isLoadingTasks = false;
+  bool _isLoadingTasks = true;
   bool _isSaving = false;
   bool _isSyncingTaskStatus = false;
   bool _isLoadingDayDetails = true;
@@ -53,21 +88,14 @@ class AssignTaskViewModel extends BaseViewModel {
   WorkerAttendanceRecord? _todayAttendance;
   List<WorkerTaskCompletion> _todayTaskCompletions = const [];
 
-  List<Department> _departments = const [];
-  Department? _selectedDepartment;
-
   List<Task> _departmentTasks = const [];
 
-  /// Task ids assigned to [workerId] *within the currently selected
-  /// department*, as of the last load for that department — the baseline
-  /// [save] diffs the current selection against.
-  Set<int> _existingTaskIds = {};
+  /// The worker's whole task assignment list as shown on screen — already-
+  /// assigned tasks, unpicked department defaults, and whatever the
+  /// supervisor has picked from the dropdown but not saved yet (see
+  /// [PendingTaskAssignment] and [loadTasks]).
+  List<PendingTaskAssignment> _pendingTasks = const [];
 
-  /// The working selection — starts equal to [_existingTaskIds] each time
-  /// the department changes, then the supervisor adds/removes from it.
-  Set<int> _selectedTaskIds = {};
-
-  bool get isLoadingDepartments => _isLoadingDepartments;
   bool get isLoadingTasks => _isLoadingTasks;
   bool get isSaving => _isSaving;
   bool get isSyncingTaskStatus => _isSyncingTaskStatus;
@@ -88,48 +116,69 @@ class AssignTaskViewModel extends BaseViewModel {
       _todayTaskCompletions.where((c) => c.isCompleted).length;
   int get totalTaskCount => _todayTaskCompletions.length;
 
-  List<Department> get departments => _departments;
-  Department? get selectedDepartment => _selectedDepartment;
+  /// Tasks in the worker's department not already pending — what the task
+  /// dropdown offers.
+  List<Task> get availableTasks => _departmentTasks
+      .where((t) => !_pendingTasks.any((p) => p.task.id == t.id))
+      .toList();
 
-  /// Tasks in the selected department not already in the current
-  /// selection — what the task dropdown offers.
-  List<Task> get availableTasks =>
-      _departmentTasks.where((t) => !_selectedTaskIds.contains(t.id)).toList();
+  List<PendingTaskAssignment> get pendingTasks => _pendingTasks;
 
-  /// The selected tasks, for the "selected tasks" chip list.
-  List<Task> get selectedTasks =>
-      _departmentTasks.where((t) => _selectedTaskIds.contains(t.id)).toList();
-
-  bool get hasSelection => _selectedTaskIds.isNotEmpty;
+  bool get hasSelection => _pendingTasks.isNotEmpty;
   bool get departmentTasksIsEmpty => _departmentTasks.isEmpty;
 
-  Future<void> loadDepartments() async {
-    _isLoadingDepartments = true;
+  /// Loads the worker's (fixed) department's task pool for the dropdown,
+  /// then seeds [pendingTasks] with the tasks that belong there without the
+  /// supervisor picking anything: the worker's existing `worker_tasks`
+  /// assignments (so their real assignment type shows and can be edited —
+  /// see [save]), plus any department default task
+  /// ([Task.isDefault]) they aren't already assigned, preselected
+  /// 'default'. A task already assigned is never added twice even if it's
+  /// also a department default.
+  Future<void> loadTasks() async {
+    _isLoadingTasks = true;
     safeNotify();
 
-    _departments = await _lookupRepository.getDepartments();
-    final initialId = initialDepartmentId;
-    if (initialId != null) {
-      for (final department in _departments) {
-        if (department.id == initialId) {
-          _selectedDepartment = department;
-          break;
-        }
-      }
-    }
+    final departmentId = initialDepartmentId;
+    _departmentTasks = departmentId == null
+        ? const []
+        : await _taskRepository.getTasksByDepartment(departmentId);
 
-    _isLoadingDepartments = false;
+    final assignedWorkerTasks = await _taskRepository.getWorkerTasks(workerId);
+    final tasksById = {for (final task in _departmentTasks) task.id: task};
+    final assignedTaskIds = {for (final wt in assignedWorkerTasks) wt.taskId};
+
+    _pendingTasks = [
+      for (final workerTask in assignedWorkerTasks)
+        PendingTaskAssignment(
+          task: tasksById[workerTask.taskId] ?? _taskFrom(workerTask),
+          assignmentType: workerTask.assignmentType,
+          originalAssignmentType: workerTask.assignmentType,
+        ),
+      for (final task in _departmentTasks)
+        if (task.isDefault && !assignedTaskIds.contains(task.id))
+          PendingTaskAssignment(task: task, assignmentType: 'default'),
+    ];
+
+    _isLoadingTasks = false;
     safeNotify();
-    if (_selectedDepartment != null) {
-      await _loadTasksForSelectedDepartment();
-    }
   }
+
+  /// Falls back to building a [Task] straight from [workerTask] on the rare
+  /// chance it's assigned from outside [_departmentTasks] (e.g. moved
+  /// departments after assignment) — so it still displays instead of being
+  /// silently dropped.
+  Task _taskFrom(WorkerTask workerTask) => Task(
+    id: workerTask.taskId,
+    departmentId: workerTask.departmentId,
+    name: workerTask.taskName,
+  );
 
   /// Loads today's attendance row (if any) and, when one exists, this
   /// worker's assigned tasks with their completion status for that day —
-  /// the Day Details header/checklist shown above the department/task
-  /// picker. Independent of [loadDepartments]/[selectDepartment], so
-  /// picking tasks to assign never has to wait on this.
+  /// the Day Details header/checklist shown above the task picker.
+  /// Independent of [loadTasks], so picking tasks to assign never has to
+  /// wait on this.
   Future<void> loadDayDetails() async {
     _isLoadingDayDetails = true;
     safeNotify();
@@ -157,11 +206,15 @@ class AssignTaskViewModel extends BaseViewModel {
     safeNotify();
 
     String? error;
-    try {
-      await _workerAttendance.syncToday(workerId);
-      _todayAttendance = await _workerAttendance.getTodayAttendance(workerId);
-    } catch (e) {
-      error = e.toString();
+    if (!await NetworkStatus.isOnline()) {
+      error = 'No internet connection. Please check your network and try again.';
+    } else {
+      try {
+        await _workerAttendance.syncToday(workerId);
+        _todayAttendance = await _workerAttendance.getTodayAttendance(workerId);
+      } catch (e) {
+        error = ApiException.messageFor(e);
+      }
     }
 
     _isSyncingAttendance = false;
@@ -197,6 +250,7 @@ class AssignTaskViewModel extends BaseViewModel {
           workerId: workerId,
           attendanceId: attendance.attendanceId,
           isCompleted: completion.isCompleted,
+          remarks: completion.remarks,
         );
       }
       return null;
@@ -216,95 +270,119 @@ class AssignTaskViewModel extends BaseViewModel {
     safeNotify();
   }
 
-  /// Changing department clears the current task selection and reloads
-  /// only that department's tasks and this worker's existing assignments
-  /// within it — assignments in other departments are left untouched
-  /// entirely (they're never loaded into this screen's state).
-  Future<void> selectDepartment(Department? department) async {
-    if (department?.id == _selectedDepartment?.id) return;
-    _selectedDepartment = department;
-    _departmentTasks = const [];
-    _existingTaskIds = {};
-    _selectedTaskIds = {};
-    safeNotify();
-
-    if (department != null) {
-      await _loadTasksForSelectedDepartment();
-    }
-  }
-
-  Future<void> _loadTasksForSelectedDepartment() async {
-    final department = _selectedDepartment;
-    if (department == null) return;
-
-    _isLoadingTasks = true;
-    safeNotify();
-
-    final tasks = await _taskRepository.getTasksByDepartment(department.id);
-    final assigned = await _taskRepository.getWorkerTasks(workerId);
-    final taskIdsInDepartment = tasks.map((t) => t.id).toSet();
-    final existing = assigned
-        .map((a) => a.taskId)
-        .where(taskIdsInDepartment.contains)
-        .toSet();
-
-    _departmentTasks = tasks;
-    _existingTaskIds = existing;
-    _selectedTaskIds = {...existing};
-    _isLoadingTasks = false;
-    safeNotify();
-  }
-
-  /// Adds [task] to the selection — called when the task dropdown picks a
-  /// value; the dropdown itself always resets afterward since [task] then
-  /// drops out of [availableTasks].
+  /// Adds [task] to the pending list — called when the task dropdown picks
+  /// a value; the dropdown itself always resets afterward since [task] then
+  /// drops out of [availableTasks]. Its assignment type defaults from the
+  /// task's own [Task.isDefault], but the supervisor can flip it on the
+  /// pending card before saving.
   void addTask(Task task) {
-    _selectedTaskIds.add(task.id);
+    if (_pendingTasks.any((p) => p.task.id == task.id)) return;
+    _pendingTasks = [
+      ..._pendingTasks,
+      PendingTaskAssignment(
+        task: task,
+        assignmentType: task.isDefault ? 'default' : 'temporary',
+      ),
+    ];
     safeNotify();
   }
 
-  void removeTask(Task task) {
-    _selectedTaskIds.remove(task.id);
+  /// No-ops for an already-assigned task — there's no unassign flow here,
+  /// so removing it from the list without deleting its `worker_tasks` row
+  /// would just reappear on the next [loadTasks] and misleadingly look
+  /// removed until then. Only a still-unsaved pick (a fresh dropdown
+  /// selection, or an unpicked department default) can be dropped this way.
+  void removePendingTask(PendingTaskAssignment assignment) {
+    if (assignment.isAlreadyAssigned) return;
+    _pendingTasks = _pendingTasks
+        .where((p) => p.task.id != assignment.task.id)
+        .toList();
     safeNotify();
   }
 
-  /// Saves the current selection for the selected department: newly
-  /// selected tasks are assigned, previously-assigned tasks the supervisor
-  /// removed are unassigned — both diffed against [_existingTaskIds], so
-  /// re-saving an unchanged selection is a no-op and never creates
-  /// duplicate `worker_tasks` rows (the table's own
-  /// UNIQUE(worker_id, task_id) backs that up regardless). If the selected
-  /// department differs from the worker's current one (e.g. Production →
-  /// Installation), the `workers` table is updated to match, so the
-  /// worker's own record stays in sync with whichever department their
-  /// tasks actually came from. Returns an error message on failed
-  /// validation, or null on success.
+  /// Flips a pending task between 'temporary' (scheduled for today only)
+  /// and 'default' (kept as a standing assignment).
+  void setPendingAssignmentType(
+    PendingTaskAssignment assignment,
+    String assignmentType,
+  ) {
+    _pendingTasks = [
+      for (final p in _pendingTasks)
+        p.task.id == assignment.task.id
+            ? p.copyWith(assignmentType: assignmentType)
+            : p,
+    ];
+    safeNotify();
+  }
+
+  /// Screen state only — see [PendingTaskAssignment.numericValue].
+  void setPendingNumericValue(
+    PendingTaskAssignment assignment,
+    double? numericValue,
+  ) {
+    _pendingTasks = [
+      for (final p in _pendingTasks)
+        p.task.id == assignment.task.id
+            ? PendingTaskAssignment(
+                task: p.task,
+                assignmentType: p.assignmentType,
+                originalAssignmentType: p.originalAssignmentType,
+                numericValue: numericValue,
+                note: p.note,
+              )
+            : p,
+    ];
+    safeNotify();
+  }
+
+  /// Screen state only — see [PendingTaskAssignment.note].
+  void setPendingNote(PendingTaskAssignment assignment, String note) {
+    _pendingTasks = [
+      for (final p in _pendingTasks)
+        p.task.id == assignment.task.id
+            ? PendingTaskAssignment(
+                task: p.task,
+                assignmentType: p.assignmentType,
+                originalAssignmentType: p.originalAssignmentType,
+                numericValue: p.numericValue,
+                note: note,
+              )
+            : p,
+    ];
+    safeNotify();
+  }
+
+  /// Saves every task in [pendingTasks] whose [PendingTaskAssignment.
+  /// assignmentType] doesn't already match what's in `worker_tasks —
+  /// skipping an already-assigned task the supervisor didn't touch avoids
+  /// pointlessly bumping its `assigned_at`/sync state. Each write is an
+  /// upsert per task (see DatabaseHelper.assignWorkerTask) keyed on
+  /// worker+task, so a Default/Today change updates that one existing row
+  /// in place rather than creating a duplicate. Returns an error message on
+  /// failed validation, or null on success.
   Future<String?> save() async {
     if (_isSaving) return null;
-    final department = _selectedDepartment;
-    if (department == null) return 'Select a department';
-    if (_selectedTaskIds.isEmpty) return 'Select at least one task';
-
-    final toAdd = _selectedTaskIds.difference(_existingTaskIds).toList();
-    final toRemove = _existingTaskIds.difference(_selectedTaskIds).toList();
-    final departmentChanged = department.id != _currentWorkerDepartmentId;
-    if (toAdd.isEmpty && toRemove.isEmpty && !departmentChanged) return null;
+    if (_pendingTasks.isEmpty) return 'Select at least one task';
 
     _isSaving = true;
     safeNotify();
 
-    if (departmentChanged) {
-      await _employeeRepository.updateDepartment(workerId, department.id);
-      _currentWorkerDepartmentId = department.id;
+    for (final assignment in _pendingTasks) {
+      if (assignment.assignmentType == assignment.originalAssignmentType) {
+        continue;
+      }
+      await _taskRepository.assignTask(
+        workerId: workerId,
+        taskId: assignment.task.id,
+        assignmentType: assignment.assignmentType,
+      );
     }
-    if (toAdd.isNotEmpty) {
-      await _taskRepository.assignTasks(workerId, toAdd);
-    }
-    if (toRemove.isNotEmpty) {
-      await _taskRepository.unassignTasks(workerId, toRemove);
-    }
+    // Reload rather than clearing — pendingTasks now doubles as the
+    // worker's live assignment list (see loadTasks), so already-assigned
+    // tasks (and unpicked defaults) should stay visible/editable, just with
+    // their now-current originalAssignmentType.
+    await loadTasks();
 
-    _existingTaskIds = {..._selectedTaskIds};
     _isSaving = false;
     safeNotify();
     // Newly assigned tasks should show up in today's checklist immediately
@@ -328,6 +406,9 @@ class AssignTaskViewModel extends BaseViewModel {
     safeNotify();
 
     try {
+      if (!await NetworkStatus.isOnline()) {
+        return 'No internet connection. Please check your network and try again.';
+      }
       if (await _taskCompletionSync.hasCompletionsAwaitingAttendanceSync(
         workerId,
       )) {

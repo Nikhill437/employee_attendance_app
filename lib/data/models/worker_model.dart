@@ -43,9 +43,8 @@ enum WorkStatus {
 
 /// Whether a supervisor has signed the day's work off.
 enum VerificationStatus {
-  verified('Approved'),
+  verified('Verified'),
   pending('Pending'),
-  rejected('Rejected'),
   notVerified('Not Verified');
 
   const VerificationStatus(this.label);
@@ -131,6 +130,14 @@ class Worker {
   /// imported/synced from the server.
   final int? remoteEmployeeId;
 
+  /// True unless today has at least one assigned task still missing the
+  /// supervisor's Yes/No + remark review (task_status_screen.dart) — true
+  /// (not blocking) for a worker with no tasks or no attendance today, same
+  /// as DatabaseHelper.getWorkerIdsWithPendingTaskReview. Part of the
+  /// worker card's sync-button gating for an already-[VerificationStatus.
+  /// verified] worker — see worker_list_screen.dart.
+  final bool taskStatusReviewCompleted;
+
   const Worker({
     required this.name,
     required this.employeeId,
@@ -153,6 +160,7 @@ class Worker {
     this.todayAttendanceId,
     this.hasAssignedTasks = false,
     this.remoteEmployeeId,
+    this.taskStatusReviewCompleted = true,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;

@@ -2,9 +2,11 @@ import '../../../core/base/base_view_model.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/models/dashboard_summary_model.dart';
 import '../../../data/models/employee_model.dart';
+import '../../../data/models/updated_counts_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/lookup_repository.dart';
+import '../../../data/repositories/updated_counts_repository.dart';
 import '../../../data/repositories/worker_import_repository.dart';
 
 /// Loads the supervisor dashboard figures.
@@ -13,16 +15,20 @@ class DashboardViewModel extends BaseViewModel {
   final AttendanceRepository _attendance;
   final WorkerImportRepository _workerImport;
   final LookupRepository _lookup;
+  final UpdatedCountsRepository _updatedCountsRepository;
 
   DashboardViewModel({
     EmployeeRepository? employees,
     AttendanceRepository? attendance,
     WorkerImportRepository? workerImport,
     LookupRepository? lookup,
+    UpdatedCountsRepository? updatedCountsRepository,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _workerImport = workerImport ?? WorkerImportRepository(),
-       _lookup = lookup ?? LookupRepository();
+       _lookup = lookup ?? LookupRepository(),
+       _updatedCountsRepository =
+           updatedCountsRepository ?? UpdatedCountsRepository();
 
   bool _isLoading = true;
   bool _isImportingWorkers = false;
@@ -30,12 +36,18 @@ class DashboardViewModel extends BaseViewModel {
   bool _isFetchingTasks = false;
   DashboardSummary _summary = const DashboardSummary();
   List<Employee> _roster = const [];
+  UpdatedCounts _updatedCounts = UpdatedCounts.zero;
 
   bool get isLoading => _isLoading;
   bool get isImportingWorkers => _isImportingWorkers;
   bool get isFetchingDepartments => _isFetchingDepartments;
   bool get isFetchingTasks => _isFetchingTasks;
   DashboardSummary get summary => _summary;
+
+  /// How many worker/department/task records the server reports as changed
+  /// — the badges next to the dashboard's Fetch Workers/Departments/Tasks
+  /// actions.
+  UpdatedCounts get updatedCounts => _updatedCounts;
 
   /// Every enrolled employee, for the dashboard's employee list section.
   List<Employee> get roster => _roster;
@@ -48,6 +60,7 @@ class DashboardViewModel extends BaseViewModel {
     final presentToday = await _attendance.countPresentOn(
       AppTime.nowInUserZone(),
     );
+    _updatedCounts = await _updatedCountsRepository.fetchUpdatedCounts();
 
     _roster = enrolled;
     // Every stored log is a check-in — there is no check-out or offline sync
@@ -67,15 +80,16 @@ class DashboardViewModel extends BaseViewModel {
   /// no remote endpoint to push to.
   Future<void> sync() => load();
 
-  /// Fetches the full worker roster from the backend
-  /// (`POST attendance/list`), upserts it locally by National ID, and
-  /// reloads so the dashboard reflects it. Returns how many workers were
-  /// fetched; lets any failure propagate for the caller to surface.
+  /// Fetches worker data from the backend
+  /// (`POST attendance/worker_data`), upserts it locally by National ID,
+  /// and reloads so the dashboard reflects it — the dashboard's "Fetch
+  /// Workers" button. Returns how many workers were fetched; lets any
+  /// failure propagate for the caller to surface.
   Future<int> importWorkersFromServer() async {
     _isImportingWorkers = true;
     safeNotify();
     try {
-      final count = await _workerImport.importFromRemote();
+      final count = await _workerImport.importFromServerTime();
       await load();
       return count;
     } finally {
@@ -85,13 +99,16 @@ class DashboardViewModel extends BaseViewModel {
   }
 
   /// Refreshes the local `departments` cache from the backend
-  /// (`POST attendance/searchDept`). Returns how many were fetched; lets
-  /// any failure propagate for the caller to surface.
+  /// (`POST attendance/department_data`) — the dashboard's "Refresh"
+  /// button for departments. Returns how many were fetched; lets any
+  /// failure propagate for the caller to surface.
   Future<int> fetchDepartments() async {
     _isFetchingDepartments = true;
     safeNotify();
     try {
-      return await _lookup.syncDepartmentsFromRemote();
+      final count = await _lookup.refreshDepartmentFromServerTime();
+      await _refreshUpdatedCounts();
+      return count;
     } finally {
       _isFetchingDepartments = false;
       safeNotify();
@@ -99,16 +116,26 @@ class DashboardViewModel extends BaseViewModel {
   }
 
   /// Refreshes the local `tasks` cache from the backend
-  /// (`POST attendance/list_task`). Returns how many were fetched; lets
-  /// any failure propagate for the caller to surface.
+  /// (`POST attendance/task_data`) — the dashboard's "Refresh" button for
+  /// tasks. Returns how many were fetched; lets any failure propagate for
+  /// the caller to surface.
   Future<int> fetchTasks() async {
     _isFetchingTasks = true;
     safeNotify();
     try {
-      return await _lookup.syncTasksFromRemote();
+      final count = await _lookup.refreshTasksFromServerTime();
+      await _refreshUpdatedCounts();
+      return count;
     } finally {
       _isFetchingTasks = false;
       safeNotify();
     }
+  }
+
+  /// Re-reads the updated-counts badge after a manual refresh/fetch action
+  /// (see [fetchDepartments]/[fetchTasks]) — [importWorkersFromServer]
+  /// already gets this for free via its own [load] call.
+  Future<void> _refreshUpdatedCounts() async {
+    _updatedCounts = await _updatedCountsRepository.fetchUpdatedCounts();
   }
 }

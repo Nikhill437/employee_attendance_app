@@ -40,14 +40,21 @@ class Task {
   final int id;
   final int departmentId;
   final String name;
+  final bool isDefault;
 
-  const Task({required this.id, required this.departmentId, required this.name});
+  const Task({
+    required this.id,
+    required this.departmentId,
+    required this.name,
+    this.isDefault = false,
+  });
 
   factory Task.fromRemote(Map<String, dynamic> json) {
     return Task(
       id: _asInt(json['task_id'] ?? json['id']),
       departmentId: _asInt(json['department_id']),
       name: (json['task_name'] ?? json['name']).toString(),
+      isDefault: json['isdefault']?.toString() == 'yes',
     );
   }
 
@@ -57,6 +64,7 @@ class Task {
       id: map['task_id'] as int,
       departmentId: map['department_id'] as int,
       name: map['task_name'] as String,
+      isDefault: map['isdefault']?.toString() == 'yes',
     );
   }
 }

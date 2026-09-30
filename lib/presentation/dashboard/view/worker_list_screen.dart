@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/network/api_exception.dart';
 import '../../../core/routes/app_routes.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
@@ -9,7 +10,7 @@ import '../../../data/models/worker_model.dart';
 import '../../auth/view/mark_attendance_screen.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../history/view/worker_history_screen.dart';
-import '../../history/view/worker_report_screen.dart';
+import '../../history/view/worker_profile_screen.dart';
 import '../../task/view/assign_task_screen.dart';
 import '../viewmodel/worker_list_viewmodel.dart';
 
@@ -106,7 +107,10 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   /// "sync everyone" action.
   Future<void> _syncWorker(Worker worker) async {
     final messenger = ScaffoldMessenger.of(context);
-    final error = await _viewModel.syncWorker(worker.employeeId, worker.workerId);
+    final error = await _viewModel.syncWorker(
+      worker.employeeId,
+      worker.workerId,
+    );
     if (!mounted) return;
     messenger.showSnackBar(
       SnackBar(
@@ -137,6 +141,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
           workerId: worker.workerId!,
           workerName: worker.name,
           employeeId: worker.employeeId,
+          department: worker.department,
           initialDepartmentId: worker.departmentId,
         ),
       ),
@@ -180,7 +185,10 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   /// Opens [worker]'s own attendance/task/sync report — falls back to the
   /// all-workers Reports screen for the rare row with no local record (e.g.
   /// a `Worker` not backed by a real DB row), since there's no per-day
-  /// history to key a per-worker report off without one.
+  /// history to key a per-worker report off without one. Reloads the list
+  /// on a truthy pop — the report screen's Edit icon pops `true` after a
+  /// successful department change, so the card picks up the new
+  /// department/"Not synced" state immediately.
   Future<void> _openWorkerReport(Worker worker) async {
     final workerId = worker.workerId;
     if (workerId == null) {
@@ -190,7 +198,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       );
       return;
     }
-    await Navigator.push(
+    final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => WorkerReportScreen(
@@ -202,6 +210,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
         ),
       ),
     );
+    if (changed == true && mounted) await _viewModel.load();
   }
 
   /// Fetches the full worker roster from the backend — existing workers
@@ -218,7 +227,11 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Could not fetch workers: $e')),
+        SnackBar(
+          content: Text(
+            'Could not fetch workers: ${ApiException.messageFor(e)}',
+          ),
+        ),
       );
     }
   }
@@ -531,18 +544,12 @@ class _WorkerCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _StatusText(
-                prefix: 'Work: ',
-                label: worker.workStatus.label,
-                color: _workStatusColor,
-                showDot: worker.workStatus != WorkStatus.completed,
+                prefix: 'Work Status: ',
+                // label: worker.workStatus.label,
+                // color: _workStatusColor,
+                // showDot: worker.workStatus != WorkStatus.completed,
               ),
               const SizedBox(width: 10),
-              _StatusText(
-                label: worker.verification.label,
-                color: _verificationColor,
-                showDot: worker.verification != VerificationStatus.verified,
-                alignEnd: true,
-              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -556,14 +563,38 @@ class _WorkerCard extends StatelessWidget {
     );
   }
 
+  /// Whether [worker] is truly all-caught-up right now — their own profile
+  /// ([Worker.isSynced]) AND, if they've checked in today, today's
+  /// attendance too ([Worker.isAttendanceSynced]). Blending both is what
+  /// keeps this pill/button honest: a Verified worker's profile flag no
+  /// longer flips on check-in/checkout (see
+  /// DatabaseHelper.recordWorkerScan), so profile-only [Worker.isSynced]
+  /// alone would keep showing "Synced" all day even with a fresh,
+  /// unsynced checkout sitting in `worker_attendance`.
+  bool get _effectiveSynced =>
+      worker.isSynced && (!worker.hasCheckedInToday || worker.isAttendanceSynced);
+
+  /// A Verified worker's sync button only unlocks once today's full cycle
+  /// is done — check-in, checkout, and the supervisor's task-status review
+  /// (task_status_screen.dart) — so a partial day's data is never pushed
+  /// early. A not-yet-verified worker (new or locally edited) is unaffected
+  /// by this and stays tappable as soon as there's anything to push.
+  bool get _canTapSync {
+    if (_effectiveSynced) return false;
+    if (worker.verification != VerificationStatus.verified) return true;
+    return worker.hasCheckedInToday &&
+        worker.hasCheckedOutToday &&
+        worker.taskStatusReviewCompleted;
+  }
+
   Widget _buildSyncRow() {
-    final isSynced = worker.isSynced;
+    final effectiveSynced = _effectiveSynced;
     return Row(
       children: [
         Icon(
           Icons.circle,
           size: 8,
-          color: isSynced ? AppColors.success : AppColors.warning,
+          color: effectiveSynced ? AppColors.success : AppColors.warning,
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -571,21 +602,21 @@ class _WorkerCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                isSynced ? 'Synced' : 'Not synced',
+                'Last Synced Time',
                 style: TextStyle(
-                  fontSize: 13.5,
+                  fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  color: isSynced ? AppColors.success : AppColors.warning,
+                  color: AppColors.muted,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 worker.syncedAt == null
                     ? 'Never'
-                    : isSynced
+                    : effectiveSynced
                     ? DateTimeFormatter.clock(worker.syncedAt!)
                     : 'Since ${DateTimeFormatter.clock(worker.syncedAt!)}',
-                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                style: const TextStyle(fontSize: 13, color: Colors.black),
               ),
             ],
           ),
@@ -601,12 +632,16 @@ class _WorkerCard extends StatelessWidget {
           )
         else
           ElevatedButton(
-            onPressed: onSync,
+            onPressed: _canTapSync ? onSync : null,
             style: ElevatedButton.styleFrom(
-              backgroundColor: isSynced
+              backgroundColor: effectiveSynced
+                  ? AppColors.deepGreen
+                  : AppColors.warning,
+              disabledBackgroundColor: effectiveSynced
                   ? AppColors.deepGreen
                   : AppColors.warning,
               foregroundColor: Colors.white,
+              disabledForegroundColor: Colors.white,
               elevation: 0,
               minimumSize: const Size(0, 34),
               padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -618,7 +653,7 @@ class _WorkerCard extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
-            child: Text(isSynced ? 'Sync' : 'Not synced'),
+            child: Text(effectiveSynced ? 'Synced' : 'Not synced'),
           ),
       ],
     );
@@ -652,18 +687,40 @@ class _WorkerCard extends StatelessWidget {
     fontWeight: FontWeight.w600,
   );
 
+  /// Whether the worker's three action buttons should be tappable at all —
+  /// they stay disabled until the backend has approved this worker,
+  /// regardless of what else each button's own logic would otherwise allow.
+  bool get _isApproved => worker.status == 'approved';
+
   Widget _buildViewTasksButton() {
-    return OutlinedButton.icon(
-      onPressed: onViewTasks,
-      icon: const Icon(Icons.search, size: 16),
-      label: const Text('View tasks', overflow: TextOverflow.ellipsis),
+    return OutlinedButton(
+      onPressed: _isApproved ? onViewTasks : null,
       style: OutlinedButton.styleFrom(
         backgroundColor: AppColors.deepGreen,
         foregroundColor: Colors.white,
-        side: const BorderSide(color: AppColors.deepGreen),
+        disabledBackgroundColor: const Color(0xFFF2F3F2),
+        disabledForegroundColor: AppColors.muted,
+        side: BorderSide(
+          color: _isApproved ? AppColors.deepGreen : AppColors.cardBorder,
+        ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         padding: _actionButtonPadding,
         textStyle: _actionButtonTextStyle,
+      ),
+      // Icon above the label, both centered.
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(Icons.search, size: 16),
+          SizedBox(height: 4),
+          Text(
+            'View tasks',
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ),
     );
   }
@@ -671,33 +728,61 @@ class _WorkerCard extends StatelessWidget {
   Widget _buildMarkAttendanceButton() {
     final label = worker.hasCheckedInToday ? 'Check out' : 'Check in';
     final icon = worker.hasCheckedInToday ? Icons.logout : Icons.login;
-    return OutlinedButton.icon(
-      onPressed: onMarkAttendance,
-      icon: Icon(icon, size: 16),
-      label: Text(label, overflow: TextOverflow.ellipsis),
+    return OutlinedButton(
+      onPressed: _isApproved ? onMarkAttendance : null,
       style: OutlinedButton.styleFrom(
         backgroundColor: const Color(0xFFE7F6EC),
         foregroundColor: AppColors.deepGreen,
+        disabledBackgroundColor: const Color(0xFFF2F3F2),
+        disabledForegroundColor: AppColors.muted,
         side: BorderSide.none,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         padding: _actionButtonPadding,
         textStyle: _actionButtonTextStyle,
       ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(icon, size: 16),
+          SizedBox(height: 4),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildWorkerReportButton() {
-    return OutlinedButton.icon(
-      onPressed: onOpenWorkerReport,
-      icon: const Icon(Icons.grid_view_outlined, size: 16),
-      label: const Text('Worker report', overflow: TextOverflow.ellipsis),
+    return OutlinedButton(
+      onPressed: _isApproved ? onOpenWorkerReport : null,
       style: OutlinedButton.styleFrom(
         backgroundColor: Colors.white,
         foregroundColor: AppColors.deepGreen,
+        disabledBackgroundColor: const Color(0xFFF2F3F2),
+        disabledForegroundColor: AppColors.muted,
         side: const BorderSide(color: AppColors.cardBorder),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         padding: _actionButtonPadding,
         textStyle: _actionButtonTextStyle,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(Icons.grid_view_outlined, size: 16),
+          SizedBox(height: 4),
+          Text(
+            'Worker report',
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ),
     );
   }
@@ -717,9 +802,13 @@ class _WorkerCard extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          // Falls back to the placeholder role for records enrolled before
-          // the department field existed.
-          '${worker.employeeId} • ${worker.department?.isNotEmpty == true ? worker.department : worker.role}',
+          // remoteEmployeeId (the backend's employee_id, distinct from
+          // National ID and from the local workerId) is only populated
+          // once this worker's been imported/synced from the server —
+          // shown as an em dash rather than left blank until then. Falls
+          // back to the placeholder role for records enrolled before the
+          // department field existed.
+          '${worker.remoteEmployeeId?.toString() ?? '—'} • ${worker.department?.isNotEmpty == true ? worker.department : worker.role}',
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 13, color: AppColors.muted),
         ),
@@ -730,17 +819,31 @@ class _WorkerCard extends StatelessWidget {
   }
 
   Widget _buildAttendance() {
-    final present = worker.isPresent;
+    // Derived from today's worker_attendance row (hasCheckedInToday/
+    // hasCheckedOutToday), not the legacy attendance_logs-based
+    // `worker.attendance`/`isPresent` — that flag only records a single
+    // login for the day and never turns back off, so it kept reading
+    // "Checked in" even after a worker had already checked out.
+    final label = worker.hasCheckedOutToday
+        ? 'Checked out'
+        : worker.hasCheckedInToday
+        ? 'Checked in'
+        : 'Not checked in';
+    final isActive = worker.hasCheckedInToday && !worker.hasCheckedOutToday;
+    final foreground = isActive
+        ? AppColors.success
+        : worker.hasCheckedOutToday
+        ? AppColors.deepGreen
+        : AppColors.danger;
+    final background = isActive
+        ? const Color(0xFFE7F6EC)
+        : worker.hasCheckedOutToday
+        ? const Color(0xFFEFF6F0)
+        : const Color(0xFFFDECEC);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        _Pill(
-          label: present ? 'Checked in' : 'Not checked in',
-          foreground: present ? AppColors.success : AppColors.danger,
-          background: present
-              ? const Color(0xFFE7F6EC)
-              : const Color(0xFFFDECEC),
-        ),
+        _Pill(label: label, foreground: foreground, background: background),
         const SizedBox(height: 8),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -755,6 +858,13 @@ class _WorkerCard extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 8),
+        _StatusText(
+          label: worker.verification.label,
+          color: _verificationColor,
+          showDot: worker.verification != VerificationStatus.verified,
+          alignEnd: true,
+        ),
       ],
     );
   }
@@ -768,7 +878,6 @@ class _WorkerCard extends StatelessWidget {
   Color get _verificationColor => switch (worker.verification) {
     VerificationStatus.verified => AppColors.success,
     VerificationStatus.pending => AppColors.warning,
-    VerificationStatus.rejected => AppColors.danger,
     VerificationStatus.notVerified => AppColors.muted,
   };
 }
@@ -843,16 +952,16 @@ class _Pill extends StatelessWidget {
 /// A footer status, optionally preceded by a coloured dot.
 class _StatusText extends StatelessWidget {
   final String? prefix;
-  final String label;
-  final Color color;
-  final bool showDot;
+  final String? label;
+  final Color? color;
+  final bool? showDot;
   final bool alignEnd;
 
   const _StatusText({
     this.prefix,
-    required this.label,
-    required this.color,
-    required this.showDot,
+    this.label,
+    this.color,
+    this.showDot,
     this.alignEnd = false,
   });
 
@@ -864,7 +973,7 @@ class _StatusText extends StatelessWidget {
           ? MainAxisAlignment.end
           : MainAxisAlignment.start,
       children: [
-        if (showDot) ...[
+        if (showDot != null) ...[
           Icon(Icons.circle, size: 9, color: color),
           const SizedBox(width: 6),
         ],

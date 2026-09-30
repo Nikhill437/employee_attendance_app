@@ -111,6 +111,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _ImportWorkersCard(
                   isImporting: _viewModel.isImportingWorkers,
                   onPressed: _importWorkers,
+                  updatedCount: _viewModel.updatedCounts.workerCount,
                 ),
                 const SizedBox(height: 14),
                 _RefreshLookupsCard(
@@ -118,6 +119,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   isFetchingTasks: _viewModel.isFetchingTasks,
                   onFetchDepartments: _fetchDepartments,
                   onFetchTasks: _fetchTasks,
+                  updatedDepartmentCount: _viewModel.updatedCounts.departmentCount,
+                  updatedTaskCount: _viewModel.updatedCounts.taskCount,
                 ),
                 const SizedBox(height: 14),
                 _EmployeesPreviewCard(
@@ -228,7 +231,7 @@ class _EmployeesPreviewCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Expanded(child: SectionLabel('EMPLOYEES')),
+              const Expanded(child: SectionLabel('WORKERS')),
               if (employees.isNotEmpty)
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -329,7 +332,10 @@ class _EmployeeRow extends StatelessWidget {
                 Text(
                   employee.employeeId,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: AppColors.muted,
+                  ),
                 ),
               ],
             ),
@@ -342,13 +348,51 @@ class _EmployeeRow extends StatelessWidget {
   }
 }
 
-/// Fetches the full worker roster from the backend
-/// (`POST attendance/list`) and upserts it locally by National ID.
+/// A small pill showing how many changed records the server reports for
+/// one of Workers/Departments/Tasks (`attendance/updated-counts`) — hidden
+/// entirely at zero, so the dashboard doesn't clutter itself with "0" pills
+/// once everything's caught up.
+class _UpdatedCountBadge extends StatelessWidget {
+  final int count;
+
+  const _UpdatedCountBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 0) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFDF3E3),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        '+$count new',
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          color: AppColors.warning,
+        ),
+      ),
+    );
+  }
+}
+
+/// Fetches worker data from the backend (`POST attendance/worker_data`)
+/// and upserts it locally by National ID. [updatedCount] is how many
+/// changed worker records the server currently reports
+/// (`attendance/updated-counts`) — a hint that there's something new to
+/// fetch, not a cap on what actually comes back.
 class _ImportWorkersCard extends StatelessWidget {
   final bool isImporting;
   final VoidCallback onPressed;
+  final int updatedCount;
 
-  const _ImportWorkersCard({required this.isImporting, required this.onPressed});
+  const _ImportWorkersCard({
+    required this.isImporting,
+    required this.onPressed,
+    required this.updatedCount,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -356,13 +400,19 @@ class _ImportWorkersCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionLabel('WORKER DATA'),
-                SizedBox(height: 6),
-                Text(
+                Row(
+                  children: [
+                    const SectionLabel('WORKER DATA'),
+                    const SizedBox(width: 8),
+                    _UpdatedCountBadge(count: updatedCount),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
                   'Fetch the latest worker list from the server',
                   style: TextStyle(fontSize: 13, color: AppColors.muted),
                 ),
@@ -406,12 +456,16 @@ class _RefreshLookupsCard extends StatelessWidget {
   final bool isFetchingTasks;
   final VoidCallback onFetchDepartments;
   final VoidCallback onFetchTasks;
+  final int updatedDepartmentCount;
+  final int updatedTaskCount;
 
   const _RefreshLookupsCard({
     required this.isFetchingDepartments,
     required this.isFetchingTasks,
     required this.onFetchDepartments,
     required this.onFetchTasks,
+    required this.updatedDepartmentCount,
+    required this.updatedTaskCount,
   });
 
   @override
@@ -426,12 +480,14 @@ class _RefreshLookupsCard extends StatelessWidget {
             label: 'Departments',
             isFetching: isFetchingDepartments,
             onPressed: onFetchDepartments,
+            updatedCount: updatedDepartmentCount,
           ),
           const Divider(height: 20, color: AppColors.cardBorder),
           _RefreshRow(
             label: 'Tasks',
             isFetching: isFetchingTasks,
             onPressed: onFetchTasks,
+            updatedCount: updatedTaskCount,
           ),
         ],
       ),
@@ -443,11 +499,13 @@ class _RefreshRow extends StatelessWidget {
   final String label;
   final bool isFetching;
   final VoidCallback onPressed;
+  final int updatedCount;
 
   const _RefreshRow({
     required this.label,
     required this.isFetching,
     required this.onPressed,
+    required this.updatedCount,
   });
 
   @override
@@ -455,9 +513,15 @@ class _RefreshRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 14.5, color: AppColors.ink),
+          child: Row(
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 14.5, color: AppColors.ink),
+              ),
+              const SizedBox(width: 8),
+              _UpdatedCountBadge(count: updatedCount),
+            ],
           ),
         ),
         Container(
@@ -560,7 +624,7 @@ class _HeadlineStats extends StatelessWidget {
       children: [
         Expanded(
           child: _StatTile(
-            label: 'TOTAL EMPLOYEES',
+            label: 'TOTAL WORKERS',
             value: '${summary.totalEmployees}',
           ),
         ),

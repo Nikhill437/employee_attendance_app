@@ -71,7 +71,16 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     if (!await _lookUpEmployee(employeeId)) return;
 
     final user = await _scanFace(employeeId);
-    if (user == null || !mounted) return;
+    if (!mounted) return;
+    if (user == null) {
+      // The camera screen already popped itself (Cancel Scan). For the
+      // supervisor-initiated flow there's nothing left to show but the
+      // "Starting face verification..." loading state — with no camera left
+      // to cancel — so back out of this screen too instead of stranding the
+      // supervisor there for a second Cancel tap.
+      if (_isSupervisorInitiated) Navigator.pop(context);
+      return;
+    }
 
     _viewModel.completeLogin(user);
     await Future.delayed(_successPause);
@@ -113,13 +122,6 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
               workerId: workerId,
               workerName: user.name,
               attendanceId: record.attendanceId,
-              // The worker's own self-service checkout (public kiosk flow,
-              // no supervisor involved) only ever gets to see whatever
-              // Yes/No the supervisor already set — never to change it
-              // themselves. The supervisor-initiated flow (checking a
-              // worker out from worker_list_screen.dart) still gets the
-              // editable version.
-              readOnly: !_isSupervisorInitiated,
             ),
           ),
         );

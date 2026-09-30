@@ -18,6 +18,11 @@ class WorkerTask {
   /// task was actually done on a given attendance day.
   final String status;
 
+  /// 'default' (available to the worker every day) or 'temporary' (only
+  /// for the day named by the row's `assigned_at` date) — see the
+  /// `worker_tasks.assignment_type` column doc comment in DatabaseHelper.
+  final String assignmentType;
+
   const WorkerTask({
     required this.workerTaskId,
     required this.workerId,
@@ -25,6 +30,7 @@ class WorkerTask {
     required this.taskName,
     required this.departmentId,
     required this.status,
+    required this.assignmentType,
   });
 
   factory WorkerTask.fromMap(Map<String, dynamic> map) {
@@ -35,6 +41,7 @@ class WorkerTask {
       taskName: map['task_name'] as String,
       departmentId: map['department_id'] as int,
       status: map['status'] as String? ?? 'active',
+      assignmentType: map['assignment_type'] as String? ?? 'default',
     );
   }
 }

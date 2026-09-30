@@ -40,46 +40,48 @@ class EnrollmentCompleteScreen extends StatelessWidget {
             subtitle: 'Confirmation',
           ),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              children: [
-                const AppCard(
-                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                  child: AppStepIndicator(steps: _steps, currentStep: 2),
-                ),
-                const SizedBox(height: 36),
-                _buildSuccessBadge(),
-                const SizedBox(height: 24),
-                const Text(
-                  'Enrollment Successful!',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.ink,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+              child: Column(
+                children: [
+                  const AppCard(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    child: AppStepIndicator(steps: _steps, currentStep: 2),
                   ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'The worker face profile has been registered.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14.5, color: AppColors.muted),
-                ),
-                const SizedBox(height: 24),
-                _buildIdentityCard(),
-                const SizedBox(height: 24),
-                AppPrimaryButton(
-                  label: 'Back to Worker List',
-                  background: AppColors.deepGreen,
-                  foreground: Colors.white,
-                  onPressed: () => _openWorkerList(context),
-                ),
-                const SizedBox(height: 14),
-                AppSecondaryButton(
-                  label: 'Enroll Another Worker',
-                  onPressed: () => _startAnotherEnrollment(context),
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  _buildSuccessBadge(),
+                  const SizedBox(height: 5),
+                  const Text(
+                    'Enrollment Successful!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'The worker face profile has been registered.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14.5, color: AppColors.muted),
+                  ),
+                  const SizedBox(height: 10),
+                  _buildIdentityCard(),
+                  const SizedBox(height: 10),
+                  AppPrimaryButton(
+                    label: 'Back to Worker List',
+                    background: AppColors.deepGreen,
+                    foreground: Colors.white,
+                    onPressed: () => _openWorkerList(context),
+                  ),
+                  const SizedBox(height: 10),
+                  AppSecondaryButton(
+                    label: 'Enroll Another Worker',
+                    onPressed: () => _startAnotherEnrollment(context),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

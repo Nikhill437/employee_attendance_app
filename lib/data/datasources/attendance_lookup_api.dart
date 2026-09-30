@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import '../../core/network/api_client.dart';
 import '../../core/network/api_routes.dart';
 import '../models/department_model.dart';
@@ -18,6 +20,29 @@ class AttendanceLookupApi {
     return _asList(data).map(Department.fromRemote).toList();
   }
 
+  /// POST attendance/department_data. Confirmed response shape:
+  /// `{"success": true, "data": {"department_id": 1, "department_name":
+  /// "maintainance", ...}}` — a single department object, unlike
+  /// [fetchDepartments]'s full list, so the caller upserts just this one
+  /// into the local cache instead of replacing it wholesale. Returns null
+  /// if the server has nothing to report for the given date, or on failure.
+  Future<Department?> fetchServertimeDepartment() async {
+    try {
+      final currentUtcTime = DateTime.now().toUtc().toIso8601String();
+      final data = await _client.post(
+        ApiRoutes.serverTimeDepartment,
+        data: {'date': currentUtcTime},
+      );
+      if (data is! Map || data['data'] is! Map) {
+        return null;
+      }
+      return Department.fromRemote(data['data'] as Map<String, dynamic>);
+    } catch (e) {
+      log('Error fetching server-time department: $e');
+    }
+    return null;
+  }
+
   /// POST attendance/list_task, walking `page`/`totalPages` until
   /// exhausted — same pattern as `WorkerListApi.fetchAll`. Confirmed
   /// response shape: `{"data": [...], "totalPages": ..., "currentPage":
@@ -32,7 +57,7 @@ class AttendanceLookupApi {
 
     while (true) {
       final data = await _client.post(
-        '${ApiRoutes.listTasks}?page=$page&limit=$limit',
+        '${ApiRoutes.deptTasks}?page=$page&limit=$limit',
       );
       if (data is! Map || data['data'] is! List) break;
       final rows = data['data'] as List;
@@ -45,6 +70,32 @@ class AttendanceLookupApi {
       page++;
     }
 
+    return results;
+  }
+
+  /// POST attendance/task_data. Confirmed response shape: `{"success":
+  /// true, "data": [{"task_id": ..., "department_id": ..., "task_name":
+  /// ..., "isdefault": "yes" | null}, ...]}`.
+  Future<List<Task>> fetchServertimeTask() async {
+    final results = <Task>[];
+
+    try {
+      final currentUtcTime = DateTime.now().toUtc().toIso8601String();
+      final data = await _client.post(
+        ApiRoutes.serverTimeTasks,
+        data: {'date': currentUtcTime},
+      );
+      if (data is! Map || data['data'] is! List) {
+        return results;
+      }
+      final rows = data['data'] as List;
+      results.addAll(
+        rows.map((row) => Task.fromRemote(row as Map<String, dynamic>)),
+      );
+      return results;
+    } catch (e) {
+      log('Error fetching server-time tasks: $e');
+    }
     return results;
   }
 
