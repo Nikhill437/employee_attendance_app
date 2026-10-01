@@ -190,6 +190,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       department: draft.departmentName,
       departmentId: draft.departmentId,
       nationalIdImage: draft.nationalIdImagePath,
+      taskId: draft.taskId,
     );
     if (employee == null || !mounted) return;
 
@@ -377,6 +378,29 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               validator: (department) =>
                   department == null ? 'Select the department' : null,
             ),
+            const SizedBox(height: 18),
+            AppDropdownField<Task>(
+              label: 'Task',
+              hint: _formViewModel.isLoadingTasks
+                  ? 'Loading tasks...'
+                  : 'Select task',
+              icon: Icons.task_alt_outlined,
+              value: _formViewModel.task,
+              items: _formViewModel.tasks,
+              labelBuilder: (task) => task.name,
+              onChanged: _formViewModel.selectTask,
+            ),
+            if (_formViewModel.task != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Selected task: ${_formViewModel.task!.name}',
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.deepGreen,
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             AppFormField(
               label: 'Address',

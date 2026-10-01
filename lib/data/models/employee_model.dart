@@ -70,6 +70,12 @@ class Employee {
   /// (see AuthRepository).
   final int? remoteEmployeeId;
 
+  /// The task picked on the enrollment form's Task dropdown, stored in
+  /// `workers.task_id` — null if none was picked. Once this worker syncs
+  /// back from the server as 'approved', [DatabaseHelper.upsertRemoteWorkers]
+  /// uses this to actually assign the task in `worker_tasks`.
+  final int? taskId;
+
   Employee({
     this.id,
     required this.name,
@@ -90,6 +96,7 @@ class Employee {
     this.status = 'pending',
     this.rejectionReason,
     this.remoteEmployeeId,
+    this.taskId,
   });
 
   Employee copyWith({
@@ -112,6 +119,7 @@ class Employee {
     String? status,
     String? rejectionReason,
     int? remoteEmployeeId,
+    int? taskId,
   }) {
     return Employee(
       id: id ?? this.id,
@@ -133,6 +141,7 @@ class Employee {
       status: status ?? this.status,
       rejectionReason: rejectionReason ?? this.rejectionReason,
       remoteEmployeeId: remoteEmployeeId ?? this.remoteEmployeeId,
+      taskId: taskId ?? this.taskId,
     );
   }
 
@@ -164,6 +173,7 @@ class Employee {
       'status': status,
       'created_by': createdBy,
       'created_date': attendanceTime,
+      'task_id': taskId,
     };
   }
 
@@ -205,6 +215,7 @@ class Employee {
       status: map['status'] as String? ?? 'pending',
       rejectionReason: map['rejection_reason'] as String?,
       remoteEmployeeId: map['employee_id'] as int?,
+      taskId: map['task_id'] as int?,
     );
   }
 

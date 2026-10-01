@@ -1,25 +1,18 @@
 import '../../../core/base/base_view_model.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/models/worker_attendance_model.dart';
-import '../../../data/models/worker_task_completion_model.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 
-/// One day's attendance row paired with its task-completion checklist —
-/// what one card in the Daily Activity list, or the Day Details screen it
-/// opens, needs.
+/// One day's attendance row — what one card in the Daily Activity list, or
+/// the Day Details screen it opens, needs.
 class WorkerReportDay {
   final WorkerAttendanceRecord attendance;
-  final List<WorkerTaskCompletion> tasks;
 
-  const WorkerReportDay({required this.attendance, required this.tasks});
-
-  int get completedCount => tasks.where((t) => t.isCompleted).length;
-  int get totalCount => tasks.length;
+  const WorkerReportDay({required this.attendance});
 }
 
 /// Drives the Worker Report screen: a date-range picker over one worker's
-/// `worker_attendance` history, each day paired with its task completions,
-/// and the period totals shown at the top.
+/// `worker_attendance` history, and the period totals shown at the top.
 class WorkerReportViewModel extends BaseViewModel {
   final int workerId;
   final WorkerAttendanceRepository _workerAttendance;
@@ -48,10 +41,6 @@ class WorkerReportViewModel extends BaseViewModel {
   int get totalDaysInRange => _rangeEnd.difference(_rangeStart).inDays + 1;
   int get daysPresent => _days.where((d) => d.attendance.hasCheckedIn).length;
   int get daysSynced => _days.where((d) => d.attendance.isSynced).length;
-  int get tasksCompleted =>
-      _days.fold(0, (sum, d) => sum + d.completedCount);
-  int get totalTasksAssigned =>
-      _days.fold(0, (sum, d) => sum + d.totalCount);
 
   Future<void> load() async {
     _isLoading = true;
@@ -64,14 +53,9 @@ class WorkerReportViewModel extends BaseViewModel {
       return !date.isBefore(_rangeStart) && !date.isAfter(_rangeEnd);
     }).toList();
 
-    final days = <WorkerReportDay>[];
-    for (final record in inRange) {
-      final tasks = await _workerAttendance.getTaskCompletions(
-        workerId: workerId,
-        attendanceId: record.attendanceId,
-      );
-      days.add(WorkerReportDay(attendance: record, tasks: tasks));
-    }
+    final days = [
+      for (final record in inRange) WorkerReportDay(attendance: record),
+    ];
     days.sort((a, b) => b.attendance.attendanceDate.compareTo(
       a.attendance.attendanceDate,
     ));

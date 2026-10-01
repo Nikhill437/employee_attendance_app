@@ -1,11 +1,9 @@
 import '../datasources/database_helper.dart';
 import '../datasources/worker_attendance_sync_api.dart';
 import '../models/worker_attendance_model.dart';
-import '../models/worker_task_completion_model.dart';
 
-/// Check-in/check-out tracking (`worker_attendance`) and per-day task
-/// completion (`worker_task_completion`) — separate from, and additive to,
-/// the existing `attendance_logs`-based mark-attendance flow.
+/// Check-in/check-out tracking (`worker_attendance`) — separate from, and
+/// additive to, the existing `attendance_logs`-based mark-attendance flow.
 class WorkerAttendanceRepository {
   final DatabaseHelper _dbHelper;
   final WorkerAttendanceSyncApi _syncApi;
@@ -60,33 +58,4 @@ class WorkerAttendanceRepository {
       realAttendanceId: realAttendanceId,
     );
   }
-
-  /// [workerId]'s assigned tasks with their completion status for
-  /// [attendanceId] (today's check-in/out day).
-  Future<List<WorkerTaskCompletion>> getTaskCompletions({
-    required int workerId,
-    required int attendanceId,
-  }) => _dbHelper.getTaskCompletions(
-    workerId: workerId,
-    attendanceId: attendanceId,
-  );
-
-  /// Sets one task's completion status (plus an optional remark) for
-  /// [attendanceId] — a caller not touching [remarks] (e.g.
-  /// AssignTaskViewModel.saveTaskStatus, which only edits Yes/No) should
-  /// pass through the value already on the [WorkerTaskCompletion] it
-  /// loaded, so it doesn't wipe out a remark task_status_screen.dart saved.
-  Future<void> setTaskCompletion({
-    required int workerTaskId,
-    required int workerId,
-    required int attendanceId,
-    required bool isCompleted,
-    String? remarks,
-  }) => _dbHelper.setTaskCompletion(
-    workerTaskId: workerTaskId,
-    workerId: workerId,
-    attendanceId: attendanceId,
-    isCompleted: isCompleted,
-    remarks: remarks,
-  );
 }

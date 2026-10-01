@@ -28,25 +28,43 @@ class TaskRepository {
   Future<void> unassignTasks(int workerId, List<int> taskIds) =>
       _dbHelper.unassignWorkerTasks(workerId, taskIds);
 
-  /// Assigns [taskId] to [workerId] with [assignmentType] ('default' or
-  /// 'temporary') — an upsert, see DatabaseHelper.assignWorkerTask.
-  Future<void> assignTask({
-    required int workerId,
-    required int taskId,
-    required String assignmentType,
-  }) => _dbHelper.assignWorkerTask(
-    workerId: workerId,
-    taskId: taskId,
-    assignmentType: assignmentType,
-  );
+  /// Assigns [taskId] to [workerId] as their one active task, replacing
+  /// whatever else was active — an upsert, see DatabaseHelper.assignWorkerTask.
+  Future<void> assignTask({required int workerId, required int taskId}) =>
+      _dbHelper.assignWorkerTask(workerId: workerId, taskId: taskId);
 
   /// Every worker with at least one active task assignment — for the
   /// worker list's "View Tasks" button, disabled otherwise.
   Future<Set<int>> getWorkerIdsWithAssignedTasks() =>
       _dbHelper.getWorkerIdsWithAssignedTasks();
 
-  /// Every worker whose supervisor task-status review isn't finished for
-  /// today — see DatabaseHelper.getWorkerIdsWithPendingTaskReview.
-  Future<Set<int>> getWorkerIdsWithPendingTaskReview() =>
-      _dbHelper.getWorkerIdsWithPendingTaskReview();
+  /// The worker's own checkout-time numeric/photo entry for [workerTaskId]
+  /// — see DatabaseHelper.submitWorkerTaskEntry.
+  Future<void> submitWorkerTaskEntry({
+    required int workerTaskId,
+    required int workerId,
+    int? employeeTarget,
+    String? workPhoto,
+  }) => _dbHelper.submitWorkerTaskEntry(
+    workerTaskId: workerTaskId,
+    workerId: workerId,
+    employeeTarget: employeeTarget,
+    workPhoto: workPhoto,
+  );
+
+  /// The supervisor's review of the same assignment — see
+  /// DatabaseHelper.saveSupervisorTaskReview.
+  Future<void> saveSupervisorTaskReview({
+    required int workerTaskId,
+    required int workerId,
+    int? completedTarget,
+    String? workPhoto,
+    String? note,
+  }) => _dbHelper.saveSupervisorTaskReview(
+    workerTaskId: workerTaskId,
+    workerId: workerId,
+    completedTarget: completedTarget,
+    workPhoto: workPhoto,
+    note: note,
+  );
 }

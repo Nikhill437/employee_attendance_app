@@ -14,6 +14,9 @@ class EnrollmentDraft {
   final String departmentName;
   final String nationalIdImagePath;
 
+  /// The task picked on the Task dropdown, or null if none was picked.
+  final int? taskId;
+
   const EnrollmentDraft({
     required this.fullName,
     required this.dateOfBirth,
@@ -25,5 +28,6 @@ class EnrollmentDraft {
     required this.departmentId,
     required this.departmentName,
     required this.nationalIdImagePath,
+    this.taskId,
   });
 }

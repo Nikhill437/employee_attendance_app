@@ -1,15 +1,22 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/models/department_model.dart';
-import '../../../data/models/worker_task_completion_model.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/assign_task_viewmodel.dart';
 
-/// Supervisor screen for one worker's day: today's attendance and assigned
-/// task checklist up top ("Day Details"), then — unchanged from before —
-/// picking a department and choosing which of its tasks to assign.
+/// Two modes, same screen. The supervisor's mode (default — reached from
+/// worker_list_screen.dart's "Assign Task" action) picks a department,
+/// assigns one task to a worker (replacing whatever was assigned before),
+/// and — once a task is assigned — shows the worker's own checkout-time
+/// submission for it plus the supervisor's review of that submission. The
+/// worker's checkout mode ([isCheckoutSubmission], reached from
+/// mark_attendance_screen.dart) only shows the already-assigned task's
+/// name and the Worker Submission card.
 class AssignTaskScreen extends StatefulWidget {
   final int workerId;
   final String workerName;
@@ -27,6 +34,14 @@ class AssignTaskScreen extends StatefulWidget {
   /// this department's tasks.
   final int? initialDepartmentId;
 
+  /// True when this screen was opened from the worker's own checkout
+  /// (mark_attendance_screen.dart) rather than from worker_list_screen.
+  /// dart's "Assign Task" action. Checkout only shows the already-assigned
+  /// task's name and the Worker Submission card — no department field, no
+  /// task dropdown/reassignment, and no Supervisor Review card, since
+  /// none of that is the worker's to do at checkout.
+  final bool isCheckoutSubmission;
+
   /// Overridable so tests can inject a fake, avoiding the real DatabaseHelper.
   final AssignTaskViewModel? viewModel;
 
@@ -37,6 +52,7 @@ class AssignTaskScreen extends StatefulWidget {
     this.employeeId,
     this.department,
     this.initialDepartmentId,
+    this.isCheckoutSubmission = false,
     this.viewModel,
   });
 
@@ -57,7 +73,6 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
           initialDepartmentId: widget.initialDepartmentId,
         );
     _viewModel.loadTasks();
-    _viewModel.loadDayDetails();
   }
 
   @override
@@ -82,29 +97,41 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     messenger.showSnackBar(SnackBar(content: Text(error)));
   }
 
-  /// Writes today's Is Completed toggles to `worker_task_completion` and
-  /// confirms it with a snackbar, so the supervisor knows the status
-  /// change actually landed rather than just changing on screen.
-  Future<void> _saveTaskStatus() async {
+  Future<File?> _capturePhoto() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      maxWidth: 1600,
+      imageQuality: 85,
+    );
+    return picked == null ? null : File(picked.path);
+  }
+
+  Future<void> _captureEntryPhoto() async {
+    final photo = await _capturePhoto();
+    if (photo != null) await _viewModel.captureEntryPhoto(photo);
+  }
+
+  Future<void> _captureReviewPhoto() async {
+    final photo = await _capturePhoto();
+    if (photo != null) await _viewModel.captureReviewPhoto(photo);
+  }
+
+  Future<void> _saveWorkerEntry() async {
     final messenger = ScaffoldMessenger.of(context);
-    final error = await _viewModel.saveTaskStatus();
+    final error = await _viewModel.saveWorkerEntry();
     if (!mounted) return;
     messenger.showSnackBar(
-      SnackBar(content: Text(error ?? 'Task status saved successfully')),
+      SnackBar(content: Text(error ?? 'Saved')),
     );
   }
 
-  /// Retries pushing today's attendance record to the backend — the Retry
-  /// button on the "not synced" banner.
-  Future<void> _retryAttendanceSync() async {
+  Future<void> _saveSupervisorReview() async {
     final messenger = ScaffoldMessenger.of(context);
-    final error = await _viewModel.syncAttendance();
+    final error = await _viewModel.saveSupervisorReview();
     if (!mounted) return;
-    if (error != null) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Could not sync attendance: $error')),
-      );
-    }
+    messenger.showSnackBar(
+      SnackBar(content: Text(error ?? 'Review saved')),
+    );
   }
 
   @override
@@ -257,6 +284,51 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    return widget.isCheckoutSubmission
+        ? _buildCheckoutBody()
+        : _buildSupervisorBody();
+  }
+
+  /// The worker's own checkout-time view: just the assigned task's name
+  /// and their Worker Submission card — no department/task picker, no
+  /// Supervisor Review.
+  Widget _buildCheckoutBody() {
+    final assignedTask = _viewModel.assignedTask;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      children: [
+        if (assignedTask == null)
+          const Padding(
+            padding: EdgeInsets.only(top: 24),
+            child: Center(
+              child: Text(
+                'No task assigned yet',
+                style: TextStyle(color: AppColors.muted),
+              ),
+            ),
+          )
+        else ...[
+          _CurrentAssignmentBanner(taskName: assignedTask.taskName),
+          const SizedBox(height: 18),
+          const SectionLabel('WORKER SUBMISSION'),
+          const SizedBox(height: 10),
+          _WorkerSubmissionCard(
+            numericValue: _viewModel.entryNumericValue,
+            photo: _viewModel.entryPhoto,
+            isSaving: _viewModel.isSubmittingEntry,
+            onNumericChanged: _viewModel.setEntryNumericValue,
+            onCapturePhoto: _captureEntryPhoto,
+            onSave: _saveWorkerEntry,
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// The supervisor's full view: pick/assign a task, plus (once one is
+  /// assigned) the Worker Submission and Supervisor Review cards.
+  Widget _buildSupervisorBody() {
+    final assignedTask = _viewModel.assignedTask;
     return Column(
       children: [
         Expanded(
@@ -267,13 +339,41 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
               const SizedBox(height: 10),
               _buildDepartmentField(),
               const SizedBox(height: 18),
+              if (assignedTask != null) ...[
+                _CurrentAssignmentBanner(taskName: assignedTask.taskName),
+                const SizedBox(height: 14),
+              ],
               _buildTaskPicker(),
               const SizedBox(height: 12),
-              _buildPendingTasksList(),
-              const SizedBox(height: 20),
-              const Divider(height: 1, color: AppColors.cardBorder),
-              const SizedBox(height: 18),
-              if (!_viewModel.isLoadingDayDetails) ..._buildDayDetails(),
+              _buildPendingTaskCard(),
+              if (assignedTask != null) ...[
+                const SizedBox(height: 20),
+                const Divider(height: 1, color: AppColors.cardBorder),
+                const SizedBox(height: 18),
+                const SectionLabel('WORKER SUBMISSION'),
+                const SizedBox(height: 10),
+                _WorkerSubmissionCard(
+                  numericValue: _viewModel.entryNumericValue,
+                  photo: _viewModel.entryPhoto,
+                  isSaving: _viewModel.isSubmittingEntry,
+                  onNumericChanged: _viewModel.setEntryNumericValue,
+                  onCapturePhoto: _captureEntryPhoto,
+                  onSave: _saveWorkerEntry,
+                ),
+                const SizedBox(height: 18),
+                const SectionLabel('SUPERVISOR REVIEW'),
+                const SizedBox(height: 10),
+                _SupervisorReviewCard(
+                  numericValue: _viewModel.reviewNumericValue,
+                  photo: _viewModel.reviewPhoto,
+                  note: _viewModel.reviewNote,
+                  isSaving: _viewModel.isSavingReview,
+                  onNumericChanged: _viewModel.setReviewNumericValue,
+                  onCapturePhoto: _captureReviewPhoto,
+                  onNoteChanged: _viewModel.setReviewNote,
+                  onSave: _saveSupervisorReview,
+                ),
+              ],
             ],
           ),
         ),
@@ -322,37 +422,14 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     );
   }
 
-  /// The Day Details section: today's attendance, sync status, and the
-  /// worker's already-assigned tasks tracked checklist for today — always
-  /// shown, never hidden behind a data-availability check, so the layout
-  /// doesn't shift around depending on what's been recorded yet.
-  List<Widget> _buildDayDetails() {
-    final completions = _viewModel.todayTaskCompletions;
-
-    return [
-      _AssignedTasksSection(
-        completions: completions,
-        completedCount: _viewModel.completedTaskCount,
-        totalCount: _viewModel.totalTaskCount,
-        onCompletionChanged: (completion, isCompleted) =>
-            _viewModel.setTaskCompletion(completion, isCompleted),
-      ),
-      if (completions.isNotEmpty) ...[
-        const SizedBox(height: 14),
-        AppSecondaryButton(
-          label: _viewModel.isSavingTaskStatus ? 'Saving...' : 'Save',
-          onPressed: _viewModel.isSavingTaskStatus ? null : _saveTaskStatus,
-        ),
-      ],
-      const SizedBox(height: 14),
-      const _OfflineNote(),
-      const SizedBox(height: 8),
-    ];
-  }
-
   Widget _buildTaskPicker() {
     if (_viewModel.isLoadingTasks) {
       return _buildDisabledTaskField('Loading tasks...');
+    }
+    if (!_viewModel.canPickNewTask) {
+      // A pick is already pending — see _buildPendingTaskCard, which shows
+      // it with its own remove action instead of this field.
+      return const SizedBox.shrink();
     }
     if (_viewModel.departmentTasksIsEmpty) {
       return _buildDisabledTaskField('No tasks available for this department');
@@ -366,12 +443,12 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       // on the next rebuild since nothing in `items` matches it anymore.
       // Changing the key on every add/remove forces a fresh widget instance
       // instead, which really does reset to null.
-      key: ValueKey(_viewModel.pendingTasks.length),
+      key: ValueKey(_viewModel.availableTasks.length),
       label: 'Task',
-      hint: 'Select a task to add',
+      hint: 'Select a task to assign',
       icon: Icons.task_alt_outlined,
-      // Always null: picking a task adds it to the list below and the
-      // dropdown resets, rather than retaining the pick as its value.
+      // Always null: picking a task shows it in the pending card below and
+      // the dropdown resets, rather than retaining the pick as its value.
       value: null,
       items: _viewModel.availableTasks,
       labelBuilder: (task) => task.name,
@@ -381,33 +458,20 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     );
   }
 
-  /// The supervisor's picked-but-not-yet-assigned tasks, each with a
-  /// Scheduled-for-today toggle and a remove action — shown directly below
-  /// the task dropdown, separate from the already-assigned checklist below.
-  Widget _buildPendingTasksList() {
-    final pending = _viewModel.pendingTasks;
-    if (pending.isEmpty) return const SizedBox.shrink();
+  /// The supervisor's picked-but-not-yet-assigned task, if any — only one
+  /// at a time (see AssignTaskViewModel.canPickNewTask), with a remove
+  /// action and the Assign button.
+  Widget _buildPendingTaskCard() {
+    final pending = _viewModel.pendingTask;
+    if (pending == null) return const SizedBox.shrink();
 
     return Column(
       children: [
-        for (var i = 0; i < pending.length; i++) ...[
-          _PendingTaskCard(
-            index: i + 1,
-            assignment: pending[i],
-            onRemove: () => _viewModel.removePendingTask(pending[i]),
-            onScheduledTodayChanged: (scheduledToday) =>
-                _viewModel.setPendingAssignmentType(
-                  pending[i],
-                  scheduledToday ? 'temporary' : 'default',
-                ),
-            onNumericChanged: (value) =>
-                _viewModel.setPendingNumericValue(pending[i], value),
-            onNoteChanged: (note) =>
-                _viewModel.setPendingNote(pending[i], note),
-          ),
-          if (i != pending.length - 1) const SizedBox(height: 10),
-        ],
-        if (_viewModel.hasSelection) SizedBox(height: 15),
+        _PendingTaskCard(
+          task: pending,
+          onRemove: _viewModel.removePendingTask,
+        ),
+        const SizedBox(height: 15),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
           child: AppPrimaryButton(
@@ -496,92 +560,190 @@ class _HeaderAvatar extends StatelessWidget {
   }
 }
 
-class _AssignedTasksSection extends StatelessWidget {
-  final List<WorkerTaskCompletion> completions;
-  final int completedCount;
-  final int totalCount;
-  final void Function(WorkerTaskCompletion completion, bool isCompleted)
-  onCompletionChanged;
+/// Shows which task is currently the worker's one active assignment,
+/// right above the dropdown that would replace it.
+class _CurrentAssignmentBanner extends StatelessWidget {
+  final String taskName;
 
-  const _AssignedTasksSection({
-    required this.completions,
-    required this.completedCount,
-    required this.totalCount,
-    required this.onCompletionChanged,
-  });
+  const _CurrentAssignmentBanner({required this.taskName});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const SectionLabel('ASSIGNED TASKS'),
-            Text(
-              '$completedCount of $totalCount completed',
-              style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE7F6EC),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.task_alt, size: 18, color: AppColors.success),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Currently assigned: $taskName',
+              style: const TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.ink,
+              ),
             ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: totalCount == 0 ? 0 : completedCount / totalCount,
-            minHeight: 6,
-            backgroundColor: const Color(0xFFEFEFEF),
-            color: AppColors.deepGreen,
           ),
-        ),
-        const SizedBox(height: 12),
-        if (completions.isEmpty)
-          const Text(
-            'No tasks assigned yet — pick one above.',
-            style: TextStyle(fontSize: 13, color: AppColors.muted),
-          ),
-        for (var i = 0; i < completions.length; i++) ...[
-          _TaskChecklistCard(
-            index: i + 1,
-            completion: completions[i],
-            onCompletionChanged: (isCompleted) =>
-                onCompletionChanged(completions[i], isCompleted),
-          ),
-          const SizedBox(height: 10),
         ],
-      ],
+      ),
     );
   }
 }
 
-/// A task picked in the dropdown above but not assigned yet — no
-/// completion data exists for it until [AssignTaskViewModel.save] actually
-/// assigns it, so it gets a lighter card (no Is Completed/Verify controls)
-/// with just a numeric value field, a note field, a Scheduled-for-today
-/// toggle, and a remove action.
-class _PendingTaskCard extends StatefulWidget {
-  final int index;
-  final PendingTaskAssignment assignment;
+/// A task picked in the dropdown above but not assigned yet.
+class _PendingTaskCard extends StatelessWidget {
+  final Task task;
   final VoidCallback onRemove;
-  final ValueChanged<bool> onScheduledTodayChanged;
-  final ValueChanged<double?> onNumericChanged;
-  final ValueChanged<String> onNoteChanged;
 
-  const _PendingTaskCard({
-    required this.index,
-    required this.assignment,
-    required this.onRemove,
-    required this.onScheduledTodayChanged,
+  const _PendingTaskCard({required this.task, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.task_alt_outlined, size: 20, color: AppColors.warning),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              task.name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.ink,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18, color: AppColors.muted),
+            tooltip: 'Remove',
+            onPressed: onRemove,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The worker's checkout-time entry for the currently assigned task —
+/// a numeric reading and a photo, saved into `worker_tasks.employee_target`/
+/// `work_photo`.
+class _WorkerSubmissionCard extends StatefulWidget {
+  final int? numericValue;
+  final File? photo;
+  final bool isSaving;
+  final ValueChanged<int?> onNumericChanged;
+  final VoidCallback onCapturePhoto;
+  final VoidCallback onSave;
+
+  const _WorkerSubmissionCard({
+    required this.numericValue,
+    required this.photo,
+    required this.isSaving,
     required this.onNumericChanged,
-    required this.onNoteChanged,
+    required this.onCapturePhoto,
+    required this.onSave,
   });
 
   @override
-  State<_PendingTaskCard> createState() => _PendingTaskCardState();
+  State<_WorkerSubmissionCard> createState() => _WorkerSubmissionCardState();
 }
 
-class _PendingTaskCardState extends State<_PendingTaskCard> {
+class _WorkerSubmissionCardState extends State<_WorkerSubmissionCard> {
+  late final TextEditingController _numericController;
+
+  @override
+  void initState() {
+    super.initState();
+    _numericController = TextEditingController(
+      text: widget.numericValue?.toString() ?? '',
+    )..addListener(_onNumericTextChanged);
+  }
+
+  void _onNumericTextChanged() {
+    widget.onNumericChanged(int.tryParse(_numericController.text.trim()));
+  }
+
+  @override
+  void dispose() {
+    _numericController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppFormField(
+            label: 'Quantity',
+            hint: 'Enter a numeric value',
+            icon: Icons.numbers,
+            controller: _numericController,
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 14),
+          AppImageCaptureField(
+            label: 'Task Photo',
+            hint: 'Tap to capture a photo for this task',
+            image: widget.photo,
+            onCapture: widget.onCapturePhoto,
+          ),
+          const SizedBox(height: 14),
+          AppSecondaryButton(
+            label: widget.isSaving ? 'Saving...' : 'Save',
+            onPressed: widget.isSaving ? null : widget.onSave,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The supervisor's review of the worker's submission — the same numeric
+/// value/photo fields (defaulting to what the worker entered) plus a note,
+/// saved into `worker_tasks.completed_target`/`work_photo`/`note`.
+class _SupervisorReviewCard extends StatefulWidget {
+  final int? numericValue;
+  final File? photo;
+  final String note;
+  final bool isSaving;
+  final ValueChanged<int?> onNumericChanged;
+  final VoidCallback onCapturePhoto;
+  final ValueChanged<String> onNoteChanged;
+  final VoidCallback onSave;
+
+  const _SupervisorReviewCard({
+    required this.numericValue,
+    required this.photo,
+    required this.note,
+    required this.isSaving,
+    required this.onNumericChanged,
+    required this.onCapturePhoto,
+    required this.onNoteChanged,
+    required this.onSave,
+  });
+
+  @override
+  State<_SupervisorReviewCard> createState() => _SupervisorReviewCardState();
+}
+
+class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
   late final TextEditingController _numericController;
   late final TextEditingController _noteController;
 
@@ -589,14 +751,14 @@ class _PendingTaskCardState extends State<_PendingTaskCard> {
   void initState() {
     super.initState();
     _numericController = TextEditingController(
-      text: widget.assignment.numericValue?.toString() ?? '',
+      text: widget.numericValue?.toString() ?? '',
     )..addListener(_onNumericTextChanged);
-    _noteController = TextEditingController(text: widget.assignment.note)
+    _noteController = TextEditingController(text: widget.note)
       ..addListener(_onNoteTextChanged);
   }
 
   void _onNumericTextChanged() {
-    widget.onNumericChanged(double.tryParse(_numericController.text.trim()));
+    widget.onNumericChanged(int.tryParse(_numericController.text.trim()));
   }
 
   void _onNoteTextChanged() {
@@ -612,101 +774,25 @@ class _PendingTaskCardState extends State<_PendingTaskCard> {
 
   @override
   Widget build(BuildContext context) {
-    final index = widget.index;
-    final assignment = widget.assignment;
-    final onRemove = widget.onRemove;
-    final onScheduledTodayChanged = widget.onScheduledTodayChanged;
-    final task = assignment.task;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
+    return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 22,
-                height: 22,
-                alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Color(0xFFFDF3E3),
-                ),
-                child: Text(
-                  '$index',
-                  style: const TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.warning,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  task.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.ink,
-                  ),
-                ),
-              ),
-              if (assignment.isAlreadyAssigned)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    'Assigned',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.success,
-                    ),
-                  ),
-                )
-              else
-                IconButton(
-                  icon: const Icon(Icons.close, size: 18, color: AppColors.muted),
-                  tooltip: 'Remove',
-                  onPressed: onRemove,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Scheduled task as',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.slate,
-                ),
-              ),
-              _AssignmentTypeToggle(
-                isTemporary: assignment.assignmentType == 'temporary',
-                onChanged: onScheduledTodayChanged,
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
           AppFormField(
             label: 'Quantity',
             hint: 'Enter a numeric value',
             icon: Icons.numbers,
             controller: _numericController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            keyboardType: TextInputType.number,
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 14),
+          AppImageCaptureField(
+            label: 'Task Photo',
+            hint: 'Tap to capture a photo for this task',
+            image: widget.photo,
+            onCapture: widget.onCapturePhoto,
+          ),
+          const SizedBox(height: 14),
           AppFormField(
             label: 'Note',
             hint: 'Add a note for this task',
@@ -715,278 +801,13 @@ class _PendingTaskCardState extends State<_PendingTaskCard> {
             minLines: 2,
             maxLines: 3,
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// "Default" (assignment_type = 'default' — a standing assignment) vs
-/// "Today" (assignment_type = 'temporary' — today only) — each
-/// _PendingTaskCard's own toggle, so one task's choice never affects
-/// another's.
-class _AssignmentTypeToggle extends StatelessWidget {
-  final bool isTemporary;
-  final ValueChanged<bool> onChanged;
-
-  const _AssignmentTypeToggle({
-    required this.isTemporary,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _pill('Default', !isTemporary, () => onChanged(false)),
-        const SizedBox(width: 8),
-        _pill('Today', isTemporary, () => onChanged(true)),
-      ],
-    );
-  }
-
-  Widget _pill(String label, bool isSelected, VoidCallback onTap) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.deepGreen : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? AppColors.deepGreen : AppColors.cardBorder,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: isSelected ? Colors.white : AppColors.ink,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TaskChecklistCard extends StatefulWidget {
-  final int index;
-  final WorkerTaskCompletion completion;
-  final ValueChanged<bool> onCompletionChanged;
-
-  const _TaskChecklistCard({
-    required this.index,
-    required this.completion,
-    required this.onCompletionChanged,
-  });
-
-  @override
-  State<_TaskChecklistCard> createState() => _TaskChecklistCardState();
-}
-
-class _TaskChecklistCardState extends State<_TaskChecklistCard> {
-  // Not backed by any stored field yet — this app doesn't have a separate
-  // "supervisor verified" concept beyond completion + sync, so this toggle
-  // is UI-only for now and resets to No (unverified) whenever this card is
-  // rebuilt from fresh data (e.g. reopening the screen).
-  bool _isVerified = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final completion = widget.completion;
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 22,
-                height: 22,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: completion.isCompleted
-                      ? const Color(0xFFE7F6EC)
-                      : const Color(0xFFF2F3F2),
-                ),
-                child: Text(
-                  '${widget.index}',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: completion.isCompleted
-                        ? AppColors.success
-                        : AppColors.muted,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  completion.taskName,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.ink,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _YesNoRow(
-            label: 'Is Completed',
-            value: completion.isCompleted,
-            onChanged: widget.onCompletionChanged,
-          ),
-          const SizedBox(height: 10),
-          _YesNoRow(
-            label: 'Verify',
-            value: _isVerified,
-            onChanged: (value) => setState(() => _isVerified = value),
+          const SizedBox(height: 14),
+          AppSecondaryButton(
+            label: widget.isSaving ? 'Saving...' : 'Save',
+            onPressed: widget.isSaving ? null : widget.onSave,
           ),
         ],
       ),
-    );
-  }
-}
-
-/// A label paired with a Yes/No pill toggle — one row of a
-/// [_TaskChecklistCard].
-class _YesNoRow extends StatelessWidget {
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _YesNoRow({
-    required this.label,
-    required this.value,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: AppColors.slate,
-          ),
-        ),
-        _YesNoToggle(value: value, onChanged: onChanged),
-      ],
-    );
-  }
-}
-
-/// A compact two-pill Yes/No toggle — same look as
-/// task_status_screen.dart's own toggle, kept as a separate copy here since
-/// this screen's checklist card layout differs from that screen's row.
-class _YesNoToggle extends StatelessWidget {
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _YesNoToggle({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _pill('Yes', value, () => onChanged(true)),
-        const SizedBox(width: 8),
-        _pill('No', !value, () => onChanged(false)),
-      ],
-    );
-  }
-
-  Widget _pill(String label, bool isSelected, VoidCallback onTap) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.deepGreen : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? AppColors.deepGreen : AppColors.cardBorder,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: isSelected ? Colors.white : AppColors.ink,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  final String label;
-  final Color color;
-  final Color background;
-
-  const _StatusPill({
-    required this.label,
-    required this.color,
-    required this.background,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11.5,
-          fontWeight: FontWeight.w700,
-          color: color,
-        ),
-      ),
-    );
-  }
-}
-
-/// Explains why the Day Details block above it has nothing to show yet,
-/// instead of that section just silently disappearing.
-/// Describes this app's actual offline-first storage — every section above
-/// is a live read of the local database regardless of sync state.
-class _OfflineNote extends StatelessWidget {
-  const _OfflineNote();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Icon(Icons.save_outlined, size: 14, color: AppColors.muted),
-        const SizedBox(width: 6),
-        const Expanded(
-          child: Text(
-            'Saved on this device. Changes will upload when a connection '
-            'is available.',
-            style: TextStyle(fontSize: 11.5, color: AppColors.muted),
-          ),
-        ),
-      ],
     );
   }
 }

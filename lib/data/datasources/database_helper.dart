@@ -5,9 +5,8 @@ import '../models/attendance_log_model.dart';
 import '../models/department_model.dart';
 import '../models/employee_model.dart';
 import '../models/remote_worker_model.dart';
-import '../models/task_completion_sync_model.dart';
+import '../models/remote_worker_task_model.dart';
 import '../models/worker_attendance_model.dart';
-import '../models/worker_task_completion_model.dart';
 import '../models/worker_task_model.dart';
 
 class DatabaseHelper {
@@ -33,7 +32,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 15,
+      version: 17,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -115,15 +114,12 @@ class DatabaseHelper {
           );
         }
         if (oldVersion < 11 && oldVersion >= 7) {
-          // `worker_task_completion` picks up `supervisor_id`/`worker_id`
-          // and a 'yes'/'no' status (instead of `completed_by` and
-          // 'completed'/'pending') to match `POST
-          // attendance/worker-task-completion`'s payload, plus `is_synced`.
-          // Nothing has shipped against the old shape yet, so — same
-          // precedent as the v4/v7 migrations above — existing rows are
-          // dropped rather than converted in place.
+          // `worker_task_completion` used to be recreated here with its
+          // 'yes'/'no' status shape; the table (and the whole task-status
+          // review feature) has since been removed from the app, so this
+          // step now just drops it if a pre-v11 install still has the old
+          // one lying around.
           await db.execute('DROP TABLE IF EXISTS worker_task_completion');
-          await _createWorkerTables(db);
         }
         if (oldVersion < 12 && oldVersion >= 7) {
           // `workers.employee_id` — the backend's employee id, distinct
@@ -152,14 +148,48 @@ class DatabaseHelper {
             "ALTER TABLE worker_tasks ADD COLUMN assignment_type TEXT NOT NULL DEFAULT 'default'",
           );
         }
-        if (oldVersion < 15 && oldVersion >= 7) {
-          // See the `numeric_value`/`image_path` column doc comments on
-          // worker_task_completion in _createWorkerTables.
+        // The old oldVersion < 15 step added worker_task_completion's
+        // numeric_value/image_path columns; that table has since been
+        // removed entirely (see the oldVersion < 11 step above), so there
+        // is nothing left for a v15 upgrade to do.
+        if (oldVersion < 16 && oldVersion >= 7) {
+          // See the `server_time`/`target`/`rate`/`overtime`/`note`/
+          // `completed_target`/`task_id`/`task_status` column doc comments
+          // in _createWorkerTables.
           await db.execute(
-            'ALTER TABLE worker_task_completion ADD COLUMN numeric_value REAL',
+            'ALTER TABLE departments ADD COLUMN server_time TEXT DEFAULT CURRENT_TIMESTAMP',
           );
           await db.execute(
-            'ALTER TABLE worker_task_completion ADD COLUMN image_path TEXT',
+            'ALTER TABLE tasks ADD COLUMN server_time TEXT DEFAULT CURRENT_TIMESTAMP',
+          );
+          await db.execute('ALTER TABLE tasks ADD COLUMN target INTEGER');
+          await db.execute('ALTER TABLE tasks ADD COLUMN rate INTEGER');
+          await db.execute('ALTER TABLE tasks ADD COLUMN overtime INTEGER');
+          await db.execute('ALTER TABLE workers ADD COLUMN task_id INTEGER');
+          await db.execute(
+            'ALTER TABLE worker_tasks ADD COLUMN server_time TEXT DEFAULT CURRENT_TIMESTAMP',
+          );
+          await db.execute('ALTER TABLE worker_tasks ADD COLUMN note TEXT');
+          await db.execute(
+            'ALTER TABLE worker_tasks ADD COLUMN overtime INTEGER',
+          );
+          await db.execute(
+            'ALTER TABLE worker_tasks ADD COLUMN completed_target INTEGER',
+          );
+          await db.execute(
+            "ALTER TABLE worker_tasks ADD COLUMN task_status TEXT NOT NULL DEFAULT 'pending'",
+          );
+        }
+        if (oldVersion < 17 && oldVersion >= 7) {
+          // See the `employee_target`/`work_photo` column doc comments on
+          // WorkerTask — added to _createWorkerTables after the v16 step
+          // above had already shipped, so they need their own step rather
+          // than folding into it.
+          await db.execute(
+            'ALTER TABLE worker_tasks ADD COLUMN work_photo VARCHAR(255)',
+          );
+          await db.execute(
+            'ALTER TABLE worker_tasks ADD COLUMN employee_target INTEGER',
           );
         }
       },
@@ -167,7 +197,7 @@ class DatabaseHelper {
   }
 
   /// `departments` / `tasks` / `workers` / `worker_tasks` /
-  /// `worker_attendance` / `worker_task_completion` mirror the backend's
+  /// `worker_attendance` mirror the backend's
   /// MySQL schema as closely as SQLite allows: ENUM columns become plain
   /// TEXT (no CHECK constraint, to avoid brittle casing failures),
   /// AUTO_INCREMENT/BIGINT become INTEGER PRIMARY KEY AUTOINCREMENT, the
@@ -178,18 +208,17 @@ class DatabaseHelper {
   /// an UPDATE trigger, not added since nothing writes to these two tables
   /// yet — schema only, same as `tasks`/`worker_tasks` were before them).
   ///
-  /// `workers`/`worker_tasks`/`worker_attendance`/`worker_task_completion`
+  /// `workers`/`worker_tasks`/`worker_attendance`
   /// each have their own `offline_worker_id` — a local-only autoincrement
   /// PK, always populated the instant a row is inserted, regardless of
   /// whether it's ever reached the backend. Their old PK columns
-  /// (`worker_id`/`worker_task_id`/`attendance_id`/`completion_id`) are now
+  /// (`worker_id`/`worker_task_id`/`attendance_id`) are now
   /// plain nullable `UNIQUE` columns holding the backend's own id, once
   /// known — null until that record has actually been synced (or, for
   /// `workers`, until an import via `POST attendance/list` tells us). Every
   /// local FK reference and every one of this app's own "id" concepts
   /// (`Employee.id`, `Worker.workerId`, `WorkerTask.workerTaskId`,
-  /// `WorkerAttendanceRecord.attendanceId`,
-  /// `WorkerTaskCompletion.completionId`, `TaskCompletionSyncRecord.*`) is
+  /// `WorkerAttendanceRecord.attendanceId`) is
   /// backed by `offline_worker_id` — via SQL aliasing in the queries below
   /// wherever a raw query selects specific columns, so the Dart model layer
   /// doesn't need to know which physical column it came from.
@@ -202,7 +231,8 @@ class DatabaseHelper {
         created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         modified_date TEXT,
         modified_by INTEGER,
-        created_by INTEGER
+        created_by INTEGER,
+        server_time TEXT DEFAULT CURRENT_TIMESTAMP
       )
     ''');
     await db.execute('''
@@ -221,6 +251,12 @@ class DatabaseHelper {
         -- assigns as needed. Drives the Assign Task screen's default
         -- pre-selection for a newly-picked task's assignment_type.
         isdefault TEXT NOT NULL DEFAULT 'no',
+        -- A per-task daily quantity goal, hourly/piece rate, and overtime
+        -- allowance — all backend-defined, mirrored read-only.
+        target INTEGER,
+        rate INTEGER,
+        overtime INTEGER,
+        server_time TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(department_id, task_name),
         FOREIGN KEY (department_id) REFERENCES departments(department_id)
           ON UPDATE CASCADE
@@ -246,6 +282,10 @@ class DatabaseHelper {
         approved_by INTEGER,
         approved_at TEXT,
         employee_id INTEGER UNIQUE,
+        -- The backend's own task id — set on some worker records
+        -- independent of the worker_tasks assignment table; not FK'd
+        -- locally since nothing here depends on it being enforced.
+        task_id INTEGER,
         created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         modified_date TEXT,
         server_time TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -269,18 +309,35 @@ class DatabaseHelper {
         offline_worker_id INTEGER PRIMARY KEY AUTOINCREMENT,
         worker_task_id INTEGER UNIQUE,
         worker_id INTEGER NOT NULL,
+        attendance_id INTEGER,
         task_id INTEGER NOT NULL,
+        target INTEGER,
         status TEXT NOT NULL DEFAULT 'active',
         assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         -- 'default' (available to the worker every day — see
-        -- getWorkerTasks/getTaskCompletions' applicability filter) or
+        -- getWorkerTasks' applicability filter) or
         -- 'temporary' (only for the day named by `assigned_at`'s own date;
         -- re-assigning refreshes that date rather than adding a second
         -- row — see assignWorkerTask). Always exactly one row per
         -- (worker_id, task_id) regardless of type.
         assignment_type TEXT NOT NULL DEFAULT 'default',
+        -- Free-form text the supervisor attaches to this assignment — see
+        -- assign_task_screen.dart's Note field.
+        note TEXT,
+        -- This assignment's own overtime allowance and progress toward
+        -- [target] — distinct from the task catalog's own [Task]-level
+        -- target/rate/overtime, which describe the task in general.
+        work_photo VARCHAR(255),
+        overtime INTEGER,
+        employee_target INTEGER,
+        completed_target INTEGER,
+        -- 'pending'/'approved'/'rejected' — the backend's ENUM for this
+        -- assignment's own approval state (plain TEXT locally, no CHECK
+        -- constraint — see the schema doc comment above for why).
+        task_status TEXT NOT NULL DEFAULT 'pending',
+        server_time TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(worker_id, task_id),
         FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE CASCADE,
         FOREIGN KEY (worker_id) REFERENCES workers(offline_worker_id) ON UPDATE CASCADE
@@ -307,38 +364,6 @@ class DatabaseHelper {
         is_synced INTEGER NOT NULL DEFAULT 0,
         UNIQUE(worker_id, attendance_date),
         FOREIGN KEY (worker_id) REFERENCES workers(offline_worker_id) ON UPDATE CASCADE
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS worker_task_completion(
-        offline_worker_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        completion_id INTEGER UNIQUE,
-        worker_task_id INTEGER NOT NULL,
-        supervisor_id INTEGER NOT NULL,
-        attendance_id INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'no',
-        worker_id INTEGER,
-        completed_at TEXT,
-        remarks TEXT,
-        -- A free-form numeric reading captured alongside the task's
-        -- Yes/No status (e.g. a count or measurement) — see
-        -- task_status_screen.dart.
-        numeric_value REAL,
-        -- Local file path of a photo captured for this task on
-        -- task_status_screen.dart, copied into permanent app storage the
-        -- same way EnrollmentFormViewModel.captureNationalIdImage does.
-        image_path TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        -- Local-only bookkeeping, not part of the backend's schema: whether
-        -- POST attendance/worker-task-completion has succeeded for this row
-        -- yet (see markWorkerTaskCompletionSynced) — drives the worker
-        -- list's Sync Task Completion button.
-        is_synced INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (worker_task_id) REFERENCES worker_tasks(offline_worker_id)
-          ON UPDATE CASCADE,
-        FOREIGN KEY (attendance_id) REFERENCES worker_attendance(offline_worker_id)
-          ON UPDATE CASCADE
       )
     ''');
   }
@@ -510,26 +535,6 @@ class DatabaseHelper {
     return rows.first['worker_task_id'] as int?;
   }
 
-  /// The task's own real id (`tasks.task_id`) for the assignment at local
-  /// id [offlineWorkerTaskId] — unlike [getRemoteWorkerTaskId] (the
-  /// *assignment*'s backend id, null until that assignment itself has
-  /// synced), this is always available once the task exists locally at
-  /// all, since `tasks.task_id` is the backend's id from the moment tasks
-  /// are synced down (`POST attendance/list_task`), never generated
-  /// locally. Null only if [offlineWorkerTaskId] doesn't exist.
-  Future<int?> getTaskIdForWorkerTask(int offlineWorkerTaskId) async {
-    final db = await database;
-    final rows = await db.query(
-      'worker_tasks',
-      columns: ['task_id'],
-      where: 'offline_worker_id = ?',
-      whereArgs: [offlineWorkerTaskId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return null;
-    return rows.first['task_id'] as int?;
-  }
-
   /// The backend's real id for the attendance day at local id
   /// [offlineAttendanceId], or null if it hasn't been synced yet.
   Future<int?> getRemoteAttendanceId(int offlineAttendanceId) async {
@@ -663,13 +668,16 @@ class DatabaseHelper {
 
   /// Every task currently assigned to [workerId] — for pre-marking them on
   /// the Assign Task screen and for the plain "view assigned tasks" screens.
+  /// A worker only ever has one active row at a time (see
+  /// [assignWorkerTask]), so in practice this returns at most one.
   Future<List<WorkerTask>> getWorkerTasks(int workerId) async {
     final db = await database;
     final maps = await db.rawQuery(
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
-             worker_tasks.assignment_type
+             worker_tasks.assignment_type, worker_tasks.employee_target,
+             worker_tasks.work_photo, worker_tasks.completed_target, worker_tasks.note
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
@@ -748,54 +756,116 @@ class DatabaseHelper {
     await markWorkerUnsynced(workerId);
   }
 
-  /// Assigns [taskId] to [workerId] with the given [assignmentType]
-  /// ('default' or 'temporary') — an upsert by (worker_id, task_id), so
-  /// re-assigning an already-assigned task (e.g. a 'temporary' task
-  /// scheduled again on a later day) updates that single row's
-  /// `assigned_at`/`assignment_type` rather than creating a second one, per
-  /// the table's own UNIQUE(worker_id, task_id). If the assignment type
-  /// actually changes, `worker_task_id` is reset to null so
+  /// Assigns [taskId] to [workerId] as that worker's one active task — an
+  /// upsert by (worker_id, task_id) per the table's own UNIQUE(worker_id,
+  /// task_id), always as `assignment_type = 'default'` (a standing
+  /// assignment; there is no more 'temporary'/scheduled-for-today option).
+  /// A worker has only one active task at a time: whatever else was active
+  /// for them is flipped to `status = 'inactive'` first, so assigning a new
+  /// task is really a replacement, not an addition. Re-activating a task
+  /// that had gone inactive resets `worker_task_id` to null so
   /// [getUnsyncedWorkerTasks] re-picks up the row for the backend, which
   /// needs to hear about the change.
   Future<void> assignWorkerTask({
     required int workerId,
     required int taskId,
-    required String assignmentType,
   }) async {
     final db = await database;
     final now = AppTime.nowInUserZone().toIso8601String();
-    final existing = await db.query(
-      'worker_tasks',
-      where: 'worker_id = ? AND task_id = ?',
-      whereArgs: [workerId, taskId],
-      limit: 1,
-    );
-    if (existing.isEmpty) {
-      await db.insert('worker_tasks', {
-        'worker_id': workerId,
-        'task_id': taskId,
-        'assignment_type': assignmentType,
-        'status': 'active',
-        'assigned_at': now,
-        'created_at': now,
-        'updated_at': now,
-      });
-    } else {
-      final row = existing.first;
-      final typeChanged = row['assignment_type'] != assignmentType;
-      await db.update(
+    await db.transaction((txn) async {
+      await txn.update(
         'worker_tasks',
-        {
-          'assignment_type': assignmentType,
+        {'status': 'inactive', 'updated_at': now},
+        where: "worker_id = ? AND task_id != ? AND status = 'active'",
+        whereArgs: [workerId, taskId],
+      );
+
+      final existing = await txn.query(
+        'worker_tasks',
+        where: 'worker_id = ? AND task_id = ?',
+        whereArgs: [workerId, taskId],
+        limit: 1,
+      );
+      if (existing.isEmpty) {
+        await txn.insert('worker_tasks', {
+          'worker_id': workerId,
+          'task_id': taskId,
+          'assignment_type': 'default',
           'status': 'active',
           'assigned_at': now,
+          'created_at': now,
           'updated_at': now,
-          if (typeChanged) 'worker_task_id': null,
-        },
-        where: 'offline_worker_id = ?',
-        whereArgs: [row['offline_worker_id']],
-      );
-    }
+        });
+      } else {
+        final row = existing.first;
+        final wasInactive = row['status'] != 'active';
+        await txn.update(
+          'worker_tasks',
+          {
+            'assignment_type': 'default',
+            'status': 'active',
+            'assigned_at': now,
+            'updated_at': now,
+            if (wasInactive) 'worker_task_id': null,
+          },
+          where: 'offline_worker_id = ?',
+          whereArgs: [row['offline_worker_id']],
+        );
+      }
+    });
+    await markWorkerUnsynced(workerId);
+  }
+
+  /// The worker's own checkout-time entry for [workerTaskId] (the
+  /// `worker_tasks` row's own local id, as read back via
+  /// [WorkerTask.workerTaskId]) — the numeric reading and/or photo they
+  /// submit on assign_task_screen.dart's Worker Submission card.
+  /// [workPhoto] is only written when non-null, so saving just the numeric
+  /// value never clears an already-captured photo.
+  Future<void> submitWorkerTaskEntry({
+    required int workerTaskId,
+    required int workerId,
+    int? employeeTarget,
+    String? workPhoto,
+  }) async {
+    final db = await database;
+    await db.update(
+      'worker_tasks',
+      {
+        'employee_target': employeeTarget,
+        'work_photo': ?workPhoto,
+        'updated_at': AppTime.nowInUserZone().toIso8601String(),
+      },
+      where: 'offline_worker_id = ?',
+      whereArgs: [workerTaskId],
+    );
+    await markWorkerUnsynced(workerId);
+  }
+
+  /// The supervisor's review of the same assignment — their own numeric
+  /// value (`completed_target`, distinct from the worker's own
+  /// `employee_target`) and note, plus [workPhoto] overwriting the
+  /// worker's own photo only when the supervisor actually captured/picked
+  /// a new one (null leaves the existing `work_photo` untouched).
+  Future<void> saveSupervisorTaskReview({
+    required int workerTaskId,
+    required int workerId,
+    int? completedTarget,
+    String? workPhoto,
+    String? note,
+  }) async {
+    final db = await database;
+    await db.update(
+      'worker_tasks',
+      {
+        'completed_target': completedTarget,
+        'work_photo': ?workPhoto,
+        'note': note,
+        'updated_at': AppTime.nowInUserZone().toIso8601String(),
+      },
+      where: 'offline_worker_id = ?',
+      whereArgs: [workerTaskId],
+    );
     await markWorkerUnsynced(workerId);
   }
 
@@ -819,51 +889,9 @@ class DatabaseHelper {
     return {for (final row in rows) row['worker_id'] as int};
   }
 
-  /// Every worker_id with at least one of today's applicable tasks still
-  /// missing a submitted `worker_task_completion` row for today's
-  /// attendance day — i.e. the supervisor hasn't finished reviewing
-  /// (Yes/No + remark, see task_status_screen.dart) every task yet. A
-  /// worker with no attendance today, or no tasks at all, isn't in this
-  /// set — nothing to review yet isn't the same as an incomplete review,
-  /// and [WorkerListViewModel]'s sync-button gating already checks
-  /// check-in/checkout separately.
-  ///
-  /// A task counts as "reviewed" purely by a completion row existing for
-  /// it (`worker_task_completion.offline_worker_id IS NOT NULL`) —
-  /// task_status_screen.dart only ever writes one once the supervisor taps
-  /// that task's Save, same signal [DatabaseHelper.getTaskCompletions]
-  /// uses for a single worker's checklist.
-  Future<Set<int>> getWorkerIdsWithPendingTaskReview() async {
-    final db = await database;
-    final today = _todayDateKey();
-    final rows = await db.rawQuery(
-      '''
-      SELECT worker_tasks.worker_id
-      FROM worker_tasks
-      JOIN worker_attendance
-        ON worker_attendance.worker_id = worker_tasks.worker_id
-        AND worker_attendance.attendance_date = ?
-      LEFT JOIN worker_task_completion
-        ON worker_task_completion.worker_task_id = worker_tasks.offline_worker_id
-        AND worker_task_completion.attendance_id = worker_attendance.offline_worker_id
-      WHERE worker_tasks.status = 'active'
-        AND (
-          worker_tasks.assignment_type = 'default'
-          OR (worker_tasks.assignment_type = 'temporary'
-              AND substr(worker_tasks.assigned_at, 1, 10) = ?)
-        )
-      GROUP BY worker_tasks.worker_id
-      HAVING COUNT(*) > COUNT(worker_task_completion.offline_worker_id)
-    ''',
-      [today, today],
-    );
-    return {for (final row in rows) row['worker_id'] as int};
-  }
-
   // --- Worker attendance (check-in / check-out) methods ---
   //
   // These are additive: they read/write only `worker_attendance` and
-  // `worker_task_completion` (previously unused, schema-only tables) and
   // never touch `attendance_logs` or any of the existing employee-login
   // methods above — the existing attendance-marking flow is unchanged.
 
@@ -1019,146 +1047,6 @@ class DatabaseHelper {
     );
   }
 
-  /// Every task assigned to [workerId], with its completion status for
-  /// [attendanceId] — a task with no `worker_task_completion` row yet for
-  /// this attendance day defaults to "not completed" via the LEFT JOIN,
-  /// rather than being left off the list.
-  Future<List<WorkerTaskCompletion>> getTaskCompletions({
-    required int workerId,
-    required int attendanceId,
-  }) async {
-    final db = await database;
-    final maps = await db.rawQuery(
-      '''
-      SELECT worker_tasks.offline_worker_id AS worker_task_id, tasks.task_id, tasks.task_name,
-             worker_task_completion.offline_worker_id AS completion_id, worker_task_completion.status,
-             worker_task_completion.remarks
-      FROM worker_tasks
-      JOIN tasks ON tasks.task_id = worker_tasks.task_id
-      LEFT JOIN worker_task_completion
-        ON worker_task_completion.worker_task_id = worker_tasks.offline_worker_id
-        AND worker_task_completion.attendance_id = ?
-      WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
-        AND (
-          worker_tasks.assignment_type = 'default'
-          OR (worker_tasks.assignment_type = 'temporary'
-              AND substr(worker_tasks.assigned_at, 1, 10) = (
-                SELECT attendance_date FROM worker_attendance
-                WHERE offline_worker_id = ?
-              ))
-        )
-      ORDER BY tasks.task_name COLLATE NOCASE
-    ''',
-      [attendanceId, workerId, attendanceId],
-    );
-    return List.generate(
-      maps.length,
-      (i) => WorkerTaskCompletion.fromMap(maps[i], attendanceId: attendanceId),
-    );
-  }
-
-  /// Sets [workerTaskId]'s completion status (plus an optional remark) for
-  /// [attendanceId] — updates the existing `worker_task_completion` row for
-  /// this (task, attendance day) pair if one exists (a re-toggle),
-  /// otherwise inserts one, so reopening this screen and changing anything
-  /// again never creates a duplicate record. Any change (insert or
-  /// re-toggle) resets `is_synced` to 0 — a row already pushed to the
-  /// backend needs pushing again once its status changes. A row existing at
-  /// all — regardless of Yes or No — is what
-  /// [getWorkerIdsWithPendingTaskReview] reads as "the supervisor has
-  /// reviewed this task."
-  Future<void> setTaskCompletion({
-    required int workerTaskId,
-    required int workerId,
-    required int attendanceId,
-    required bool isCompleted,
-    String? remarks,
-  }) async {
-    final db = await database;
-    final status = isCompleted ? 'yes' : 'no';
-    final now = AppTime.nowInUserZone().toIso8601String();
-    final existing = await db.query(
-      'worker_task_completion',
-      where: 'worker_task_id = ? AND attendance_id = ?',
-      whereArgs: [workerTaskId, attendanceId],
-      limit: 1,
-    );
-    if (existing.isEmpty) {
-      await db.insert('worker_task_completion', {
-        'worker_task_id': workerTaskId,
-        'worker_id': workerId,
-        'attendance_id': attendanceId,
-        'supervisor_id': _placeholderCreatedBy,
-        'status': status,
-        'completed_at': isCompleted ? now : null,
-        'remarks': remarks,
-        'is_synced': 0,
-      });
-    } else {
-      await db.update(
-        'worker_task_completion',
-        {
-          'status': status,
-          'completed_at': isCompleted ? now : null,
-          'remarks': remarks,
-          'is_synced': 0,
-        },
-        where: 'offline_worker_id = ?',
-        whereArgs: [existing.first['offline_worker_id']],
-      );
-    }
-  }
-
-  /// Every `worker_task_completion` row for [workerId] — Yes or No — that
-  /// hasn't been pushed to `POST attendance/worker-task-completion` yet
-  /// (the payload's own `status` field carries which one it is).
-  ///
-  /// Joined against `worker_tasks` so `worker_task_id` in the result — and
-  /// so in the synced payload — is read straight from `worker_tasks`, the
-  /// table it's actually the primary key of, rather than trusted from
-  /// `worker_task_completion`'s own FK column.
-  Future<List<TaskCompletionSyncRecord>> getUnsyncedTaskCompletions(
-    int workerId,
-  ) async {
-    final db = await database;
-    final maps = await db.rawQuery(
-      '''
-      SELECT worker_task_completion.offline_worker_id AS completion_id,
-             worker_tasks.offline_worker_id AS worker_task_id,
-             worker_task_completion.attendance_id, worker_task_completion.worker_id,
-             worker_task_completion.supervisor_id, worker_task_completion.completed_at,
-             worker_task_completion.status
-      FROM worker_task_completion
-      JOIN worker_tasks
-        ON worker_tasks.offline_worker_id = worker_task_completion.worker_task_id
-      WHERE worker_task_completion.worker_id = ?
-        AND worker_task_completion.is_synced = 0
-    ''',
-      [workerId],
-    );
-    return List.generate(
-      maps.length,
-      (i) => TaskCompletionSyncRecord.fromMap(maps[i]),
-    );
-  }
-
-  /// Marks [completionId]'s row synced after
-  /// `POST attendance/worker-task-completion` succeeds. [realCompletionId]
-  /// is the backend's own id from that response (`{"completion_id": ...,
-  /// "status": true}`), stored once known.
-  Future<void> markWorkerTaskCompletionSynced(
-    int completionId, {
-    int? realCompletionId,
-  }) async {
-    final db = await database;
-    await db.update(
-      'worker_task_completion',
-      {'is_synced': 1, 'completion_id': ?realCompletionId},
-      where: 'offline_worker_id = ?',
-      whereArgs: [completionId],
-    );
-  }
-
   // --- Worker import (POST attendance/list) ---
 
   /// Imports/updates workers fetched from the backend's full roster,
@@ -1171,7 +1059,20 @@ class DatabaseHelper {
   /// rows already reference it by FK, and overwriting it would orphan
   /// them. `worker_id` (the backend's real id) is safe to set/overwrite
   /// freely on every import, since nothing local keys off it.
-  Future<void> upsertRemoteWorkers(List<RemoteWorkerRecord> workers) async {
+  ///
+  /// [serverTime], when given, is stamped onto every imported/updated
+  /// row's `server_time` column — see WorkerImportRepository.
+  /// importFromRemote, which passes the UTC instant of that full fetch so
+  /// a later [WorkerListApi.fetchServerWorkers] call can ask the server
+  /// for changes since exactly that checkpoint (see
+  /// [getLatestWorkerServerTime]). Left out of `row` (so an existing row's
+  /// own value is untouched) when null — a delta fetch
+  /// (WorkerImportRepository.importFromServerTime) doesn't pass one, since
+  /// it shouldn't move the checkpoint itself.
+  Future<void> upsertRemoteWorkers(
+    List<RemoteWorkerRecord> workers, {
+    String? serverTime,
+  }) async {
     final db = await database;
     await db.transaction((txn) async {
       // Departments first, the same way replaceDepartments already does —
@@ -1216,6 +1117,7 @@ class DatabaseHelper {
           // This row only exists locally because the server already has
           // it, so there's nothing left to push.
           'is_synced': 1,
+          'server_time': ?serverTime,
         };
 
         final existing = await txn.query(
@@ -1242,11 +1144,51 @@ class DatabaseHelper {
           );
         }
 
-        if (worker.taskIds.isNotEmpty) {
-          await _assignMatchingTasks(txn, offlineWorkerId, worker.taskIds);
+        // Task assignment only happens once the backend confirms this
+        // worker as approved (verified) — a rejected (or still-pending)
+        // worker gets none of this, regardless of what the response
+        // reported, since there's nothing to actually assign them to yet.
+        if (worker.status == 'approved') {
+          final current = await txn.query(
+            'workers',
+            columns: ['task_id'],
+            where: 'offline_worker_id = ?',
+            whereArgs: [offlineWorkerId],
+            limit: 1,
+          );
+          final localTaskId = current.isEmpty
+              ? null
+              : current.first['task_id'] as int?;
+
+          // Both sources — whatever the response itself reported already
+          // assigned server-side, plus whichever task was picked locally
+          // at enrollment time (`workers.task_id`, untouched by `row`
+          // above, so still whatever it was — see Employee.taskId).
+          final taskIdsToAssign = <int>{...worker.taskIds, ?localTaskId};
+          if (taskIdsToAssign.isNotEmpty) {
+            await _assignMatchingTasks(
+              txn,
+              offlineWorkerId,
+              taskIdsToAssign.toList(),
+            );
+          }
         }
       }
     });
+  }
+
+  /// The most recent `workers.server_time` checkpoint stamped by
+  /// [upsertRemoteWorkers]'s `serverTime` param — null if a full fetch
+  /// ([WorkerImportRepository.importFromRemote]) has never run. What
+  /// [WorkerImportRepository.importFromServerTime] sends as the `date` in
+  /// its `POST attendance/worker_data` payload, instead of picking "now"
+  /// itself.
+  Future<String?> getLatestWorkerServerTime() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT MAX(server_time) AS server_time FROM workers',
+    );
+    return rows.isEmpty ? null : rows.first['server_time'] as String?;
   }
 
   /// Assigns [offlineWorkerId] to whichever of [taskIds] (the backend's
@@ -1281,5 +1223,84 @@ class DatabaseHelper {
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
+  }
+
+  /// Imports/updates worker-task assignments fetched from the backend
+  /// (`POST attendance/worker_task_list` or
+  /// `POST attendance/server_time_worker_task_list` — see
+  /// WorkerTaskListApi), upserted by (worker, task_id) the same way
+  /// [assignWorkerTask] does, so re-running this on a later fetch never
+  /// creates a duplicate row.
+  ///
+  /// [RemoteWorkerTaskRecord.workerId] is the backend's real worker id —
+  /// resolved to the local `offline_worker_id` via `workers.worker_id`
+  /// first; a record for a worker not yet known locally (not imported/
+  /// synced) is skipped rather than inserted as a dangling FK, same as
+  /// [_assignMatchingTasks] does for an unknown task.
+  Future<void> upsertRemoteWorkerTasks(
+    List<RemoteWorkerTaskRecord> records,
+  ) async {
+    final db = await database;
+    final now = AppTime.nowInUserZone().toIso8601String();
+    await db.transaction((txn) async {
+      for (final record in records) {
+        final workerRows = await txn.query(
+          'workers',
+          columns: ['offline_worker_id'],
+          where: 'worker_id = ?',
+          whereArgs: [record.workerId],
+          limit: 1,
+        );
+        if (workerRows.isEmpty) continue;
+        final offlineWorkerId = workerRows.first['offline_worker_id'] as int;
+
+        final knownTask = await txn.query(
+          'tasks',
+          columns: ['task_id'],
+          where: 'task_id = ?',
+          whereArgs: [record.taskId],
+          limit: 1,
+        );
+        if (knownTask.isEmpty) continue;
+
+        final row = {
+          'worker_task_id': record.workerTaskId,
+          'target': record.target,
+          'status': record.status,
+          'assignment_type': record.assignmentType,
+          'note': record.note,
+          'work_photo': record.workPhoto,
+          'overtime': record.overtime,
+          'employee_target': record.employeeTarget,
+          'completed_target': record.completedTarget,
+          'task_status': ?record.taskStatus,
+          'updated_at': now,
+        };
+
+        final existing = await txn.query(
+          'worker_tasks',
+          columns: ['offline_worker_id'],
+          where: 'worker_id = ? AND task_id = ?',
+          whereArgs: [offlineWorkerId, record.taskId],
+          limit: 1,
+        );
+        if (existing.isEmpty) {
+          await txn.insert('worker_tasks', {
+            ...row,
+            'worker_id': offlineWorkerId,
+            'task_id': record.taskId,
+            'assigned_at': record.assignedAt ?? now,
+            'created_at': now,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        } else {
+          await txn.update(
+            'worker_tasks',
+            row,
+            where: 'offline_worker_id = ?',
+            whereArgs: [existing.first['offline_worker_id']],
+          );
+        }
+      }
+    });
   }
 }

@@ -29,6 +29,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _ownsViewModel = widget.viewModel == null;
     _viewModel = widget.viewModel ?? DashboardViewModel();
     _viewModel.load();
+    _syncLookupsOnOpen();
+  }
+
+  /// Refreshes the local departments/tasks caches whenever the supervisor
+  /// lands on the dashboard — in practice, right after login, since that's
+  /// where login_screen.dart sends them. Silent: a background refresh
+  /// failing shouldn't pop an error over the dashboard the supervisor just
+  /// opened, unlike the same calls through the manual "Refresh" buttons.
+  Future<void> _syncLookupsOnOpen() async {
+    try {
+      await _viewModel.fetchDepartments();
+    } catch (_) {
+      // Ignored — the manual "Refresh" button surfaces failures instead.
+    }
+    try {
+      await _viewModel.fetchTasks();
+    } catch (_) {
+      // Ignored — see above.
+    }
   }
 
   @override
@@ -87,6 +106,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _fetchWorkerTasks() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final count = await _viewModel.fetchWorkerTasks();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Fetched $count worker tasks from server')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not fetch worker tasks: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -112,6 +147,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   isImporting: _viewModel.isImportingWorkers,
                   onPressed: _importWorkers,
                   updatedCount: _viewModel.updatedCounts.workerCount,
+                ),
+                const SizedBox(height: 14),
+                _FetchWorkerTasksCard(
+                  isFetching: _viewModel.isFetchingWorkerTasks,
+                  onPressed: _fetchWorkerTasks,
                 ),
                 const SizedBox(height: 14),
                 _RefreshLookupsCard(
@@ -440,6 +480,62 @@ class _ImportWorkersCard extends StatelessWidget {
                   )
                 : const Icon(Icons.cloud_download_outlined, size: 16),
             label: Text(isImporting ? 'Fetching...' : 'Fetch Workers'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FetchWorkerTasksCard extends StatelessWidget {
+  final bool isFetching;
+  final VoidCallback onPressed;
+
+  const _FetchWorkerTasksCard({
+    required this.isFetching,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionLabel('WORKER TASKS'),
+                const SizedBox(height: 6),
+                const Text(
+                  'Fetch the latest worker task assignments from the server',
+                  style: TextStyle(fontSize: 13, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            onPressed: isFetching ? null : onPressed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.deepGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              shape: const StadiumBorder(),
+            ),
+            icon: isFetching
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.cloud_download_outlined, size: 16),
+            label: Text(isFetching ? 'Fetching...' : 'Fetch Worker Tasks'),
           ),
         ],
       ),

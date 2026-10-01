@@ -3,16 +3,14 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
-import '../../../data/models/worker_task_completion_model.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../employee/view/enrollment_form_screen.dart';
 import '../viewmodel/worker_report_viewmodel.dart';
 
-/// One worker's attendance/task/sync report over a date range — reached
-/// from the worker list's "Worker report" button. Each day in the range
-/// links to a read-only Day Details view of that day's check-in/out and
-/// task checklist.
+/// One worker's attendance/sync report over a date range — reached from
+/// the worker list's "Worker report" button. Each day in the range links
+/// to a read-only Day Details view of that day's check-in/out.
 class WorkerReportScreen extends StatefulWidget {
   final int workerId;
   final String workerName;
@@ -243,8 +241,6 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
         _PeriodSummaryCard(
           totalDays: _viewModel.totalDaysInRange,
           daysPresent: _viewModel.daysPresent,
-          tasksCompleted: _viewModel.tasksCompleted,
-          totalTasksAssigned: _viewModel.totalTasksAssigned,
           daysSynced: _viewModel.daysSynced,
         ),
         const SizedBox(height: 20),
@@ -378,15 +374,11 @@ class _DateRangeCard extends StatelessWidget {
 class _PeriodSummaryCard extends StatelessWidget {
   final int totalDays;
   final int daysPresent;
-  final int tasksCompleted;
-  final int totalTasksAssigned;
   final int daysSynced;
 
   const _PeriodSummaryCard({
     required this.totalDays,
     required this.daysPresent,
-    required this.tasksCompleted,
-    required this.totalTasksAssigned,
     required this.daysSynced,
   });
 
@@ -424,14 +416,6 @@ class _PeriodSummaryCard extends StatelessWidget {
                     value: '$daysPresent/$totalDays',
                     caption: 'Days present',
                     color: AppColors.success,
-                  ),
-                ),
-                Expanded(
-                  child: _SummaryTile(
-                    label: 'TASKS',
-                    value: '$tasksCompleted/$totalTasksAssigned',
-                    caption: 'Completed',
-                    color: AppColors.warning,
                   ),
                 ),
                 Expanded(
@@ -587,45 +571,6 @@ class _DayCard extends StatelessWidget {
               ),
             ],
           ),
-          if (day.totalCount > 0) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF6F9F6),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.assignment_outlined,
-                    size: 15,
-                    color: AppColors.muted,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${day.totalCount} assigned task${day.totalCount == 1 ? '' : 's'}',
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.slate,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '${day.completedCount} completed',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: day.completedCount == day.totalCount
-                          ? AppColors.success
-                          : AppColors.warning,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -843,123 +788,8 @@ class _DayDetailScreen extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                if (day.tasks.isNotEmpty) ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const SectionLabel('ASSIGNED TASKS'),
-                      Text(
-                        '${day.completedCount} of ${day.totalCount} completed',
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          color: AppColors.muted,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  for (var i = 0; i < day.tasks.length; i++) ...[
-                    _DayTaskCard(index: i + 1, completion: day.tasks[i]),
-                    if (i != day.tasks.length - 1) const SizedBox(height: 10),
-                  ],
-                ] else
-                  const Text(
-                    'No tasks were assigned this day',
-                    style: TextStyle(color: AppColors.muted),
-                  ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DayTaskCard extends StatelessWidget {
-  final int index;
-  final WorkerTaskCompletion completion;
-
-  const _DayTaskCard({required this.index, required this.completion});
-
-  bool get _isVerified =>
-      completion.isCompleted && completion.completionId != null;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 22,
-                height: 22,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: completion.isCompleted
-                      ? const Color(0xFFE7F6EC)
-                      : const Color(0xFFF2F3F2),
-                ),
-                child: Text(
-                  '$index',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: completion.isCompleted
-                        ? AppColors.success
-                        : AppColors.muted,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  completion.taskName,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.ink,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _StatusPill(
-                label: completion.isCompleted ? 'Completed' : 'Not started',
-                color: completion.isCompleted
-                    ? AppColors.success
-                    : AppColors.muted,
-                background: completion.isCompleted
-                    ? const Color(0xFFE7F6EC)
-                    : const Color(0xFFF2F3F2),
-              ),
-              _StatusPill(
-                label: _isVerified
-                    ? 'Verified'
-                    : completion.isCompleted
-                    ? 'Awaiting sync'
-                    : 'Not verified',
-                color: _isVerified
-                    ? AppColors.success
-                    : completion.isCompleted
-                    ? AppColors.warning
-                    : AppColors.muted,
-                background: _isVerified
-                    ? const Color(0xFFE7F6EC)
-                    : completion.isCompleted
-                    ? const Color(0xFFFDF3E3)
-                    : const Color(0xFFF2F3F2),
-              ),
-            ],
           ),
         ],
       ),

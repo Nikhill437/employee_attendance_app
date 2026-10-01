@@ -43,13 +43,18 @@ class WorkerListApi {
   /// POST attendance/worker_data — the dashboard's "Fetch Workers" button,
   /// mirroring AttendanceLookupApi.fetchServertimeDepartment/Task. Not
   /// paginated (no `totalPages` in the response), unlike [fetchAll].
-  Future<List<RemoteWorkerRecord>> fetchServerWorkers() async {
+  /// [date] is the checkpoint to ask the server for changes since — see
+  /// WorkerImportRepository.importFromServerTime, which reads it back from
+  /// `workers.server_time` (stamped there by [fetchAll]'s own caller)
+  /// rather than this method picking "now" itself.
+  Future<List<RemoteWorkerRecord>> fetchServerWorkers({
+    required String date,
+  }) async {
     final results = <RemoteWorkerRecord>[];
     try {
-      final currentUtcTime = DateTime.now().toUtc().toIso8601String();
       final data = await _client.post(
         ApiRoutes.serverTimeWorkers,
-        data: {'date': currentUtcTime},
+        data: {'date': date},
       );
       if (data is! Map || data['data'] is! List) return results;
       log(data.toString(), name: 'WorkerListApi.fetchServerWorkers');

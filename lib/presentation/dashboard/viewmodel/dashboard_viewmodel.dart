@@ -8,12 +8,14 @@ import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/lookup_repository.dart';
 import '../../../data/repositories/updated_counts_repository.dart';
 import '../../../data/repositories/worker_import_repository.dart';
+import '../../../data/repositories/worker_task_import_repository.dart';
 
 /// Loads the supervisor dashboard figures.
 class DashboardViewModel extends BaseViewModel {
   final EmployeeRepository _employees;
   final AttendanceRepository _attendance;
   final WorkerImportRepository _workerImport;
+  final WorkerTaskImportRepository _workerTaskImport;
   final LookupRepository _lookup;
   final UpdatedCountsRepository _updatedCountsRepository;
 
@@ -21,11 +23,13 @@ class DashboardViewModel extends BaseViewModel {
     EmployeeRepository? employees,
     AttendanceRepository? attendance,
     WorkerImportRepository? workerImport,
+    WorkerTaskImportRepository? workerTaskImport,
     LookupRepository? lookup,
     UpdatedCountsRepository? updatedCountsRepository,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _workerImport = workerImport ?? WorkerImportRepository(),
+       _workerTaskImport = workerTaskImport ?? WorkerTaskImportRepository(),
        _lookup = lookup ?? LookupRepository(),
        _updatedCountsRepository =
            updatedCountsRepository ?? UpdatedCountsRepository();
@@ -34,6 +38,7 @@ class DashboardViewModel extends BaseViewModel {
   bool _isImportingWorkers = false;
   bool _isFetchingDepartments = false;
   bool _isFetchingTasks = false;
+  bool _isFetchingWorkerTasks = false;
   DashboardSummary _summary = const DashboardSummary();
   List<Employee> _roster = const [];
   UpdatedCounts _updatedCounts = UpdatedCounts.zero;
@@ -42,6 +47,7 @@ class DashboardViewModel extends BaseViewModel {
   bool get isImportingWorkers => _isImportingWorkers;
   bool get isFetchingDepartments => _isFetchingDepartments;
   bool get isFetchingTasks => _isFetchingTasks;
+  bool get isFetchingWorkerTasks => _isFetchingWorkerTasks;
   DashboardSummary get summary => _summary;
 
   /// How many worker/department/task records the server reports as changed
@@ -80,16 +86,17 @@ class DashboardViewModel extends BaseViewModel {
   /// no remote endpoint to push to.
   Future<void> sync() => load();
 
-  /// Fetches worker data from the backend
-  /// (`POST attendance/worker_data`), upserts it locally by National ID,
-  /// and reloads so the dashboard reflects it — the dashboard's "Fetch
-  /// Workers" button. Returns how many workers were fetched; lets any
-  /// failure propagate for the caller to surface.
+  /// The dashboard's "Fetch Workers" button: the very first tap (per
+  /// device install) pulls the full roster (`POST attendance/list`); every
+  /// tap after that only pulls what changed (`POST attendance/worker_data`)
+  /// — see WorkerImportRepository.importWorkers. Upserts by National ID
+  /// and reloads so the dashboard reflects it. Returns how many workers
+  /// were fetched; lets any failure propagate for the caller to surface.
   Future<int> importWorkersFromServer() async {
     _isImportingWorkers = true;
     safeNotify();
     try {
-      final count = await _workerImport.importFromServerTime();
+      final count = await _workerImport.importWorkers();
       await load();
       return count;
     } finally {
@@ -128,6 +135,22 @@ class DashboardViewModel extends BaseViewModel {
       return count;
     } finally {
       _isFetchingTasks = false;
+      safeNotify();
+    }
+  }
+
+  /// The dashboard's "Fetch Worker Tasks" button: always the full roster
+  /// (`POST attendance/worker_task_list`, no pagination) — see
+  /// WorkerTaskImportRepository.importFromRemote. Upserts into
+  /// `worker_tasks` by (worker, task). Returns how many were fetched;
+  /// lets any failure propagate for the caller to surface.
+  Future<int> fetchWorkerTasks() async {
+    _isFetchingWorkerTasks = true;
+    safeNotify();
+    try {
+      return await _workerTaskImport.importFromRemote();
+    } finally {
+      _isFetchingWorkerTasks = false;
       safeNotify();
     }
   }

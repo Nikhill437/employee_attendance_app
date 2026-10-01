@@ -42,6 +42,7 @@ class CreateEmployeeViewModel extends BaseViewModel {
     String? department,
     int? departmentId,
     String? nationalIdImage,
+    int? taskId,
   }) async {
     final embeddings = _faceEmbeddings;
     if (embeddings == null) return null;
@@ -64,6 +65,7 @@ class CreateEmployeeViewModel extends BaseViewModel {
         department: department,
         departmentId: departmentId,
         nationalIdImage: nationalIdImage,
+        taskId: taskId,
       ),
     );
 

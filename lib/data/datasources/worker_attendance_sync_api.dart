@@ -44,9 +44,8 @@ class WorkerAttendanceSyncApi {
     return value is int ? value : int.tryParse(value.toString());
   }
 
-  /// The backend wants a real ISO-8601 UTC timestamp (same fix as
-  /// `completed_date` on the worker-task-completion sync — see
-  /// TaskCompletionSyncApi). `check_in_time`/`check_out_time` are stored
+  /// The backend wants a real ISO-8601 UTC timestamp.
+  /// `check_in_time`/`check_out_time` are stored
   /// locally as `AppTime.nowInUserZone().toIso8601String()` — a naive
   /// string whose calendar fields are the supervisor's own timezone (from
   /// their login response), not the device's. Parsing it and calling

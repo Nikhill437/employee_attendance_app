@@ -574,17 +574,15 @@ class _WorkerCard extends StatelessWidget {
   bool get _effectiveSynced =>
       worker.isSynced && (!worker.hasCheckedInToday || worker.isAttendanceSynced);
 
-  /// A Verified worker's sync button only unlocks once today's full cycle
-  /// is done — check-in, checkout, and the supervisor's task-status review
-  /// (task_status_screen.dart) — so a partial day's data is never pushed
-  /// early. A not-yet-verified worker (new or locally edited) is unaffected
-  /// by this and stays tappable as soon as there's anything to push.
+  /// A Verified worker's sync button only unlocks once today's full
+  /// check-in/checkout cycle is done, so a partial day's data is never
+  /// pushed early. A not-yet-verified worker (new or locally edited) is
+  /// unaffected by this and stays tappable as soon as there's anything to
+  /// push.
   bool get _canTapSync {
     if (_effectiveSynced) return false;
     if (worker.verification != VerificationStatus.verified) return true;
-    return worker.hasCheckedInToday &&
-        worker.hasCheckedOutToday &&
-        worker.taskStatusReviewCompleted;
+    return worker.hasCheckedInToday && worker.hasCheckedOutToday;
   }
 
   Widget _buildSyncRow() {
@@ -659,19 +657,20 @@ class _WorkerCard extends StatelessWidget {
     );
   }
 
-  /// The three actions every card offers. Once today's attendance is fully
-  /// recorded (both check-in and check-out) there's nothing left to mark,
-  /// so that middle button drops out rather than staying disabled.
+  /// The three actions every card offers. The middle button stays up for
+  /// the whole day — "Check in" before the worker's first scan, then
+  /// "Check out" from then on, including after they've already checked
+  /// out once. A worker can be checked out multiple times in a day (see
+  /// DatabaseHelper.recordWorkerScan, which always re-stamps
+  /// `check_out_time` on every scan after the first), so this button
+  /// never disables or disappears just because today's attendance is
+  /// already "complete".
   Widget _buildActionButtons() {
-    final isAttendanceComplete =
-        worker.hasCheckedInToday && worker.hasCheckedOutToday;
     return Row(
       children: [
         Expanded(child: _buildViewTasksButton()),
-        if (!isAttendanceComplete) ...[
-          const SizedBox(width: 8),
-          Expanded(child: _buildMarkAttendanceButton()),
-        ],
+        const SizedBox(width: 8),
+        Expanded(child: _buildMarkAttendanceButton()),
         const SizedBox(width: 8),
         Expanded(child: _buildWorkerReportButton()),
       ],

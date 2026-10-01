@@ -8,6 +8,7 @@ import '../../../data/models/enrollment_draft_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/lookup_repository.dart';
+import '../../../data/repositories/task_repository.dart';
 
 /// Holds the selections on the enrollment form that aren't text fields.
 ///
@@ -20,14 +21,17 @@ import '../../../data/repositories/lookup_repository.dart';
 class EnrollmentFormViewModel extends BaseViewModel {
   final LookupRepository _lookupRepository;
   final EmployeeRepository _employeeRepository;
+  final TaskRepository _taskRepository;
   final int? initialDepartmentId;
 
   EnrollmentFormViewModel({
     LookupRepository? lookupRepository,
     EmployeeRepository? employeeRepository,
+    TaskRepository? taskRepository,
     this.initialDepartmentId,
   }) : _lookupRepository = lookupRepository ?? LookupRepository(),
-       _employeeRepository = employeeRepository ?? EmployeeRepository();
+       _employeeRepository = employeeRepository ?? EmployeeRepository(),
+       _taskRepository = taskRepository ?? TaskRepository();
 
   Gender _gender = Gender.male;
   PayType _enrollmentType = PayType.daily;
@@ -37,6 +41,9 @@ class EnrollmentFormViewModel extends BaseViewModel {
   bool _isLoadingDepartments = true;
   bool _isSavingDepartment = false;
   File? _nationalIdImage;
+  Task? _task;
+  List<Task> _tasks = const [];
+  bool _isLoadingTasks = false;
 
   Gender get gender => _gender;
   PayType get enrollmentType => _enrollmentType;
@@ -46,6 +53,9 @@ class EnrollmentFormViewModel extends BaseViewModel {
   bool get isLoadingDepartments => _isLoadingDepartments;
   bool get isSavingDepartment => _isSavingDepartment;
   File? get nationalIdImage => _nationalIdImage;
+  Task? get task => _task;
+  List<Task> get tasks => _tasks;
+  bool get isLoadingTasks => _isLoadingTasks;
 
   /// Loads the departments cached from the last successful login sync —
   /// call once from the screen's initState. Pre-selects
@@ -66,6 +76,28 @@ class EnrollmentFormViewModel extends BaseViewModel {
     }
 
     _isLoadingDepartments = false;
+    safeNotify();
+
+    final selectedDepartment = _department;
+    if (selectedDepartment != null) {
+      await loadTasksForDepartment(selectedDepartment.id);
+    }
+  }
+
+  /// Loads the tasks available for [departmentId] — called whenever the
+  /// department changes, since a worker can only be given a task from
+  /// their own department. Resets the current task selection.
+  Future<void> loadTasksForDepartment(int departmentId) async {
+    _isLoadingTasks = true;
+    _task = null;
+    safeNotify();
+    _tasks = await _taskRepository.getTasksByDepartment(departmentId);
+    _isLoadingTasks = false;
+    safeNotify();
+  }
+
+  void selectTask(Task? task) {
+    _task = task;
     safeNotify();
   }
 
@@ -96,6 +128,9 @@ class EnrollmentFormViewModel extends BaseViewModel {
   void selectDepartment(Department? department) {
     _department = department;
     safeNotify();
+    if (department != null) {
+      loadTasksForDepartment(department.id);
+    }
   }
 
   /// Copies the just-captured photo into permanent app storage (the path
@@ -142,6 +177,7 @@ class EnrollmentFormViewModel extends BaseViewModel {
       enrollmentType: _enrollmentType,
       departmentId: department.id,
       departmentName: department.name,
+      taskId: _task?.id,
       nationalIdImagePath: nationalIdImage.path,
     );
   }

@@ -115,11 +115,6 @@ class Worker {
   /// after check-in/check-out are both done, so it can be retried.
   final bool hasRealAttendanceIdToday;
 
-  /// Today's `worker_attendance.offline_worker_id` — the local id
-  /// task_status_screen.dart needs to show/edit this worker's task
-  /// completions for today. Null if they haven't checked in yet today.
-  final int? todayAttendanceId;
-
   /// Whether this worker has at least one active task assignment — the
   /// worker list's "View Tasks" button disables otherwise, since there'd
   /// be nothing to show.
@@ -129,14 +124,6 @@ class Worker {
   /// [employeeId] (their National ID). Null until this worker has been
   /// imported/synced from the server.
   final int? remoteEmployeeId;
-
-  /// True unless today has at least one assigned task still missing the
-  /// supervisor's Yes/No + remark review (task_status_screen.dart) — true
-  /// (not blocking) for a worker with no tasks or no attendance today, same
-  /// as DatabaseHelper.getWorkerIdsWithPendingTaskReview. Part of the
-  /// worker card's sync-button gating for an already-[VerificationStatus.
-  /// verified] worker — see worker_list_screen.dart.
-  final bool taskStatusReviewCompleted;
 
   const Worker({
     required this.name,
@@ -157,10 +144,8 @@ class Worker {
     this.hasCheckedOutToday = false,
     this.isAttendanceSynced = false,
     this.hasRealAttendanceIdToday = false,
-    this.todayAttendanceId,
     this.hasAssignedTasks = false,
     this.remoteEmployeeId,
-    this.taskStatusReviewCompleted = true,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;

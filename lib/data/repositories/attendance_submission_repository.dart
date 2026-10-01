@@ -3,11 +3,10 @@ import '../datasources/attendance_submission_api.dart';
 import '../datasources/database_helper.dart';
 import 'worker_sync_repository.dart';
 
-/// Pushes one worker's today's attendance, its pending task completions,
-/// and any not-yet-synced task assignments to the backend together
+/// Pushes one worker's today's attendance and any not-yet-synced task
+/// assignments to the backend together
 /// (`POST attendance/submit-attendance`), replacing separate calls to
-/// `attendance/check-in`, `attendance/worker-task-completion`, and
-/// `attendance/assigntask` for this flow.
+/// `attendance/check-in` and `attendance/assigntask` for this flow.
 class AttendanceSubmissionRepository {
   final DatabaseHelper _dbHelper;
   final AttendanceSubmissionApi _api;
@@ -45,31 +44,11 @@ class AttendanceSubmissionRepository {
       throw StateError('No attendance recorded today for this worker');
     }
 
-    // Every pending completion goes out — unlike the old per-completion
-    // sync (TaskCompletionSyncRepository), this payload carries no
-    // worker_task_id per entry, so there's no need to wait for the parent
-    // assignment to have a real backend id first (that used to mean a
-    // task assigned and completed in the same visit needed a second Sync
-    // tap; not anymore, since its assignment goes out in the same call via
-    // [workerTaskPayloads] below). `task_id` is included instead — the
-    // task's own real id, available the moment tasks sync down from the
-    // server, independent of whether this worker's assignment has synced.
-    final pendingCompletions = await _dbHelper.getUnsyncedTaskCompletions(
-      workerId,
-    );
-    final taskPayloads = <Map<String, dynamic>>[];
-    for (final completion in pendingCompletions) {
-      final taskId = await _dbHelper.getTaskIdForWorkerTask(
-        completion.workerTaskId,
-      );
-      taskPayloads.add({
-        'task_id': taskId,
-        'completed_date': _formatTimestamp(completion.completedAt),
-        'supervisor_id': completion.supervisorId,
-        'worker_id': realWorkerId,
-        'status': completion.status,
-      });
-    }
+    // The task-status review feature (and its `worker_task_completion`
+    // table) has been removed — there is nothing to populate this
+    // endpoint's `task` array with, but the key is still sent (empty) to
+    // keep the request shape the backend expects.
+    const taskPayloads = <Map<String, dynamic>>[];
 
     // Task *assignments* not yet pushed to the backend at all — task_id is
     // already the backend's real id (tasks are synced down from the
@@ -105,21 +84,6 @@ class AttendanceSubmissionRepository {
       attendance.attendanceId,
       realAttendanceId: result.attendanceId,
     );
-    // completion_ids is positional — matched back to pendingCompletions
-    // (built in the same order taskPayloads was), since the response
-    // carries no other correlation for those. Safe against a
-    // shorter-than-sent (or empty/null) array: whichever wasn't returned
-    // an id just stays unsynced for a retry.
-    for (
-      var i = 0;
-      i < pendingCompletions.length && i < result.completionIds.length;
-      i++
-    ) {
-      await _dbHelper.markWorkerTaskCompletionSynced(
-        pendingCompletions[i].completionId,
-        realCompletionId: result.completionIds[i],
-      );
-    }
     // worker_tasks, unlike completion_ids, is matched by task_id — the
     // response's own shape (see WorkerTaskSyncResult) — not by position,
     // so this doesn't depend on the backend preserving request order.
@@ -137,9 +101,8 @@ class AttendanceSubmissionRepository {
     await _dbHelper.markWorkerSyncedById(workerId);
   }
 
-  /// Same UTC conversion `WorkerAttendanceSyncApi`/`TaskCompletionSyncApi`
-  /// already use — see either's doc comment for why plain `.toUtc()` would
-  /// be wrong here.
+  /// Same UTC conversion `WorkerAttendanceSyncApi` already uses — see its
+  /// doc comment for why plain `.toUtc()` would be wrong here.
   String? _formatTimestamp(String? isoString) {
     if (isoString == null) return null;
     return AppTime.userWallTimeToUtc(

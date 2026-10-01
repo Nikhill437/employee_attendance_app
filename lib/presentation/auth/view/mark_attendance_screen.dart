@@ -5,10 +5,11 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/input_formatters.dart';
 import '../../../data/models/auth/auth_user_model.dart';
 import '../../../data/models/worker_attendance_model.dart';
+import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../face_scan/view/face_scan_screen.dart';
-import '../../task/view/task_status_screen.dart';
+import '../../task/view/assign_task_screen.dart';
 import '../../task/view/worker_task_list_screen.dart';
 import '../viewmodel/login_viewmodel.dart';
 
@@ -32,6 +33,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   final LoginViewModel _viewModel = LoginViewModel();
   final WorkerAttendanceRepository _attendanceRepository =
       WorkerAttendanceRepository();
+  final EmployeeRepository _employeeRepository = EmployeeRepository();
 
   bool get _isSupervisorInitiated => widget.initialEmployeeId != null;
 
@@ -92,11 +94,12 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   }
 
   /// After attendance is marked, additionally shows the worker's assigned
-  /// tasks (on check-in) or lets the supervisor record which were
-  /// completed (on check-out). This is purely additive: it only reads and
-  /// writes `worker_attendance`/`worker_task_completion` (previously
-  /// unused, schema-only tables) via [WorkerAttendanceRepository] — the
-  /// existing attendance_logs write above (`_viewModel.completeLogin`,
+  /// tasks on check-in, or the Assign Task screen's Worker Submission card
+  /// on check-out (so the worker can record today's numeric
+  /// reading/photo for whatever task is currently assigned). This is
+  /// purely additive: it only reads and writes `worker_attendance` (a
+  /// previously unused, schema-only table) via [WorkerAttendanceRepository]
+  /// — the existing attendance_logs write above (`_viewModel.completeLogin`,
   /// backed by AuthRepository.login) is untouched.
   Future<void> _showTaskScreenIfNeeded(AuthUser user) async {
     final workerId = user.id;
@@ -115,13 +118,20 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
           ),
         );
       case WorkerScanOutcome.checkedOut:
+        final employee = await _employeeRepository.findByEmployeeId(
+          user.employeeId,
+        );
+        if (!mounted) return;
         await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => TaskStatusScreen(
+            builder: (context) => AssignTaskScreen(
               workerId: workerId,
               workerName: user.name,
-              attendanceId: record.attendanceId,
+              employeeId: user.employeeId,
+              department: employee?.department,
+              initialDepartmentId: employee?.departmentId,
+              isCheckoutSubmission: true,
             ),
           ),
         );

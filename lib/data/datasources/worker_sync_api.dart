@@ -52,6 +52,10 @@ class WorkerSyncApi {
       fields['department_id'] = worker.departmentId.toString();
     }
     if (worker.address != null) fields['address'] = worker.address!;
+    // The task picked on the enrollment form's Task dropdown (see
+    // Employee.taskId) — the assigned task being synced along with this
+    // worker's own profile.
+    if (worker.taskId != null) fields['task_id'] = worker.taskId.toString();
 
     final formData = FormData.fromMap(fields);
 

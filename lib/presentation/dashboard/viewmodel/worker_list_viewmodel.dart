@@ -10,7 +10,6 @@ import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/attendance_submission_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
-import '../../../data/repositories/task_completion_sync_repository.dart';
 import '../../../data/repositories/task_repository.dart';
 import '../../../data/repositories/task_sync_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
@@ -27,7 +26,6 @@ class WorkerListViewModel extends BaseViewModel {
   final TaskSyncRepository _taskSync;
   final SupervisorSessionRepository _session;
   final WorkerAttendanceRepository _workerAttendance;
-  final TaskCompletionSyncRepository _taskCompletionSync;
   final AttendanceSubmissionRepository _attendanceSubmission;
   final TaskRepository _tasks;
 
@@ -39,7 +37,6 @@ class WorkerListViewModel extends BaseViewModel {
     TaskSyncRepository? taskSync,
     SupervisorSessionRepository? session,
     WorkerAttendanceRepository? workerAttendance,
-    TaskCompletionSyncRepository? taskCompletionSync,
     AttendanceSubmissionRepository? attendanceSubmission,
     TaskRepository? tasks,
   }) : _employees = employees ?? EmployeeRepository(),
@@ -49,7 +46,6 @@ class WorkerListViewModel extends BaseViewModel {
        _taskSync = taskSync ?? TaskSyncRepository(),
        _session = session ?? SupervisorSessionRepository(),
        _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
-       _taskCompletionSync = taskCompletionSync ?? TaskCompletionSyncRepository(),
        _attendanceSubmission =
            attendanceSubmission ?? AttendanceSubmissionRepository(),
        _tasks = tasks ?? TaskRepository();
@@ -59,7 +55,6 @@ class WorkerListViewModel extends BaseViewModel {
   final Set<String> _syncingIds = {};
   final Set<String> _syncingTaskIds = {};
   final Set<String> _syncingAttendanceIds = {};
-  final Set<String> _syncingTaskCompletionIds = {};
   List<Worker> _workers = const [];
   String _query = '';
   AttendanceStatus? _attendanceFilter;
@@ -111,11 +106,6 @@ class WorkerListViewModel extends BaseViewModel {
   /// attendance sync button.
   bool isSyncingAttendance(String employeeId) =>
       _syncingAttendanceIds.contains(employeeId);
-
-  /// Whether [employeeId]'s task completions are mid-sync — drives that
-  /// card's Sync Task Completion button.
-  bool isSyncingTaskCompletion(String employeeId) =>
-      _syncingTaskCompletionIds.contains(employeeId);
 
   /// The list after the current search term, attendance filter, and
   /// department filter, with not-yet-synced workers surfaced above synced
@@ -259,28 +249,6 @@ class WorkerListViewModel extends BaseViewModel {
     return error;
   }
 
-  /// Pushes [employeeId]'s pending (Yes or No) task completions to the backend
-  /// (`POST attendance/worker-task-completion`). Returns null (and throws)
-  /// only if reading the local pending rows fails; otherwise returns a
-  /// [TaskCompletionSyncResult] — per-completion failures are captured
-  /// there rather than thrown. Guards against a second tap while already
-  /// syncing.
-  Future<TaskCompletionSyncResult?> syncTaskCompletion(
-    String employeeId,
-    int workerId,
-  ) async {
-    if (_syncingTaskCompletionIds.contains(employeeId)) return null;
-    _syncingTaskCompletionIds.add(employeeId);
-    safeNotify();
-
-    try {
-      return await _taskCompletionSync.syncWorkerTaskCompletions(workerId);
-    } finally {
-      _syncingTaskCompletionIds.remove(employeeId);
-      safeNotify();
-    }
-  }
-
   /// Fetches the full worker roster from the backend and upserts it
   /// locally — existing workers matched by National ID are updated, new
   /// ones are inserted (see DatabaseHelper.upsertRemoteWorkers) — then
@@ -313,7 +281,6 @@ class WorkerListViewModel extends BaseViewModel {
     final checkIns = await _firstCheckInsToday();
     final todayAttendance = await _workerAttendance.getTodayAttendanceByWorker();
     final assignedTaskWorkerIds = await _tasks.getWorkerIdsWithAssignedTasks();
-    final pendingReviewWorkerIds = await _tasks.getWorkerIdsWithPendingTaskReview();
     _supervisorDepartmentId = await _session.getSupervisorDepartmentId();
 
     _workers = [
@@ -338,10 +305,8 @@ class WorkerListViewModel extends BaseViewModel {
           isAttendanceSynced: todayAttendance[employee.id]?.isSynced ?? false,
           hasRealAttendanceIdToday:
               todayAttendance[employee.id]?.realAttendanceId != null,
-          todayAttendanceId: todayAttendance[employee.id]?.attendanceId,
           hasAssignedTasks: assignedTaskWorkerIds.contains(employee.id),
           remoteEmployeeId: employee.remoteEmployeeId,
-          taskStatusReviewCompleted: !pendingReviewWorkerIds.contains(employee.id),
         ),
     ];
 
