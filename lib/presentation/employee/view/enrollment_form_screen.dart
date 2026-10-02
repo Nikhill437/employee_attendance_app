@@ -54,6 +54,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
   final _nationalIdController = TextEditingController();
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
+  final _taskNoteController = TextEditingController();
 
   late final EnrollmentFormViewModel _formViewModel;
   final CreateEmployeeViewModel _employeeViewModel = CreateEmployeeViewModel();
@@ -67,6 +68,9 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     _formViewModel =
         widget.formViewModel ??
         EnrollmentFormViewModel(initialDepartmentId: editing?.departmentId);
+    _taskNoteController.addListener(
+      () => _formViewModel.setTaskNote(_taskNoteController.text),
+    );
 
     if (editing != null) {
       _nameController.text = editing.name;
@@ -82,6 +86,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       _formViewModel.presetForEditing(
         gender: editing.gender,
         enrollmentType: editing.payType,
+        shiftBasedType: editing.shiftBasedType,
       );
     }
 
@@ -95,6 +100,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     _nationalIdController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
+    _taskNoteController.dispose();
     _formViewModel.dispose();
     _employeeViewModel.dispose();
     super.dispose();
@@ -133,6 +139,28 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     );
     if (picked == null) return;
     await _formViewModel.captureNationalIdImage(File(picked.path));
+  }
+
+  /// Clears the Task Note field's own text alongside the view model's copy
+  /// whenever the task selection changes — [EnrollmentFormViewModel.
+  /// selectTask] resets its state, but a plain [TextEditingController]
+  /// never picks that up on its own.
+  void _onTaskSelected(Task? task) {
+    _formViewModel.selectTask(task);
+    _taskNoteController.clear();
+  }
+
+  /// "Target: 50 · Rate: 12" for the currently selected task (either half
+  /// omitted when its own value is null), or null outright when both are
+  /// — never shown blank or as zero.
+  String? get _selectedTaskTargetRate {
+    final task = _formViewModel.task;
+    if (task == null) return null;
+    final parts = [
+      if (task.target != null) 'Target: ${task.target}',
+      if (task.rate != null) 'Rate: ${task.rate}',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   Future<void> _proceedToFaceCapture() async {
@@ -191,6 +219,8 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       departmentId: draft.departmentId,
       nationalIdImage: draft.nationalIdImagePath,
       taskId: draft.taskId,
+      taskNote: draft.taskNote,
+      shiftBasedType: draft.shiftBasedType,
     );
     if (employee == null || !mounted) return;
 
@@ -388,7 +418,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               value: _formViewModel.task,
               items: _formViewModel.tasks,
               labelBuilder: (task) => task.name,
-              onChanged: _formViewModel.selectTask,
+              onChanged: _onTaskSelected,
             ),
             if (_formViewModel.task != null) ...[
               const SizedBox(height: 8),
@@ -399,6 +429,22 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
                   fontWeight: FontWeight.w600,
                   color: AppColors.deepGreen,
                 ),
+              ),
+              if (_selectedTaskTargetRate != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  _selectedTaskTargetRate!,
+                  style: const TextStyle(fontSize: 13, color: AppColors.slate),
+                ),
+              ],
+              const SizedBox(height: 14),
+              AppFormField(
+                label: 'Task Note',
+                hint: 'Add an optional note for this task',
+                icon: Icons.notes_outlined,
+                controller: _taskNoteController,
+                minLines: 2,
+                maxLines: 3,
               ),
             ],
             const SizedBox(height: 18),
@@ -423,6 +469,20 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               selectedBackground: const Color(0xFFD6E4FB),
               selectedForeground: const Color(0xFF1565C0),
             ),
+            if (_formViewModel.enrollmentType == PayType.shiftBased) ...[
+              const SizedBox(height: 18),
+              AppDropdownField<ShiftType>(
+                label: 'Shift',
+                isRequired: true,
+                hint: 'Select shift',
+                icon: Icons.schedule_outlined,
+                value: _formViewModel.shiftType,
+                items: ShiftType.values,
+                labelBuilder: (shift) => shift.label,
+                onChanged: _formViewModel.selectShiftType,
+                validator: (shift) => shift == null ? 'Select the shift' : null,
+              ),
+            ],
           ],
         ),
       ),

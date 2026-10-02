@@ -13,9 +13,23 @@ enum Gender {
 enum PayType {
   daily('Daily'),
   monthly('Monthly'),
-  taskBased('Task Based');
+  taskBased('Task Based'),
+  shiftBased('Shift Based');
 
   const PayType(this.label);
+
+  final String label;
+}
+
+/// Which shift a Shift Based worker (see [PayType.shiftBased]) works,
+/// stored in `workers.shift_based_type`. Only meaningful alongside that
+/// enrollment type — null for every other one.
+enum ShiftType {
+  morning('Morning'),
+  afternoon('Afternoon'),
+  night('Night');
+
+  const ShiftType(this.label);
 
   final String label;
 }
@@ -125,6 +139,13 @@ class Worker {
   /// imported/synced from the server.
   final int? remoteEmployeeId;
 
+  /// The worker's current active task assignment's own approve/reject/
+  /// pending verdict (`worker_tasks.task_status`) — null if they have no
+  /// active assignment at all. Drives the worker list card's Task Status
+  /// row; distinct from [status], which is the worker's own (not a task's)
+  /// approval state.
+  final String? taskStatus;
+
   const Worker({
     required this.name,
     required this.employeeId,
@@ -146,6 +167,7 @@ class Worker {
     this.hasRealAttendanceIdToday = false,
     this.hasAssignedTasks = false,
     this.remoteEmployeeId,
+    this.taskStatus,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;

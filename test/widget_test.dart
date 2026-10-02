@@ -92,6 +92,9 @@ class _FakeAttendanceRepository extends AttendanceRepository {
 class _FakeTaskRepository extends TaskRepository {
   @override
   Future<Set<int>> getWorkerIdsWithAssignedTasks() async => const {};
+
+  @override
+  Future<Map<int, String>> getWorkerTaskStatusByWorker() async => const {};
 }
 
 class _FakeWorkerAttendanceRepository extends WorkerAttendanceRepository {
@@ -140,7 +143,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Enter the National ID your supervisor assigned you, to continue'),
+      find.text(
+        'Enter the National ID your supervisor assigned you, to continue',
+      ),
       findsOneWidget,
     );
     expect(find.text('National ID'), findsOneWidget);
@@ -296,9 +301,11 @@ void main() {
 
   group('enrollment form', () {
     // The whole form is taller than a phone; give it a surface tall enough
-    // that every field is laid out and tappable.
+    // that every field is laid out and tappable. 1700 (not 1600) because the
+    // Enrollment Type row now wraps a 4th pill ("Shift Based") onto a
+    // second line, adding a bit more height even when it isn't selected.
     Future<void> pumpForm(WidgetTester tester) {
-      usePhoneSurface(tester, logicalHeight: 1600);
+      usePhoneSurface(tester, logicalHeight: 1700);
       return tester.pumpWidget(
         MaterialApp(
           home: EnrollmentFormScreen(
@@ -333,10 +340,7 @@ void main() {
         'Department',
         'Address',
       ]) {
-        expect(
-          find.text('$label *', findRichText: true),
-          findsOneWidget,
-        );
+        expect(find.text('$label *', findRichText: true), findsOneWidget);
       }
       expect(
         find.widgetWithText(ElevatedButton, 'Proceed to Face Capture'),
@@ -421,10 +425,7 @@ void main() {
 
       final selected = tester.widget<Container>(
         find
-            .ancestor(
-              of: find.text('Female'),
-              matching: find.byType(Container),
-            )
+            .ancestor(of: find.text('Female'), matching: find.byType(Container))
             .first,
       );
       final decoration = selected.decoration as BoxDecoration;

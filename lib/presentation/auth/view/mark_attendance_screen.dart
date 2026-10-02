@@ -35,6 +35,13 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
       WorkerAttendanceRepository();
   final EmployeeRepository _employeeRepository = EmployeeRepository();
 
+  /// This scan's check-in/check-out outcome, recorded as soon as the face
+  /// match succeeds — read by [_buildSuccessView] to pick the right
+  /// headline and by [_openFollowUpScreen] to pick the right next screen,
+  /// so [WorkerAttendanceRepository.recordScan] (which updates the day's
+  /// row every time it's called) only ever runs once per scan.
+  WorkerAttendanceRecord? _scanRecord;
+
   bool get _isSupervisorInitiated => widget.initialEmployeeId != null;
 
   @override
@@ -84,13 +91,29 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
       return;
     }
 
+    // Recorded before the success view renders (not inside
+    // _openFollowUpScreen, which used to run this after the pause) so the
+    // headline below can already say which one just happened. recordScan
+    // checks the worker in on their first scan of the day and checks them
+    // out — updating the same row — on every scan after that, so a worker
+    // can check out as many times as they like in a day and the row always
+    // keeps the latest one.
+    _scanRecord = await _recordAttendanceScan(user);
+    if (!mounted) return;
+
     _viewModel.completeLogin(user);
     await Future.delayed(_successPause);
     if (!mounted) return;
 
-    await _showTaskScreenIfNeeded(user);
+    final shouldFinish = await _openFollowUpScreen(user);
     if (!mounted) return;
-    _finish();
+    if (shouldFinish) _finish();
+  }
+
+  Future<WorkerAttendanceRecord?> _recordAttendanceScan(AuthUser user) async {
+    final workerId = user.id;
+    if (workerId == null) return null;
+    return _attendanceRepository.recordScan(workerId);
   }
 
   /// After attendance is marked, additionally shows the worker's assigned
@@ -100,13 +123,22 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   /// purely additive: it only reads and writes `worker_attendance` (a
   /// previously unused, schema-only table) via [WorkerAttendanceRepository]
   /// — the existing attendance_logs write above (`_viewModel.completeLogin`,
-  /// backed by AuthRepository.login) is untouched.
-  Future<void> _showTaskScreenIfNeeded(AuthUser user) async {
+  /// backed by AuthRepository.login) is untouched. Reuses [_scanRecord]
+  /// from [_runScanFlow] rather than recording the scan again here.
+  ///
+  /// Returns whether [_runScanFlow] should go on to call [_finish] —
+  /// always true for check-in (and for a third-or-later scan with nothing
+  /// new to show), but for check-out only once the worker's checkout-time
+  /// task entry has actually been saved (AssignTaskScreen's Worker
+  /// Submission card pops `true` on a successful save, same as its header
+  /// back arrow pops with nothing) — [_finish] itself is what already picks
+  /// the right destination for how this screen was opened: back to
+  /// worker_list_screen.dart's card ([_isSupervisorInitiated]) or on to
+  /// splash_screen.dart (the public kiosk flow).
+  Future<bool> _openFollowUpScreen(AuthUser user) async {
     final workerId = user.id;
-    if (workerId == null) return;
-
-    final record = await _attendanceRepository.recordScan(workerId);
-    if (!mounted) return;
+    final record = _scanRecord;
+    if (workerId == null || record == null) return true;
 
     switch (record.outcome) {
       case WorkerScanOutcome.checkedIn:
@@ -117,12 +149,13 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
                 WorkerTaskListScreen(workerId: workerId, workerName: user.name),
           ),
         );
+        return true;
       case WorkerScanOutcome.checkedOut:
         final employee = await _employeeRepository.findByEmployeeId(
           user.employeeId,
         );
-        if (!mounted) return;
-        await Navigator.push(
+        if (!mounted) return false;
+        final saved = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
             builder: (context) => AssignTaskScreen(
@@ -135,9 +168,10 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
             ),
           ),
         );
+        return saved == true;
       case WorkerScanOutcome.alreadyCheckedOut:
       case null:
-        break;
+        return true;
     }
   }
 
@@ -214,6 +248,20 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     );
   }
 
+  /// Which of the two outcomes [_scanRecord] (set in [_runScanFlow]) was —
+  /// check-in on the day's first scan, checkout on every scan after that.
+  String _successHeadline() {
+    switch (_scanRecord?.outcome) {
+      case WorkerScanOutcome.checkedOut:
+        return 'Check Out completed successfully';
+      case WorkerScanOutcome.checkedIn:
+        return 'Check In completed successfully';
+      case WorkerScanOutcome.alreadyCheckedOut:
+      case null:
+        return 'Attendance Marked Successfully';
+    }
+  }
+
   Widget _buildSuccessView() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -233,10 +281,10 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
           ),
         ),
         const SizedBox(height: 24),
-        const Text(
-          'Attendance Marked Successfully',
+        Text(
+          _successHeadline(),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 19,
             fontWeight: FontWeight.w700,
             color: Colors.white,

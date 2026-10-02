@@ -34,6 +34,14 @@ class WorkerAttendanceRepository {
   Future<List<WorkerAttendanceRecord>> getAttendanceHistory(int workerId) =>
       _dbHelper.getAttendanceHistory(workerId);
 
+  /// Whether [workerId] has any `worker_attendance` day not yet pushed to
+  /// the backend — not just today's (see
+  /// AttendanceSubmissionRepository.submitAllUnsyncedAttendance).
+  Future<bool> hasUnsyncedAttendance(int workerId) async {
+    final rows = await _dbHelper.getUnsyncedAttendance(workerId);
+    return rows.isNotEmpty;
+  }
+
   /// Pushes [workerId]'s today's attendance record to the backend
   /// (`POST attendance/check-in`) and marks it synced locally. Throws if
   /// there's nothing recorded yet today, if the worker themselves hasn't

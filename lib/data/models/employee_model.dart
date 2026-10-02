@@ -76,6 +76,11 @@ class Employee {
   /// uses this to actually assign the task in `worker_tasks`.
   final int? taskId;
 
+  /// Which shift this worker works (`workers.shift_based_type`) — only set
+  /// when [payType] is [PayType.shiftBased]; null for every other
+  /// enrollment type.
+  final String? shiftBasedType;
+
   Employee({
     this.id,
     required this.name,
@@ -97,6 +102,7 @@ class Employee {
     this.rejectionReason,
     this.remoteEmployeeId,
     this.taskId,
+    this.shiftBasedType,
   });
 
   Employee copyWith({
@@ -120,6 +126,7 @@ class Employee {
     String? rejectionReason,
     int? remoteEmployeeId,
     int? taskId,
+    String? shiftBasedType,
   }) {
     return Employee(
       id: id ?? this.id,
@@ -142,6 +149,7 @@ class Employee {
       rejectionReason: rejectionReason ?? this.rejectionReason,
       remoteEmployeeId: remoteEmployeeId ?? this.remoteEmployeeId,
       taskId: taskId ?? this.taskId,
+      shiftBasedType: shiftBasedType ?? this.shiftBasedType,
     );
   }
 
@@ -174,6 +182,7 @@ class Employee {
       'created_by': createdBy,
       'created_date': attendanceTime,
       'task_id': taskId,
+      'shift_based_type': shiftBasedType,
     };
   }
 
@@ -216,6 +225,7 @@ class Employee {
       rejectionReason: map['rejection_reason'] as String?,
       remoteEmployeeId: map['employee_id'] as int?,
       taskId: map['task_id'] as int?,
+      shiftBasedType: map['shift_based_type'] as String?,
     );
   }
 

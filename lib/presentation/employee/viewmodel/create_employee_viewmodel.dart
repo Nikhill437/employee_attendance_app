@@ -3,14 +3,19 @@ import '../../../core/utils/app_time.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/employee_repository.dart';
+import '../../../data/repositories/task_repository.dart';
 
 /// Drives employee enrollment: holds the captured multi-pose face profile
 /// until the form is submitted, then persists the employee.
 class CreateEmployeeViewModel extends BaseViewModel {
   final EmployeeRepository _employeeRepository;
+  final TaskRepository _taskRepository;
 
-  CreateEmployeeViewModel({EmployeeRepository? employeeRepository})
-    : _employeeRepository = employeeRepository ?? EmployeeRepository();
+  CreateEmployeeViewModel({
+    EmployeeRepository? employeeRepository,
+    TaskRepository? taskRepository,
+  }) : _employeeRepository = employeeRepository ?? EmployeeRepository(),
+       _taskRepository = taskRepository ?? TaskRepository();
 
   bool _isSaving = false;
   List<List<double>>? _faceEmbeddings;
@@ -31,6 +36,11 @@ class CreateEmployeeViewModel extends BaseViewModel {
   /// Persists the employee with the captured face profile, returning the
   /// saved record (with its row id). Returns null when no face has been
   /// captured yet.
+  ///
+  /// When [taskId] is set, also assigns that task to the newly-created
+  /// worker right away (rather than waiting for backend approval, like
+  /// `workers.task_id` alone does — see DatabaseHelper.upsertRemoteWorkers)
+  /// so [taskNote] has a `worker_tasks` row to actually land in.
   Future<Employee?> save({
     required String name,
     required String number,
@@ -43,6 +53,8 @@ class CreateEmployeeViewModel extends BaseViewModel {
     int? departmentId,
     String? nationalIdImage,
     int? taskId,
+    String? taskNote,
+    String? shiftBasedType,
   }) async {
     final embeddings = _faceEmbeddings;
     if (embeddings == null) return null;
@@ -66,8 +78,20 @@ class CreateEmployeeViewModel extends BaseViewModel {
         departmentId: departmentId,
         nationalIdImage: nationalIdImage,
         taskId: taskId,
+        shiftBasedType: shiftBasedType,
       ),
     );
+
+    final workerId = saved.id;
+    if (taskId != null && workerId != null) {
+      await _taskRepository.assignTask(
+        workerId: workerId,
+        taskId: taskId,
+        note: (taskNote == null || taskNote.trim().isEmpty)
+            ? null
+            : taskNote.trim(),
+      );
+    }
 
     _isSaving = false;
     safeNotify();

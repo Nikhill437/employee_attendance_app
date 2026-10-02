@@ -44,6 +44,7 @@ class AssignTaskViewModel extends BaseViewModel {
   int? _reviewNumericValue;
   File? _reviewPhoto;
   String _reviewNote = '';
+  String _reviewTaskStatus = 'pending';
 
   bool get isLoadingTasks => _isLoadingTasks;
   bool get isSaving => _isSaving;
@@ -56,9 +57,7 @@ class AssignTaskViewModel extends BaseViewModel {
   /// Tasks in the worker's department not already assigned or pending —
   /// what the task dropdown offers.
   List<Task> get availableTasks => _departmentTasks
-      .where(
-        (t) => t.id != _assignedTask?.taskId && t.id != _pendingTask?.id,
-      )
+      .where((t) => t.id != _assignedTask?.taskId && t.id != _pendingTask?.id)
       .toList();
 
   /// Only one new, not-yet-saved task may be picked at a time.
@@ -79,6 +78,16 @@ class AssignTaskViewModel extends BaseViewModel {
   /// to `work_photo` (the worker's own, until the supervisor overwrites it).
   File? get reviewPhoto => _reviewPhoto ?? _persistedPhoto;
   String get reviewNote => _reviewNote;
+  String get reviewTaskStatus => _reviewTaskStatus;
+
+  /// Whether today's Supervisor Review has already synced to the backend
+  /// (`worker_tasks.worker_task_id` set on *today's* row — see
+  /// WorkerTask.realWorkerTaskId) — once true, the review for today is
+  /// done and the screen shows it read-only instead of editable. Flips
+  /// back to false on its own the moment a new day's row is created (see
+  /// DatabaseHelper.getWorkerTasks), since that fresh row always starts
+  /// with no real id yet.
+  bool get isReviewLocked => _assignedTask?.realWorkerTaskId != null;
 
   File? get _persistedPhoto {
     final path = _assignedTask?.workPhoto;
@@ -98,9 +107,7 @@ class AssignTaskViewModel extends BaseViewModel {
         ? const []
         : await _taskRepository.getTasksByDepartment(departmentId);
 
-    final assignedWorkerTasks = await _taskRepository.getWorkerTasks(
-      workerId,
-    );
+    final assignedWorkerTasks = await _taskRepository.getWorkerTasks(workerId);
     _assignedTask = assignedWorkerTasks.isEmpty
         ? null
         : assignedWorkerTasks.first;
@@ -110,6 +117,7 @@ class AssignTaskViewModel extends BaseViewModel {
     _reviewNumericValue = _assignedTask?.completedTarget;
     _reviewPhoto = null;
     _reviewNote = _assignedTask?.note ?? '';
+    _reviewTaskStatus = _assignedTask?.taskStatus ?? 'pending';
 
     _isLoadingTasks = false;
     safeNotify();
@@ -167,9 +175,14 @@ class AssignTaskViewModel extends BaseViewModel {
 
   /// The worker's checkout-time Save — writes [entryNumericValue]/
   /// [entryPhoto] into `worker_tasks.employee_target`/`work_photo`.
+  /// Quantity is required (the photo stays optional); saving updates the
+  /// worker's existing `worker_tasks` row by its own id rather than ever
+  /// inserting a new one, so checking out again for the same task never
+  /// creates a duplicate record.
   Future<String?> saveWorkerEntry() async {
     final task = _assignedTask;
     if (task == null) return 'No task assigned yet';
+    if (_entryNumericValue == null) return 'Quantity is required';
     if (_isSubmittingEntry) return null;
 
     _isSubmittingEntry = true;
@@ -204,14 +217,21 @@ class AssignTaskViewModel extends BaseViewModel {
     safeNotify();
   }
 
-  /// The supervisor's Save — writes [reviewNumericValue]/[reviewNote] into
-  /// `worker_tasks.completed_target`/`note`, and overwrites `work_photo`
-  /// only if the supervisor actually captured a new one this session
-  /// ([_reviewPhoto] non-null — [reviewPhoto]'s persisted fallback doesn't
-  /// count as "captured").
+  void setReviewTaskStatus(String status) {
+    _reviewTaskStatus = status;
+    safeNotify();
+  }
+
+  /// The supervisor's Save — writes [reviewNumericValue]/[reviewNote]/
+  /// [reviewTaskStatus] into `worker_tasks.completed_target`/`note`/
+  /// `task_status`, and overwrites `work_photo` only if the supervisor
+  /// actually captured a new one this session ([_reviewPhoto] non-null —
+  /// [reviewPhoto]'s persisted fallback doesn't count as "captured").
   Future<String?> saveSupervisorReview() async {
     final task = _assignedTask;
     if (task == null) return 'No task assigned yet';
+    if (isReviewLocked) return 'Already synced for today';
+    if (_reviewNumericValue == null) return 'Quantity is required';
     if (_isSavingReview) return null;
 
     _isSavingReview = true;
@@ -223,6 +243,7 @@ class AssignTaskViewModel extends BaseViewModel {
         completedTarget: _reviewNumericValue,
         workPhoto: _reviewPhoto?.path,
         note: _reviewNote.trim().isEmpty ? null : _reviewNote.trim(),
+        taskStatus: _reviewTaskStatus,
       );
       await loadTasks();
       return null;

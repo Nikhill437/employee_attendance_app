@@ -61,7 +61,7 @@ class SplashScreen extends StatelessWidget {
       child: Column(
         children: [
           _EntryPointButton(
-            label: 'Mark Attendance',
+            label: 'Check In / Check Out',
             filled: true,
             onTap: () => Navigator.pushNamed(context, AppRoutes.markAttendance),
           ),
@@ -72,11 +72,12 @@ class SplashScreen extends StatelessWidget {
             filled: false,
             onTap: () => _openSupervisorLogin(context),
           ),
-          AppLinkText(
-            label: 'Forget Password?',
-            fontSize: 16,
-            onTap: () => _onForgotPassword(context),
-          ),
+          // AppLinkText(
+          //   label: 'Forget Password?',
+          //   fontSize: 16,
+          //   onTap: () => _onForgotPassword(context),
+          // ),
+          const SizedBox(height: 20),
           const AppVersionLabel(color: Colors.white),
         ],
       ),

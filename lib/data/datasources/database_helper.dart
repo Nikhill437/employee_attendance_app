@@ -32,7 +32,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 17,
+      version: 19,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -192,6 +192,50 @@ class DatabaseHelper {
             'ALTER TABLE worker_tasks ADD COLUMN employee_target INTEGER',
           );
         }
+        if (oldVersion < 18 && oldVersion >= 7) {
+          // `shift_based_type` was added to _createWorkerTables' CREATE
+          // TABLE (for the enrollment form's new Shift Based enrollment
+          // type) without ever getting its own upgrade step — an install
+          // that reached v17 via onUpgrade rather than a fresh onCreate
+          // would otherwise be missing this column entirely.
+          await db.execute(
+            'ALTER TABLE workers ADD COLUMN shift_based_type TEXT',
+          );
+        }
+        if (oldVersion < 19 && oldVersion >= 7) {
+          // worker_tasks' daily data (employee_target/work_photo/
+          // completed_target/note/task_status/overtime) is now scoped per
+          // [task_date] instead of being one standing value per (worker_id,
+          // task_id) — see the column's doc comment in _createWorkerTables.
+          // SQLite can't alter a UNIQUE constraint in place, so the table
+          // is rebuilt: renamed aside, recreated fresh by
+          // _createWorkerTables (CREATE TABLE IF NOT EXISTS, so every
+          // other table here is a no-op), its rows copied back in with
+          // task_date backfilled from each row's own assigned_at date —
+          // the closest available stand-in for "which day this was", since
+          // the column never existed before now — then the old copy is
+          // dropped.
+          await db.execute(
+            'ALTER TABLE worker_tasks RENAME TO worker_tasks_v18',
+          );
+          await _createWorkerTables(db);
+          await db.execute('''
+            INSERT INTO worker_tasks (
+              offline_worker_id, worker_task_id, worker_id, attendance_id,
+              task_id, target, status, assigned_at, created_at, updated_at,
+              assignment_type, note, work_photo, overtime, employee_target,
+              completed_target, task_status, server_time, task_date
+            )
+            SELECT
+              offline_worker_id, worker_task_id, worker_id, attendance_id,
+              task_id, target, status, assigned_at, created_at, updated_at,
+              assignment_type, note, work_photo, overtime, employee_target,
+              completed_target, task_status, server_time,
+              substr(assigned_at, 1, 10)
+            FROM worker_tasks_v18
+          ''');
+          await db.execute('DROP TABLE worker_tasks_v18');
+        }
       },
     );
   }
@@ -282,6 +326,7 @@ class DatabaseHelper {
         approved_by INTEGER,
         approved_at TEXT,
         employee_id INTEGER UNIQUE,
+        shift_based_type TEXT,
         -- The backend's own task id — set on some worker records
         -- independent of the worker_tasks assignment table; not FK'd
         -- locally since nothing here depends on it being enforced.
@@ -316,12 +361,10 @@ class DatabaseHelper {
         assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        -- 'default' (available to the worker every day — see
-        -- getWorkerTasks' applicability filter) or
-        -- 'temporary' (only for the day named by `assigned_at`'s own date;
-        -- re-assigning refreshes that date rather than adding a second
-        -- row — see assignWorkerTask). Always exactly one row per
-        -- (worker_id, task_id) regardless of type.
+        -- 'default' (available to the worker every day) or 'temporary' —
+        -- vestigial today (see assignWorkerTask, which only ever writes
+        -- 'default' now); which calendar day this row belongs to is
+        -- [task_date]'s job, not this column's.
         assignment_type TEXT NOT NULL DEFAULT 'default',
         -- Free-form text the supervisor attaches to this assignment — see
         -- assign_task_screen.dart's Note field.
@@ -338,7 +381,18 @@ class DatabaseHelper {
         -- constraint — see the schema doc comment above for why).
         task_status TEXT NOT NULL DEFAULT 'pending',
         server_time TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(worker_id, task_id),
+        -- The calendar day (supervisor's own timezone — see AppTime, same
+        -- as worker_attendance.attendance_date) this row's *daily* record
+        -- belongs to: [employee_target]/[work_photo]/[completed_target]/
+        -- [note]/[task_status]/[overtime] are all scoped to this one day,
+        -- never carried over or overwritten across days. The task
+        -- ASSIGNMENT itself (which task_id a worker is on) stays a
+        -- standing fact that spans every day's row — see
+        -- DatabaseHelper.getWorkerTasks, which creates each new day's row
+        -- automatically (carrying the task_id forward, but with these
+        -- fields blank) the first time it's read on a day with no row yet.
+        task_date TEXT NOT NULL,
+        UNIQUE(worker_id, task_id, task_date),
         FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE CASCADE,
         FOREIGN KEY (worker_id) REFERENCES workers(offline_worker_id) ON UPDATE CASCADE
       )
@@ -427,6 +481,8 @@ class DatabaseHelper {
         'department_id': task.departmentId,
         'task_name': task.name,
         'isdefault': task.isDefault ? 'yes' : 'no',
+        'target': task.target,
+        'rate': task.rate,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -551,16 +607,22 @@ class DatabaseHelper {
   }
 
   /// Stores the backend's real id for the task assignment at local id
-  /// [offlineWorkerTaskId], once `POST attendance/assigntask` returns one.
+  /// [offlineWorkerTaskId], once `POST attendance/assigntask` (or the
+  /// sync-data endpoint — see AttendanceSubmissionRepository.
+  /// submitAllUnsyncedAttendance) returns one. [realAttendanceId], when
+  /// given, is also stored in this same row's own `attendance_id` column —
+  /// the sync-data response ties a synced assignment back to the
+  /// attendance day it was synced alongside.
   Future<void> markWorkerTaskSynced(
     int offlineWorkerTaskId,
-    int? realWorkerTaskId,
-  ) async {
-    if (realWorkerTaskId == null) return;
+    int? realWorkerTaskId, {
+    int? realAttendanceId,
+  }) async {
+    if (realWorkerTaskId == null && realAttendanceId == null) return;
     final db = await database;
     await db.update(
       'worker_tasks',
-      {'worker_task_id': realWorkerTaskId},
+      {'worker_task_id': ?realWorkerTaskId, 'attendance_id': ?realAttendanceId},
       where: 'offline_worker_id = ?',
       whereArgs: [offlineWorkerTaskId],
     );
@@ -666,26 +728,32 @@ class DatabaseHelper {
     return List.generate(maps.length, (i) => Task.fromMap(maps[i]));
   }
 
-  /// Every task currently assigned to [workerId] — for pre-marking them on
-  /// the Assign Task screen and for the plain "view assigned tasks" screens.
-  /// A worker only ever has one active row at a time (see
-  /// [assignWorkerTask]), so in practice this returns at most one.
+  /// Every task currently assigned to [workerId] for *today* specifically —
+  /// for pre-marking them on the Assign Task screen and for the plain
+  /// "view assigned tasks" screens. A worker only ever has one active
+  /// assignment at a time (see [assignWorkerTask]), so in practice this
+  /// returns at most one row. If that standing assignment doesn't have a
+  /// row for today yet (the first read of a new day), one is created
+  /// first — carrying the same task_id forward but with every daily field
+  /// blank — so a continuing assignment never shows a previous day's
+  /// already-completed data (see the `task_date` column doc comment in
+  /// _createWorkerTables).
   Future<List<WorkerTask>> getWorkerTasks(int workerId) async {
     final db = await database;
+    await _ensureTodaysWorkerTaskRow(db, workerId);
     final maps = await db.rawQuery(
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
              worker_tasks.assignment_type, worker_tasks.employee_target,
-             worker_tasks.work_photo, worker_tasks.completed_target, worker_tasks.note
+             worker_tasks.work_photo, worker_tasks.completed_target, worker_tasks.note,
+             worker_tasks.task_status, worker_tasks.task_date,
+             worker_tasks.worker_task_id AS real_worker_task_id,
+             tasks.target AS task_target, tasks.rate AS task_rate
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
-        AND (
-          worker_tasks.assignment_type = 'default'
-          OR (worker_tasks.assignment_type = 'temporary'
-              AND substr(worker_tasks.assigned_at, 1, 10) = ?)
-        )
+        AND worker_tasks.task_date = ?
       ORDER BY tasks.task_name COLLATE NOCASE
     ''',
       [workerId, _todayDateKey()],
@@ -693,32 +761,82 @@ class DatabaseHelper {
     return List.generate(maps.length, (i) => WorkerTask.fromMap(maps[i]));
   }
 
-  /// [workerId]'s active task assignments that haven't reached the backend
-  /// yet (`worker_tasks.worker_task_id IS NULL`) — see
-  /// AttendanceSubmissionRepository.submitAttendance, which pushes these
-  /// alongside attendance/task-completion data rather than resubmitting
-  /// every assignment on every call the way [TaskSyncRepository] does.
+  /// Creates today's `worker_tasks` row for [workerId]'s current standing
+  /// assignment (the most recent active row, any day) if one doesn't exist
+  /// yet — carrying the task_id/assignment_type forward but leaving every
+  /// daily field (employee_target/work_photo/completed_target/note/
+  /// task_status/overtime) unset and `worker_task_id` null, so it reads as
+  /// a fresh blank record and is picked up by [getUnsyncedWorkerTasks] like
+  /// any other not-yet-synced day. A no-op if today's row already exists,
+  /// or if the worker has no active assignment at all yet.
+  Future<void> _ensureTodaysWorkerTaskRow(Database db, int workerId) async {
+    final today = _todayDateKey();
+    final todays = await db.query(
+      'worker_tasks',
+      where: 'worker_id = ? AND status = ? AND task_date = ?',
+      whereArgs: [workerId, 'active', today],
+      limit: 1,
+    );
+    if (todays.isNotEmpty) return;
+
+    final latestActive = await db.query(
+      'worker_tasks',
+      where: 'worker_id = ? AND status = ?',
+      whereArgs: [workerId, 'active'],
+      orderBy: 'task_date DESC',
+      limit: 1,
+    );
+    if (latestActive.isEmpty) return;
+
+    final previous = latestActive.first;
+    final now = AppTime.nowInUserZone().toIso8601String();
+    await db.insert('worker_tasks', {
+      'worker_id': workerId,
+      'task_id': previous['task_id'],
+      'assignment_type': previous['assignment_type'],
+      'status': 'active',
+      'assigned_at': now,
+      'created_at': now,
+      'updated_at': now,
+      'task_date': today,
+    });
+  }
+
+  /// [workerId]'s active task-assignment days that haven't reached the
+  /// backend yet (`worker_tasks.worker_task_id IS NULL`) — one row per
+  /// unsynced `task_date`, oldest first, now that each day gets its own
+  /// row (see the `task_date` column doc comment). See
+  /// AttendanceSubmissionRepository.submitAttendance/
+  /// submitAllUnsyncedAttendance, which push these alongside attendance
+  /// data rather than resubmitting every assignment on every call the way
+  /// [TaskSyncRepository] does. Includes the supervisor's review fields
+  /// (completed_target/work_photo/note/task_status/overtime) so the latter
+  /// can send them along with the first-time assignment sync.
   Future<List<WorkerTask>> getUnsyncedWorkerTasks(int workerId) async {
     final db = await database;
     final maps = await db.rawQuery(
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
-             worker_tasks.assignment_type
+             worker_tasks.assignment_type, worker_tasks.completed_target,
+             worker_tasks.work_photo, worker_tasks.note, worker_tasks.task_status,
+             worker_tasks.overtime, worker_tasks.created_at, worker_tasks.task_date
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
         AND worker_tasks.worker_task_id IS NULL
-      ORDER BY tasks.task_name COLLATE NOCASE
+      ORDER BY worker_tasks.task_date ASC, tasks.task_name COLLATE NOCASE
     ''',
       [workerId],
     );
     return List.generate(maps.length, (i) => WorkerTask.fromMap(maps[i]));
   }
 
-  /// Assigns [taskIds] to [workerId]. Duplicates (a task already assigned
-  /// to this worker) are silently skipped via the table's own
-  /// UNIQUE(worker_id, task_id) — callers don't need to filter first.
+  /// Assigns [taskIds] to [workerId]. A task already assigned *today* is
+  /// silently skipped via the table's own UNIQUE(worker_id, task_id,
+  /// task_date) — callers don't need to filter first. Currently unused by
+  /// any screen (the checklist-style multi-task assignment this backed has
+  /// since been replaced by [assignWorkerTask]'s one-active-task model).
   Future<void> assignWorkerTasks(int workerId, List<int> taskIds) async {
     final db = await database;
     // Passed explicitly rather than left to the column's own
@@ -727,6 +845,7 @@ class DatabaseHelper {
     // recorded timestamp in this file goes through AppTime for the same
     // reason.
     final now = AppTime.nowInUserZone().toIso8601String();
+    final today = _todayDateKey();
     final batch = db.batch();
     for (final taskId in taskIds) {
       batch.insert('worker_tasks', {
@@ -735,6 +854,7 @@ class DatabaseHelper {
         'assigned_at': now,
         'created_at': now,
         'updated_at': now,
+        'task_date': today,
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
@@ -756,22 +876,39 @@ class DatabaseHelper {
     await markWorkerUnsynced(workerId);
   }
 
-  /// Assigns [taskId] to [workerId] as that worker's one active task — an
-  /// upsert by (worker_id, task_id) per the table's own UNIQUE(worker_id,
-  /// task_id), always as `assignment_type = 'default'` (a standing
-  /// assignment; there is no more 'temporary'/scheduled-for-today option).
-  /// A worker has only one active task at a time: whatever else was active
-  /// for them is flipped to `status = 'inactive'` first, so assigning a new
-  /// task is really a replacement, not an addition. Re-activating a task
-  /// that had gone inactive resets `worker_task_id` to null so
-  /// [getUnsyncedWorkerTasks] re-picks up the row for the backend, which
-  /// needs to hear about the change.
+  /// Assigns [taskId] to [workerId] as that worker's one active task for
+  /// *today* — an upsert by (worker_id, task_id, task_date) per the
+  /// table's own UNIQUE(worker_id, task_id, task_date), always as
+  /// `assignment_type = 'default'` (a standing assignment; there is no
+  /// more 'temporary'/scheduled-for-today option). A worker has only one
+  /// active task at a time: whatever else was active for them (any
+  /// task_id, any day) is flipped to `status = 'inactive'` first, so
+  /// assigning a new task is really a replacement, not an addition.
+  /// Re-activating today's row after it had gone inactive resets
+  /// `worker_task_id` to null so [getUnsyncedWorkerTasks] re-picks up the
+  /// row for the backend, which needs to hear about the change. A
+  /// continuing assignment's *other* days' rows (yesterday's, etc.) are
+  /// untouched either way — only today's row is ever written here; see
+  /// [getWorkerTasks] for how a new day's row gets created in the first
+  /// place.
+  ///
+  /// [note], when given, is written to the row's own `note` column — used
+  /// by the enrollment form's optional Task Note field, which has nowhere
+  /// else to land since a freshly-enrolled worker's `worker_tasks` row is
+  /// created right here rather than waiting on backend approval (see
+  /// CreateEmployeeViewModel.save). Omitted (null) leaves whatever note the
+  /// row already has untouched, same as [submitWorkerTaskEntry]'s
+  /// [workPhoto] handling — so the supervisor's own re-assignment from
+  /// assign_task_screen.dart (which never passes one) never blanks out an
+  /// existing note.
   Future<void> assignWorkerTask({
     required int workerId,
     required int taskId,
+    String? note,
   }) async {
     final db = await database;
     final now = AppTime.nowInUserZone().toIso8601String();
+    final today = _todayDateKey();
     await db.transaction((txn) async {
       await txn.update(
         'worker_tasks',
@@ -782,8 +919,8 @@ class DatabaseHelper {
 
       final existing = await txn.query(
         'worker_tasks',
-        where: 'worker_id = ? AND task_id = ?',
-        whereArgs: [workerId, taskId],
+        where: 'worker_id = ? AND task_id = ? AND task_date = ?',
+        whereArgs: [workerId, taskId, today],
         limit: 1,
       );
       if (existing.isEmpty) {
@@ -795,6 +932,8 @@ class DatabaseHelper {
           'assigned_at': now,
           'created_at': now,
           'updated_at': now,
+          'task_date': today,
+          'note': note,
         });
       } else {
         final row = existing.first;
@@ -807,6 +946,7 @@ class DatabaseHelper {
             'assigned_at': now,
             'updated_at': now,
             if (wasInactive) 'worker_task_id': null,
+            'note': ?note,
           },
           where: 'offline_worker_id = ?',
           whereArgs: [row['offline_worker_id']],
@@ -844,15 +984,19 @@ class DatabaseHelper {
 
   /// The supervisor's review of the same assignment — their own numeric
   /// value (`completed_target`, distinct from the worker's own
-  /// `employee_target`) and note, plus [workPhoto] overwriting the
-  /// worker's own photo only when the supervisor actually captured/picked
-  /// a new one (null leaves the existing `work_photo` untouched).
+  /// `employee_target`), note, and [taskStatus] (the assignment's own
+  /// approve/reject/pending verdict, `worker_tasks.task_status` — NOT NULL
+  /// on the table so always written, unlike [workPhoto]/[note]), plus
+  /// [workPhoto] overwriting the worker's own photo only when the
+  /// supervisor actually captured/picked a new one (null leaves the
+  /// existing `work_photo` untouched).
   Future<void> saveSupervisorTaskReview({
     required int workerTaskId,
     required int workerId,
     int? completedTarget,
     String? workPhoto,
     String? note,
+    String taskStatus = 'pending',
   }) async {
     final db = await database;
     await db.update(
@@ -861,6 +1005,7 @@ class DatabaseHelper {
         'completed_target': completedTarget,
         'work_photo': ?workPhoto,
         'note': note,
+        'task_status': taskStatus,
         'updated_at': AppTime.nowInUserZone().toIso8601String(),
       },
       where: 'offline_worker_id = ?',
@@ -870,23 +1015,41 @@ class DatabaseHelper {
   }
 
   /// Every worker_id (local `offline_worker_id`) with at least one active
-  /// task assignment — one query for the whole worker list, so its "View
-  /// Tasks" button can disable itself for a worker with nothing assigned
-  /// without a query per card.
+  /// task assignment, on any day — one query for the whole worker list, so
+  /// its "View Tasks" button can disable itself for a worker with nothing
+  /// assigned without a query per card. Deliberately not scoped to today's
+  /// `task_date`: this is about whether the *standing assignment* exists,
+  /// which it does from the moment it's first assigned regardless of
+  /// whether anyone's opened a screen today to materialize today's row yet
+  /// (see [getWorkerTasks]).
   Future<Set<int>> getWorkerIdsWithAssignedTasks() async {
     final db = await database;
     final rows = await db.rawQuery(
+      "SELECT DISTINCT worker_id FROM worker_tasks WHERE status = 'active'",
+    );
+    return {for (final row in rows) row['worker_id'] as int};
+  }
+
+  /// Every worker_id's *today's* active task record's `task_status` — the
+  /// worker list's Task Status row, one query for the whole list rather
+  /// than a [getWorkerTasks] per card. Scoped to `task_date = today`
+  /// (unlike [getWorkerIdsWithAssignedTasks]) so a worker whose standing
+  /// assignment hasn't had its row for today created yet simply has no
+  /// entry here — [Worker.taskStatus] already reads a missing entry as
+  /// 'Pending', which is exactly right for "nothing recorded yet today".
+  Future<Map<int, String>> getWorkerTaskStatusByWorker() async {
+    final db = await database;
+    final rows = await db.rawQuery(
       '''
-      SELECT DISTINCT worker_id FROM worker_tasks
-      WHERE status = 'active'
-        AND (
-          assignment_type = 'default'
-          OR (assignment_type = 'temporary' AND substr(assigned_at, 1, 10) = ?)
-        )
+      SELECT worker_id, task_status FROM worker_tasks
+      WHERE status = 'active' AND task_date = ?
     ''',
       [_todayDateKey()],
     );
-    return {for (final row in rows) row['worker_id'] as int};
+    return {
+      for (final row in rows)
+        row['worker_id'] as int: row['task_status'] as String? ?? 'pending',
+    };
   }
 
   // --- Worker attendance (check-in / check-out) methods ---
@@ -1023,6 +1186,27 @@ class DatabaseHelper {
       where: 'worker_id = ?',
       whereArgs: [workerId],
       orderBy: 'attendance_date DESC',
+    );
+    return List.generate(
+      rows.length,
+      (i) => WorkerAttendanceRecord.fromMap(rows[i]),
+    );
+  }
+
+  /// [workerId]'s `worker_attendance` rows not yet pushed to the backend
+  /// (`is_synced = 0`), oldest first — every day still owed to the server,
+  /// not just today's (see AttendanceSubmissionRepository.
+  /// submitAllUnsyncedAttendance), since a worker can go several days
+  /// without a supervisor syncing them.
+  Future<List<WorkerAttendanceRecord>> getUnsyncedAttendance(
+    int workerId,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'worker_attendance',
+      where: 'worker_id = ? AND is_synced = 0',
+      whereArgs: [workerId],
+      orderBy: 'attendance_date ASC',
     );
     return List.generate(
       rows.length,
@@ -1195,8 +1379,8 @@ class DatabaseHelper {
   /// `tasks.task_id`) exist in the local `tasks` cache — a task id the
   /// backend sent that hasn't synced into `tasks` locally yet (see
   /// [replaceTasks]) is skipped rather than inserted as a dangling FK.
-  /// Already-assigned tasks are left alone via `worker_tasks`' own
-  /// UNIQUE(worker_id, task_id), same as [assignWorkerTasks].
+  /// A task already assigned today is left alone via `worker_tasks`' own
+  /// UNIQUE(worker_id, task_id, task_date), same as [assignWorkerTasks].
   Future<void> _assignMatchingTasks(
     DatabaseExecutor txn,
     int offlineWorkerId,
@@ -1212,6 +1396,7 @@ class DatabaseHelper {
     if (knownTasks.isEmpty) return;
 
     final now = AppTime.nowInUserZone().toIso8601String();
+    final today = _todayDateKey();
     final batch = txn.batch();
     for (final task in knownTasks) {
       batch.insert('worker_tasks', {
@@ -1220,6 +1405,7 @@ class DatabaseHelper {
         'assigned_at': now,
         'created_at': now,
         'updated_at': now,
+        'task_date': today,
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
@@ -1277,20 +1463,28 @@ class DatabaseHelper {
           'updated_at': now,
         };
 
+        // Matched against the most recent local row for this (worker,
+        // task) regardless of its own task_date — the backend doesn't
+        // give this endpoint per-day granularity to match more precisely
+        // against, so the latest day's row is the best stand-in for "the
+        // current one" when updating an already-known assignment.
         final existing = await txn.query(
           'worker_tasks',
           columns: ['offline_worker_id'],
           where: 'worker_id = ? AND task_id = ?',
           whereArgs: [offlineWorkerId, record.taskId],
+          orderBy: 'task_date DESC',
           limit: 1,
         );
         if (existing.isEmpty) {
+          final assignedAt = record.assignedAt ?? now;
           await txn.insert('worker_tasks', {
             ...row,
             'worker_id': offlineWorkerId,
             'task_id': record.taskId,
-            'assigned_at': record.assignedAt ?? now,
+            'assigned_at': assignedAt,
             'created_at': now,
+            'task_date': assignedAt.substring(0, 10),
           }, conflictAlgorithm: ConflictAlgorithm.ignore);
         } else {
           await txn.update(

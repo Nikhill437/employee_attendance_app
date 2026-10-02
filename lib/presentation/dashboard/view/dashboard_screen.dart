@@ -1,3 +1,4 @@
+import 'package:employee_attendance_app/presentation/settings/view/settings_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/app_routes.dart';
@@ -163,30 +164,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   updatedTaskCount: _viewModel.updatedCounts.taskCount,
                 ),
                 const SizedBox(height: 14),
-                _EmployeesPreviewCard(
-                  employees: _viewModel.roster,
-                  onViewAll: () =>
-                      Navigator.pushNamed(context, AppRoutes.workerList),
-                  onEnroll: () =>
-                      Navigator.pushNamed(context, AppRoutes.enrollmentForm),
-                ),
+                // _EmployeesPreviewCard(
+                //   employees: _viewModel.roster,
+                //   onViewAll: () =>
+                //       Navigator.pushNamed(context, AppRoutes.workerList),
+                //   onEnroll: () =>
+                //       Navigator.pushNamed(context, AppRoutes.enrollmentForm),
+                // ),
                 const SizedBox(height: 14),
-                _OfflineRegistrationsCard(
-                  summary: _viewModel.summary,
-                  onSync: _viewModel.sync,
-                ),
-                const SizedBox(height: 14),
+                // _OfflineRegistrationsCard(
+                //   summary: _viewModel.summary,
+                //   onSync: _viewModel.sync,
+                // ),
+                // const SizedBox(height: 14),
                 _HeadlineStats(summary: _viewModel.summary),
                 const SizedBox(height: 14),
                 _AttendanceCard(
                   summary: _viewModel.summary,
                   onRefresh: _viewModel.load,
                 ),
-                const SizedBox(height: 14),
-                _VerificationCard(
-                  summary: _viewModel.summary,
-                  onSync: _viewModel.sync,
-                ),
+                // const SizedBox(height: 5),
+                // _VerificationCard(
+                //   summary: _viewModel.summary,
+                //   onSync: _viewModel.sync,
+                // ),
               ],
             ),
           ),
@@ -229,18 +230,20 @@ class _DashboardHeader extends StatelessWidget {
             ],
           ),
         ),
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: AppColors.cardBorder),
-            color: Colors.white,
-          ),
-          child: const Icon(
-            Icons.person_outline,
-            size: 22,
-            color: AppColors.ink,
+        GestureDetector( onTap: ()=> Navigator.push(context, MaterialPageRoute(builder: (context)=> SettingsScreen())),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.cardBorder),
+              color: Colors.white,
+            ),
+            child: const Icon(
+              Icons.person_outline,
+              size: 22,
+              color: AppColors.ink,
+            ),
           ),
         ),
       ],
@@ -250,80 +253,80 @@ class _DashboardHeader extends StatelessWidget {
 
 /// A short preview of the roster, read straight from the employee table —
 /// full names and IDs, not the demo placeholders.
-class _EmployeesPreviewCard extends StatelessWidget {
-  static const int _previewCount = 4;
+// class _EmployeesPreviewCard extends StatelessWidget {
+//   static const int _previewCount = 4;
 
-  final List<Employee> employees;
-  final VoidCallback onViewAll;
-  final VoidCallback onEnroll;
+//   final List<Employee> employees;
+//   final VoidCallback onViewAll;
+//   final VoidCallback onEnroll;
 
-  const _EmployeesPreviewCard({
-    required this.employees,
-    required this.onViewAll,
-    required this.onEnroll,
-  });
+//   const _EmployeesPreviewCard({
+//     required this.employees,
+//     required this.onViewAll,
+//     required this.onEnroll,
+//   });
 
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(child: SectionLabel('WORKERS')),
-              if (employees.isNotEmpty)
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: onViewAll,
-                  child: const Text(
-                    'View All',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.deepGreen,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (employees.isEmpty)
-            _buildEmptyState()
-          else
-            for (final employee in employees.take(_previewCount))
-              _EmployeeRow(employee: employee),
-        ],
-      ),
-    );
-  }
+//   @override
+//   Widget build(BuildContext context) {
+//     return AppCard(
+//       child: Column(
+//         crossAxisAlignment: CrossAxisAlignment.start,
+//         children: [
+//           Row(
+//             children: [
+//               const Expanded(child: SectionLabel('WORKERS')),
+//               if (employees.isNotEmpty)
+//                 GestureDetector(
+//                   behavior: HitTestBehavior.opaque,
+//                   onTap: onViewAll,
+//                   child: const Text(
+//                     'View All',
+//                     style: TextStyle(
+//                       fontSize: 13,
+//                       fontWeight: FontWeight.w700,
+//                       color: AppColors.deepGreen,
+//                     ),
+//                   ),
+//                 ),
+//             ],
+//           ),
+//           const SizedBox(height: 12),
+//           if (employees.isEmpty)
+//             _buildEmptyState()
+//           else
+//             for (final employee in employees.take(_previewCount))
+//               _EmployeeRow(employee: employee),
+//         ],
+//       ),
+//     );
+//   }
 
-  Widget _buildEmptyState() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'No employees enrolled yet.',
-          style: TextStyle(fontSize: 14, color: AppColors.muted),
-        ),
-        const SizedBox(height: 12),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onEnroll,
-          child: const Text(
-            'Enroll the first worker',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: AppColors.deepGreen,
-              decoration: TextDecoration.underline,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
+//   Widget _buildEmptyState() {
+//     return Column(
+//       crossAxisAlignment: CrossAxisAlignment.start,
+//       children: [
+//         const Text(
+//           'No employees enrolled yet.',
+//           style: TextStyle(fontSize: 14, color: AppColors.muted),
+//         ),
+//         const SizedBox(height: 12),
+//         GestureDetector(
+//           behavior: HitTestBehavior.opaque,
+//           onTap: onEnroll,
+//           child: const Text(
+//             'Enroll the first worker',
+//             style: TextStyle(
+//               fontSize: 14,
+//               fontWeight: FontWeight.w700,
+//               color: AppColors.deepGreen,
+//               decoration: TextDecoration.underline,
+//             ),
+//           ),
+//         ),
+//       ],
+//     );
+//   }
+// }
 
 class _EmployeeRow extends StatelessWidget {
   final Employee employee;
@@ -446,7 +449,7 @@ class _ImportWorkersCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const SectionLabel('WORKER DATA'),
+                    const SectionLabel('WORKER LIST DATA'),
                     const SizedBox(width: 8),
                     _UpdatedCountBadge(count: updatedCount),
                   ],
@@ -479,7 +482,7 @@ class _ImportWorkersCard extends StatelessWidget {
                     ),
                   )
                 : const Icon(Icons.cloud_download_outlined, size: 16),
-            label: Text(isImporting ? 'Fetching...' : 'Fetch Workers'),
+            label: Text(isImporting ? 'Fetching...' : 'Fetch Workers List'),
           ),
         ],
       ),
@@ -506,7 +509,7 @@ class _FetchWorkerTasksCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionLabel('WORKER TASKS'),
+                const SectionLabel('WORKER TASKS LIST'),
                 const SizedBox(height: 6),
                 const Text(
                   'Fetch the latest worker task assignments from the server',
@@ -535,7 +538,7 @@ class _FetchWorkerTasksCard extends StatelessWidget {
                     ),
                   )
                 : const Icon(Icons.cloud_download_outlined, size: 16),
-            label: Text(isFetching ? 'Fetching...' : 'Fetch Worker Tasks'),
+            label: Text(isFetching ? 'Fetching...' : 'Fetch Worker Tasks List'),
           ),
         ],
       ),
@@ -644,67 +647,67 @@ class _RefreshRow extends StatelessWidget {
   }
 }
 
-class _OfflineRegistrationsCard extends StatelessWidget {
-  final DashboardSummary summary;
-  final VoidCallback onSync;
+// class _OfflineRegistrationsCard extends StatelessWidget {
+//   final DashboardSummary summary;
+//   final VoidCallback onSync;
 
-  const _OfflineRegistrationsCard({
-    required this.summary,
-    required this.onSync,
-  });
+//   const _OfflineRegistrationsCard({
+//     required this.summary,
+//     required this.onSync,
+//   });
 
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SectionLabel('OFFLINE REGISTRATIONS'),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${summary.pendingRegistrations} Pending',
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.deepGreen,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              ElevatedButton(
-                onPressed: onSync,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.deepGreen,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 14,
-                  ),
-                  shape: const StadiumBorder(),
-                ),
-                child: const Text(
-                  'Sync Now',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _LastSynced(summary.lastRegistrationSync, withIcon: true),
-        ],
-      ),
-    );
-  }
-}
+//   @override
+//   Widget build(BuildContext context) {
+//     return AppCard(
+//       child: Column(
+//         crossAxisAlignment: CrossAxisAlignment.start,
+//         children: [
+//           Row(
+//             crossAxisAlignment: CrossAxisAlignment.start,
+//             children: [
+//               Expanded(
+//                 child: Column(
+//                   crossAxisAlignment: CrossAxisAlignment.start,
+//                   children: [
+//                     const SectionLabel('OFFLINE REGISTRATIONS'),
+//                     const SizedBox(height: 8),
+//                     Text(
+//                       '${summary.pendingRegistrations} Pending',
+//                       style: const TextStyle(
+//                         fontSize: 26,
+//                         fontWeight: FontWeight.w700,
+//                         color: AppColors.deepGreen,
+//                       ),
+//                     ),
+//                   ],
+//                 ),
+//               ),
+//               ElevatedButton(
+//                 onPressed: onSync,
+//                 style: ElevatedButton.styleFrom(
+//                   backgroundColor: AppColors.deepGreen,
+//                   foregroundColor: Colors.white,
+//                   elevation: 0,
+//                   padding: const EdgeInsets.symmetric(
+//                     horizontal: 20,
+//                     vertical: 14,
+//                   ),
+//                   shape: const StadiumBorder(),
+//                 ),
+//                 child: const Text(
+//                   'Sync Now',
+//                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+//                 ),
+//               ),
+//             ],
+//           ),
+//           const SizedBox(height: 12),
+//           _LastSynced(summary.lastRegistrationSync, withIcon: true),
+//         ],
+//       ),
+//     );
+//   }
+// }
 
 class _HeadlineStats extends StatelessWidget {
   final DashboardSummary summary;
@@ -907,47 +910,47 @@ class _MiniStat extends StatelessWidget {
   }
 }
 
-class _VerificationCard extends StatelessWidget {
-  final DashboardSummary summary;
-  final VoidCallback onSync;
+// class _VerificationCard extends StatelessWidget {
+//   final DashboardSummary summary;
+//   final VoidCallback onSync;
 
-  const _VerificationCard({required this.summary, required this.onSync});
+//   const _VerificationCard({required this.summary, required this.onSync});
 
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionLabel('VERIFICATION TASKS'),
-          const SizedBox(height: 14),
-          _VerificationRow(
-            icon: Icons.check_circle_outline,
-            iconColor: AppColors.success,
-            label: 'Verified',
-            value: summary.verifiedTasks,
-          ),
-          const SizedBox(height: 12),
-          _VerificationRow(
-            icon: Icons.error_outline,
-            iconColor: AppColors.muted,
-            label: 'Pending',
-            value: summary.pendingTasks,
-          ),
-          const SizedBox(height: 18),
-          AppPrimaryButton(
-            label: 'Sync Data',
-            background: AppColors.deepGreen,
-            foreground: Colors.white,
-            onPressed: onSync,
-          ),
-          const SizedBox(height: 12),
-          Center(child: _LastSynced(summary.lastVerificationSync)),
-        ],
-      ),
-    );
-  }
-}
+//   @override
+//   Widget build(BuildContext context) {
+//     return AppCard(
+//       child: Column(
+//         crossAxisAlignment: CrossAxisAlignment.start,
+//         children: [
+//           const SectionLabel('VERIFICATION TASKS'),
+//           const SizedBox(height: 14),
+//           _VerificationRow(
+//             icon: Icons.check_circle_outline,
+//             iconColor: AppColors.success,
+//             label: 'Verified',
+//             value: summary.verifiedTasks,
+//           ),
+//           const SizedBox(height: 12),
+//           _VerificationRow(
+//             icon: Icons.error_outline,
+//             iconColor: AppColors.muted,
+//             label: 'Pending',
+//             value: summary.pendingTasks,
+//           ),
+//           const SizedBox(height: 18),
+//           AppPrimaryButton(
+//             label: 'Sync Data',
+//             background: AppColors.deepGreen,
+//             foreground: Colors.white,
+//             onPressed: onSync,
+//           ),
+//           const SizedBox(height: 12),
+//           Center(child: _LastSynced(summary.lastVerificationSync)),
+//         ],
+//       ),
+//     );
+//   }
+// }
 
 class _VerificationRow extends StatelessWidget {
   final IconData icon;

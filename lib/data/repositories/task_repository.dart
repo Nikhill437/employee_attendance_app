@@ -30,8 +30,20 @@ class TaskRepository {
 
   /// Assigns [taskId] to [workerId] as their one active task, replacing
   /// whatever else was active — an upsert, see DatabaseHelper.assignWorkerTask.
-  Future<void> assignTask({required int workerId, required int taskId}) =>
-      _dbHelper.assignWorkerTask(workerId: workerId, taskId: taskId);
+  Future<void> assignTask({
+    required int workerId,
+    required int taskId,
+    String? note,
+  }) => _dbHelper.assignWorkerTask(
+    workerId: workerId,
+    taskId: taskId,
+    note: note,
+  );
+
+  /// Every worker_id's current active assignment's task_status — see
+  /// DatabaseHelper.getWorkerTaskStatusByWorker.
+  Future<Map<int, String>> getWorkerTaskStatusByWorker() =>
+      _dbHelper.getWorkerTaskStatusByWorker();
 
   /// Every worker with at least one active task assignment — for the
   /// worker list's "View Tasks" button, disabled otherwise.
@@ -60,11 +72,13 @@ class TaskRepository {
     int? completedTarget,
     String? workPhoto,
     String? note,
+    String taskStatus = 'pending',
   }) => _dbHelper.saveSupervisorTaskReview(
     workerTaskId: workerTaskId,
     workerId: workerId,
     completedTarget: completedTarget,
     workPhoto: workPhoto,
     note: note,
+    taskStatus: taskStatus,
   );
 }

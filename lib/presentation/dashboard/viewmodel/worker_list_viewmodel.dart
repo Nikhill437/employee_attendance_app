@@ -77,40 +77,26 @@ class WorkerListViewModel extends BaseViewModel {
     return worker.departmentId == supervisorDepartmentId;
   }
 
-  /// Whether [worker] should still show in the list once its department
-  /// change has actually reached the backend. A worker still pending sync
-  /// stays visible regardless of department — that's exactly the "Not
-  /// synced" state a supervisor needs to see and act on. Only once
-  /// [Worker.isSynced] is true does a department mismatch hide it (moved
-  /// out of the supervisor's department, confirmed server-side) — this
-  /// only affects what this list shows, never the local `workers` row
-  /// itself. Fails open (never hides) if either department can't be
-  /// determined, rather than guessing.
-  bool _matchesSupervisorDepartment(Worker worker) {
-    if (!worker.isSynced) return true;
-    final supervisorDepartmentId = _supervisorDepartmentId;
-    if (supervisorDepartmentId == null) return true;
-    if (worker.departmentId == null) return true;
-    return worker.departmentId == supervisorDepartmentId;
-  }
-
   /// Whether [employeeId]'s worker is mid-sync — drives that card's sync
   /// button.
   bool isSyncing(String employeeId) => _syncingIds.contains(employeeId);
 
   /// Whether [employeeId]'s tasks are mid-sync — drives that card's sync
   /// tasks button.
-  bool isSyncingTasks(String employeeId) => _syncingTaskIds.contains(employeeId);
+  bool isSyncingTasks(String employeeId) =>
+      _syncingTaskIds.contains(employeeId);
 
   /// Whether [employeeId]'s attendance is mid-sync — drives that card's
   /// attendance sync button.
   bool isSyncingAttendance(String employeeId) =>
       _syncingAttendanceIds.contains(employeeId);
 
-  /// The list after the current search term, attendance filter, and
-  /// department filter, with not-yet-synced workers surfaced above synced
-  /// ones (stable within each group) — a worker needing a push to the
-  /// backend shouldn't get buried under ones that don't.
+  /// The list after the current search term and attendance filter, with
+  /// not-yet-synced workers surfaced above synced ones (stable within each
+  /// group) — a worker needing a push to the backend shouldn't get buried
+  /// under ones that don't. Shows every worker regardless of department
+  /// for now — see [canManageTasks] for where a department check still
+  /// applies, to task-action gating rather than list visibility.
   List<Worker> get workers {
     final term = _query.toLowerCase();
     final filtered = _workers.where((worker) {
@@ -120,7 +106,7 @@ class WorkerListViewModel extends BaseViewModel {
           term.isEmpty ||
           worker.name.toLowerCase().contains(term) ||
           worker.employeeId.toLowerCase().contains(term);
-      return matchesFilter && matchesTerm && _matchesSupervisorDepartment(worker);
+      return matchesFilter && matchesTerm;
     });
 
     final notSynced = <Worker>[];
@@ -165,30 +151,51 @@ class WorkerListViewModel extends BaseViewModel {
   /// or an error message on failure. Guards against a second tap on the
   /// same card while its sync is already running.
   ///
-  /// If [workerId] has attendance recorded today, this pushes that day's
-  /// attendance plus any pending task completions together
-  /// (`POST attendance/submit-attendance`), syncing the worker's own
-  /// profile first if it doesn't have a real backend id yet. Otherwise it
-  /// falls back to the plain worker-profile sync
-  /// (`POST attendance/sync-worker`) — there's nothing attendance-related
-  /// to push yet.
-  Future<String?> syncWorker(String employeeId, int? workerId) async {
+  /// An **approved** [status] pushes every not-yet-synced
+  /// `worker_attendance` day (not just today's) plus any pending task
+  /// assignment review together (`POST attendance/sync-data`) — see
+  /// AttendanceSubmissionRepository.submitAllUnsyncedAttendance. Any other
+  /// status keeps the old behaviour exactly: if [workerId] has attendance
+  /// recorded today, push that day's attendance plus pending task
+  /// assignments together (`POST attendance/submit-attendance`); otherwise
+  /// fall back to the plain worker-profile sync
+  /// (`POST attendance/sync-worker`). Either path syncs the worker's own
+  /// profile first if it doesn't have a real backend id yet.
+  Future<String?> syncWorker(
+    String employeeId,
+    int? workerId, {
+    required String status,
+  }) async {
     if (_syncingIds.contains(employeeId)) return null;
     _syncingIds.add(employeeId);
     safeNotify();
 
     String? error;
     if (!await NetworkStatus.isOnline()) {
-      error = 'No internet connection. Please check your network and try again.';
+      error =
+          'No internet connection. Please check your network and try again.';
     } else {
       try {
-        final hasAttendanceToday =
-            workerId != null &&
-            await _workerAttendance.getTodayAttendance(workerId) != null;
-        if (hasAttendanceToday) {
-          await _attendanceSubmission.submitAttendance(employeeId, workerId);
+        if (status == 'approved' && workerId != null) {
+          final hasUnsyncedAttendance = await _workerAttendance
+              .hasUnsyncedAttendance(workerId);
+          if (hasUnsyncedAttendance) {
+            await _attendanceSubmission.submitAllUnsyncedAttendance(
+              employeeId,
+              workerId,
+            );
+          } else {
+            await _sync.syncWorker(employeeId);
+          }
         } else {
-          await _sync.syncWorker(employeeId);
+          final hasAttendanceToday =
+              workerId != null &&
+              await _workerAttendance.getTodayAttendance(workerId) != null;
+          if (hasAttendanceToday) {
+            await _attendanceSubmission.submitAttendance(employeeId, workerId);
+          } else {
+            await _sync.syncWorker(employeeId);
+          }
         }
       } catch (e) {
         error = ApiException.messageFor(e);
@@ -279,8 +286,10 @@ class WorkerListViewModel extends BaseViewModel {
 
     final employees = await _employees.getUnique();
     final checkIns = await _firstCheckInsToday();
-    final todayAttendance = await _workerAttendance.getTodayAttendanceByWorker();
+    final todayAttendance = await _workerAttendance
+        .getTodayAttendanceByWorker();
     final assignedTaskWorkerIds = await _tasks.getWorkerIdsWithAssignedTasks();
+    final taskStatusByWorker = await _tasks.getWorkerTaskStatusByWorker();
     _supervisorDepartmentId = await _session.getSupervisorDepartmentId();
 
     _workers = [
@@ -300,13 +309,16 @@ class WorkerListViewModel extends BaseViewModel {
           departmentId: employee.departmentId,
           status: employee.status,
           verification: _verificationFor(employee),
-          hasCheckedInToday: todayAttendance[employee.id]?.hasCheckedIn ?? false,
-          hasCheckedOutToday: todayAttendance[employee.id]?.hasCheckedOut ?? false,
+          hasCheckedInToday:
+              todayAttendance[employee.id]?.hasCheckedIn ?? false,
+          hasCheckedOutToday:
+              todayAttendance[employee.id]?.hasCheckedOut ?? false,
           isAttendanceSynced: todayAttendance[employee.id]?.isSynced ?? false,
           hasRealAttendanceIdToday:
               todayAttendance[employee.id]?.realAttendanceId != null,
           hasAssignedTasks: assignedTaskWorkerIds.contains(employee.id),
           remoteEmployeeId: employee.remoteEmployeeId,
+          taskStatus: taskStatusByWorker[employee.id],
         ),
     ];
 

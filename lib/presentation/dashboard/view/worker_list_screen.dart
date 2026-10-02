@@ -110,6 +110,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     final error = await _viewModel.syncWorker(
       worker.employeeId,
       worker.workerId,
+      status: worker.status,
     );
     if (!mounted) return;
     messenger.showSnackBar(
@@ -543,13 +544,13 @@ class _WorkerCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
+              _StatusText(prefix: 'Worker Task Status: '),
               _StatusText(
-                prefix: 'Work Status: ',
-                // label: worker.workStatus.label,
-                // color: _workStatusColor,
-                // showDot: worker.workStatus != WorkStatus.completed,
+                label: _taskStatusLabel,
+                color: _taskStatusColor,
+                showDot: true,
+                alignEnd: true,
               ),
-              const SizedBox(width: 10),
             ],
           ),
           const SizedBox(height: 12),
@@ -572,7 +573,8 @@ class _WorkerCard extends StatelessWidget {
   /// alone would keep showing "Synced" all day even with a fresh,
   /// unsynced checkout sitting in `worker_attendance`.
   bool get _effectiveSynced =>
-      worker.isSynced && (!worker.hasCheckedInToday || worker.isAttendanceSynced);
+      worker.isSynced &&
+      (!worker.hasCheckedInToday || worker.isAttendanceSynced);
 
   /// A Verified worker's sync button only unlocks once today's full
   /// check-in/checkout cycle is done, so a partial day's data is never
@@ -584,6 +586,17 @@ class _WorkerCard extends StatelessWidget {
     if (worker.verification != VerificationStatus.verified) return true;
     return worker.hasCheckedInToday && worker.hasCheckedOutToday;
   }
+
+  /// Once today's full check-in/checkout cycle is both done AND pushed to
+  /// the backend, there's nothing left for this button to do today — hide
+  /// it rather than leaving a tappable "Check out" sitting there with
+  /// nowhere further to go. Checked only once both sides of the day are
+  /// in: a worker who's merely checked in (not yet out) still needs this
+  /// button to show "Check in"/"Check out" regardless of [_effectiveSynced]
+  /// (which, before any check-in today, reflects stale profile-sync state
+  /// rather than anything about today).
+  bool get _hideMarkAttendance =>
+      worker.hasCheckedInToday && worker.hasCheckedOutToday && _effectiveSynced;
 
   Widget _buildSyncRow() {
     final effectiveSynced = _effectiveSynced;
@@ -613,7 +626,7 @@ class _WorkerCard extends StatelessWidget {
                     ? 'Never'
                     : effectiveSynced
                     ? DateTimeFormatter.clock(worker.syncedAt!)
-                    : 'Since ${DateTimeFormatter.clock(worker.syncedAt!)}',
+                    : DateTimeFormatter.clock(worker.syncedAt!),
                 style: const TextStyle(fontSize: 13, color: Colors.black),
               ),
             ],
@@ -657,14 +670,15 @@ class _WorkerCard extends StatelessWidget {
     );
   }
 
-  /// The three actions every card offers. The middle button stays up for
-  /// the whole day — "Check in" before the worker's first scan, then
-  /// "Check out" from then on, including after they've already checked
-  /// out once. A worker can be checked out multiple times in a day (see
+  /// The three actions every card offers. The middle button shows "Check
+  /// in" before the worker's first scan, then "Check out" from then on,
+  /// including after they've already checked out once — a worker can be
+  /// checked out multiple times in a day (see
   /// DatabaseHelper.recordWorkerScan, which always re-stamps
-  /// `check_out_time` on every scan after the first), so this button
-  /// never disables or disappears just because today's attendance is
-  /// already "complete".
+  /// `check_out_time` on every scan after the first), so it never disables
+  /// just because today's attendance is already "complete". It does
+  /// disappear once that complete day has actually been pushed to the
+  /// backend, though — see [_hideMarkAttendance].
   Widget _buildActionButtons() {
     return Row(
       children: [
@@ -725,6 +739,8 @@ class _WorkerCard extends StatelessWidget {
   }
 
   Widget _buildMarkAttendanceButton() {
+    if (_hideMarkAttendance) return const SizedBox.shrink();
+
     final label = worker.hasCheckedInToday ? 'Check out' : 'Check in';
     final icon = worker.hasCheckedInToday ? Icons.logout : Icons.login;
     return OutlinedButton(
@@ -859,9 +875,9 @@ class _WorkerCard extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         _StatusText(
-          label: worker.verification.label,
-          color: _verificationColor,
-          showDot: worker.verification != VerificationStatus.verified,
+          label: _workerStatusLabel,
+          color: _workerStatusColor,
+          showDot: worker.status != 'approved',
           alignEnd: true,
         ),
       ],
@@ -874,10 +890,38 @@ class _WorkerCard extends StatelessWidget {
     WorkStatus.notStarted => AppColors.muted,
   };
 
-  Color get _verificationColor => switch (worker.verification) {
-    VerificationStatus.verified => AppColors.success,
-    VerificationStatus.pending => AppColors.warning,
-    VerificationStatus.notVerified => AppColors.muted,
+  /// The worker's own backend approval state (`workers.status`, via
+  /// [Worker.status]) — distinct from [Worker.verification], which is a
+  /// pure sync-state indicator. Sourced directly from what the last server
+  /// fetch stored, so an approved worker reads "Approved" immediately after
+  /// that fetch rather than falling back to "Pending".
+  String get _workerStatusLabel => switch (worker.status) {
+    'approved' => 'Approved',
+    'rejected' => 'Rejected',
+    _ => 'Pending',
+  };
+
+  Color get _workerStatusColor => switch (worker.status) {
+    'approved' => AppColors.success,
+    'rejected' => AppColors.danger,
+    _ => AppColors.warning,
+  };
+
+  /// The worker's current active task assignment's own approve/reject/
+  /// pending verdict (`worker_tasks.task_status`, via [Worker.taskStatus])
+  /// — 'Pending' both for an explicit 'pending' verdict and for no active
+  /// assignment at all, since there's nothing else useful to show either
+  /// way.
+  String get _taskStatusLabel => switch (worker.taskStatus) {
+    'approved' => 'Approved',
+    'rejected' => 'Rejected',
+    _ => 'Pending',
+  };
+
+  Color get _taskStatusColor => switch (worker.taskStatus) {
+    'approved' => AppColors.success,
+    'rejected' => AppColors.danger,
+    _ => AppColors.warning,
   };
 }
 

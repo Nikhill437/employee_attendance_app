@@ -1,6 +1,9 @@
 import '../../core/utils/app_time.dart';
 import '../datasources/attendance_submission_api.dart';
 import '../datasources/database_helper.dart';
+import '../datasources/sync_data_api.dart';
+import '../models/sync_data_result_model.dart';
+import '../models/worker_task_model.dart';
 import 'worker_sync_repository.dart';
 
 /// Pushes one worker's today's attendance and any not-yet-synced task
@@ -10,14 +13,17 @@ import 'worker_sync_repository.dart';
 class AttendanceSubmissionRepository {
   final DatabaseHelper _dbHelper;
   final AttendanceSubmissionApi _api;
+  final SyncDataApi _syncDataApi;
   final WorkerSyncRepository _workerSync;
 
   AttendanceSubmissionRepository({
     DatabaseHelper? dbHelper,
     AttendanceSubmissionApi? api,
+    SyncDataApi? syncDataApi,
     WorkerSyncRepository? workerSync,
   }) : _dbHelper = dbHelper ?? DatabaseHelper(),
        _api = api ?? AttendanceSubmissionApi(),
+       _syncDataApi = syncDataApi ?? SyncDataApi(),
        _workerSync = workerSync ?? WorkerSyncRepository();
 
   /// Throws if there's no attendance recorded today for [workerId], if the
@@ -86,7 +92,10 @@ class AttendanceSubmissionRepository {
     );
     // worker_tasks, unlike completion_ids, is matched by task_id — the
     // response's own shape (see WorkerTaskSyncResult) — not by position,
-    // so this doesn't depend on the backend preserving request order.
+    // so this doesn't depend on the backend preserving request order. This
+    // endpoint only ever handles *today's* attendance, so a same-task_id
+    // collision across several unsynced days (see [_matchWorkerTasks],
+    // used by [submitAllUnsyncedAttendance] instead) isn't a concern here.
     final realWorkerTaskIdByTaskId = {
       for (final entry in result.workerTasks) entry.taskId: entry.workerTaskId,
     };
@@ -99,6 +108,124 @@ class AttendanceSubmissionRepository {
       );
     }
     await _dbHelper.markWorkerSyncedById(workerId);
+  }
+
+  /// An approved worker's "Sync"/"Not synced" tap — pushes every
+  /// `worker_attendance` day not yet synced (not just today's, unlike
+  /// [submitAttendance]) together with any pending task-assignment review
+  /// (`POST attendance/sync-data`, multipart so a reviewed task's photo can
+  /// go along with it). Throws if there's nothing unsynced to push, if the
+  /// worker can't be resolved to a real backend id, or lets the network
+  /// call's failure/an unsuccessful response propagate — exactly like
+  /// [submitAttendance], nothing is marked synced until the response
+  /// actually confirms it.
+  Future<void> submitAllUnsyncedAttendance(
+    String employeeId,
+    int workerId,
+  ) async {
+    var realWorkerId = await _dbHelper.getRemoteWorkerId(workerId);
+    if (realWorkerId == null) {
+      await _workerSync.syncWorker(employeeId);
+      realWorkerId = await _dbHelper.getRemoteWorkerId(workerId);
+      if (realWorkerId == null) {
+        throw StateError('Could not resolve this worker\'s backend id');
+      }
+    }
+
+    final unsyncedAttendance = await _dbHelper.getUnsyncedAttendance(workerId);
+    if (unsyncedAttendance.isEmpty) {
+      throw StateError('No unsynced attendance recorded for this worker');
+    }
+
+    final pendingAssignments = await _dbHelper.getUnsyncedWorkerTasks(workerId);
+
+    final result = await _syncDataApi.submit(
+      attendance: unsyncedAttendance
+          .map(
+            (attendance) => {
+              'worker_id': realWorkerId,
+              'attendance_date': attendance.attendanceDate,
+              'check_in_time': _formatTimestamp(attendance.checkInTime),
+              'check_out_time': _formatTimestamp(attendance.checkOutTime),
+              'check_in_face_verified': attendance.checkInFaceVerified ? 1 : 0,
+              'check_out_face_verified': attendance.checkOutFaceVerified
+                  ? 1
+                  : 0,
+            },
+          )
+          .toList(),
+      workerTasks: pendingAssignments,
+      realWorkerId: realWorkerId,
+    );
+
+    // Matched by (attendance_date) rather than position — the response's
+    // own shape, same reasoning as submitAttendance's task_id matching for
+    // worker_tasks below. Every row this call just submitted belongs to
+    // this one worker, so the date alone is enough to disambiguate.
+    final localByDate = {
+      for (final attendance in unsyncedAttendance)
+        attendance.attendanceDate: attendance,
+    };
+    for (final synced in result.attendances) {
+      final local = localByDate[synced.attendanceDate];
+      if (local == null) continue;
+      await _dbHelper.markWorkerAttendanceSynced(
+        local.attendanceId,
+        realAttendanceId: synced.attendanceId,
+      );
+    }
+
+    for (final match in _matchWorkerTasks(
+      pendingAssignments,
+      result.workerTasks,
+    )) {
+      await _dbHelper.markWorkerTaskSynced(
+        match.key.workerTaskId,
+        match.value.workerTaskId,
+        realAttendanceId: match.value.attendanceId,
+      );
+    }
+
+    await _dbHelper.markWorkerSyncedById(workerId);
+  }
+
+  /// Matches [SyncDataApi.submit]'s response `worker_tasks` entries back
+  /// to the local rows that were actually submitted in [pending] — not by
+  /// task_id alone, since each day now gets its own `worker_tasks` row, so
+  /// a backlog sync can legitimately include several entries sharing the
+  /// same task_id (one per unsynced day). Primarily matched by (task_id,
+  /// task_date); falls back to matching by task_id alone — against
+  /// whichever local row (oldest first, since [pending] already comes back
+  /// in that order) hasn't been matched yet — for a response that doesn't
+  /// echo task_date back, since that's not confirmed either way against a
+  /// real backend yet.
+  List<MapEntry<WorkerTask, SyncedWorkerTask>> _matchWorkerTasks(
+    List<WorkerTask> pending,
+    List<SyncedWorkerTask> synced,
+  ) {
+    final remaining = List<WorkerTask>.from(pending);
+    final matches = <MapEntry<WorkerTask, SyncedWorkerTask>>[];
+
+    for (final entry in synced) {
+      WorkerTask? match;
+      if (entry.taskDate != null) {
+        for (final candidate in remaining) {
+          if (candidate.taskId == entry.taskId &&
+              candidate.taskDate == entry.taskDate) {
+            match = candidate;
+            break;
+          }
+        }
+      }
+      match ??= remaining.cast<WorkerTask?>().firstWhere(
+        (candidate) => candidate!.taskId == entry.taskId,
+        orElse: () => null,
+      );
+      if (match == null) continue;
+      matches.add(MapEntry(match, entry));
+      remaining.remove(match);
+    }
+    return matches;
   }
 
   /// Same UTC conversion `WorkerAttendanceSyncApi` already uses — see its

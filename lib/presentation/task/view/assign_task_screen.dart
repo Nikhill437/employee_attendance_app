@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/models/department_model.dart';
+import '../../../data/models/worker_task_model.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/assign_task_viewmodel.dart';
 
@@ -116,22 +118,39 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     if (photo != null) await _viewModel.captureReviewPhoto(photo);
   }
 
+  /// On success, pops back — same as [_save]/[_saveSupervisorReview]. Just
+  /// a plain pop regardless of mode: the worker's own checkout submission
+  /// (reached from mark_attendance_screen.dart) used to jump straight to
+  /// the login screen from here via `pushNamedAndRemoveUntil`, but that
+  /// mutated the shared root navigator's history out from under
+  /// MarkAttendanceScreen's own still-pending `await Navigator.push(...)`
+  /// for this very route — ripping the route out while an ancestor awaits
+  /// it is what caused the "_history.isNotEmpty" crash once that ancestor
+  /// resumed and tried to navigate again on an already-collapsed stack.
+  /// MarkAttendanceScreen now does that redirect itself, after this pop
+  /// has already resolved cleanly (see its _openFollowUpScreen).
   Future<void> _saveWorkerEntry() async {
     final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     final error = await _viewModel.saveWorkerEntry();
     if (!mounted) return;
-    messenger.showSnackBar(
-      SnackBar(content: Text(error ?? 'Saved')),
-    );
+    if (error != null) {
+      messenger.showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    navigator.pop(true);
   }
 
   Future<void> _saveSupervisorReview() async {
     final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     final error = await _viewModel.saveSupervisorReview();
     if (!mounted) return;
-    messenger.showSnackBar(
-      SnackBar(content: Text(error ?? 'Review saved')),
-    );
+    if (error != null) {
+      messenger.showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    navigator.pop(true);
   }
 
   @override
@@ -308,7 +327,11 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
             ),
           )
         else ...[
-          _CurrentAssignmentBanner(taskName: assignedTask.taskName),
+          _CurrentAssignmentBanner(
+            taskName: assignedTask.taskName,
+            target: assignedTask.taskTarget,
+            rate: assignedTask.taskRate,
+          ),
           const SizedBox(height: 18),
           const SectionLabel('WORKER SUBMISSION'),
           const SizedBox(height: 10),
@@ -340,7 +363,11 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
               _buildDepartmentField(),
               const SizedBox(height: 18),
               if (assignedTask != null) ...[
-                _CurrentAssignmentBanner(taskName: assignedTask.taskName),
+                _CurrentAssignmentBanner(
+                  taskName: assignedTask.taskName,
+                  target: assignedTask.taskTarget,
+                  rate: assignedTask.taskRate,
+                ),
                 const SizedBox(height: 14),
               ],
               _buildTaskPicker(),
@@ -350,29 +377,29 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
                 const SizedBox(height: 20),
                 const Divider(height: 1, color: AppColors.cardBorder),
                 const SizedBox(height: 18),
-                const SectionLabel('WORKER SUBMISSION'),
-                const SizedBox(height: 10),
-                _WorkerSubmissionCard(
-                  numericValue: _viewModel.entryNumericValue,
-                  photo: _viewModel.entryPhoto,
-                  isSaving: _viewModel.isSubmittingEntry,
-                  onNumericChanged: _viewModel.setEntryNumericValue,
-                  onCapturePhoto: _captureEntryPhoto,
-                  onSave: _saveWorkerEntry,
-                ),
-                const SizedBox(height: 18),
+                if (_hasWorkerSubmission(assignedTask)) ...[
+                  const SectionLabel('WORKER SUBMISSION'),
+                  const SizedBox(height: 10),
+                  _WorkerSubmissionReadOnlyCard(task: assignedTask),
+                  const SizedBox(height: 18),
+                ],
                 const SectionLabel('SUPERVISOR REVIEW'),
                 const SizedBox(height: 10),
-                _SupervisorReviewCard(
-                  numericValue: _viewModel.reviewNumericValue,
-                  photo: _viewModel.reviewPhoto,
-                  note: _viewModel.reviewNote,
-                  isSaving: _viewModel.isSavingReview,
-                  onNumericChanged: _viewModel.setReviewNumericValue,
-                  onCapturePhoto: _captureReviewPhoto,
-                  onNoteChanged: _viewModel.setReviewNote,
-                  onSave: _saveSupervisorReview,
-                ),
+                if (_viewModel.isReviewLocked)
+                  _SupervisorReviewReadOnlyCard(task: assignedTask)
+                else
+                  _SupervisorReviewCard(
+                    numericValue: _viewModel.reviewNumericValue,
+                    photo: _viewModel.reviewPhoto,
+                    note: _viewModel.reviewNote,
+                    taskStatus: _viewModel.reviewTaskStatus,
+                    isSaving: _viewModel.isSavingReview,
+                    onNumericChanged: _viewModel.setReviewNumericValue,
+                    onCapturePhoto: _captureReviewPhoto,
+                    onNoteChanged: _viewModel.setReviewNote,
+                    onTaskStatusChanged: _viewModel.setReviewTaskStatus,
+                    onSave: _saveSupervisorReview,
+                  ),
               ],
             ],
           ),
@@ -380,6 +407,11 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       ],
     );
   }
+
+  /// Whether [task] carries the worker's own checkout-time entry yet — the
+  /// signal for whether the supervisor's Worker Submission card has
+  /// anything to show at all (see _buildSupervisorBody).
+  bool _hasWorkerSubmission(WorkerTask task) => task.employeeTarget != null;
 
   Widget _buildDepartmentField() {
     return Column(
@@ -435,26 +467,81 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       return _buildDisabledTaskField('No tasks available for this department');
     }
 
-    return AppDropdownField<Task>(
-      // DropdownButtonFormField is uncontrolled (it only reads `value` once,
-      // as its `initialValue`) — without a key tied to the selection count,
-      // it keeps its last pick internally even after that task drops out of
-      // `items` below, and then crashes ("exactly one item with value...")
-      // on the next rebuild since nothing in `items` matches it anymore.
-      // Changing the key on every add/remove forces a fresh widget instance
-      // instead, which really does reset to null.
-      key: ValueKey(_viewModel.availableTasks.length),
-      label: 'Task',
-      hint: 'Select a task to assign',
-      icon: Icons.task_alt_outlined,
-      // Always null: picking a task shows it in the pending card below and
-      // the dropdown resets, rather than retaining the pick as its value.
-      value: null,
-      items: _viewModel.availableTasks,
-      labelBuilder: (task) => task.name,
-      onChanged: (task) {
-        if (task != null) _viewModel.addTask(task);
-      },
+    // Styled to match the Department field and the disabled states above
+    // (same grey fill/border/icon chrome) rather than AppDropdownField's
+    // plain white look, so the three Task-field states on this screen read
+    // as one consistent field instead of visually swapping components.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Task',
+          style: TextStyle(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w600,
+            color: AppColors.slate,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF2F3F2),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.cardBorder),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.task_alt_outlined,
+                size: 20,
+                color: AppColors.muted,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SizedBox(height: 50,
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<Task>(
+                      // DropdownButton is uncontrolled (it only reads `value`
+                      // once) — without a key tied to the selection count, it
+                      // keeps its last pick internally even after that task
+                      // drops out of `items` below, and then crashes ("exactly
+                      // one item with value...") on the next rebuild since
+                      // nothing in `items` matches it anymore. Changing the
+                      // key on every add/remove forces a fresh widget instance
+                      // instead, which really does reset to null.
+                      key: ValueKey(_viewModel.availableTasks.length),
+                      isExpanded: true,
+                      isDense: true,
+                      icon: const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.muted,
+                      ),
+                      hint: const Text(
+                        'Select a task to assign',
+                        style: TextStyle(fontSize: 15, color: AppColors.muted),
+                      ),
+                      dropdownColor: Colors.white,
+                      style: const TextStyle(fontSize: 15, color: AppColors.ink),
+                      // Always null: picking a task shows it in the pending
+                      // card below and the dropdown resets, rather than
+                      // retaining the pick as its value.
+                      value: null,
+                      items: [
+                        for (final task in _viewModel.availableTasks)
+                          DropdownMenuItem(value: task, child: Text(task.name)),
+                      ],
+                      onChanged: (task) {
+                        if (task != null) _viewModel.addTask(task);
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -467,10 +554,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
 
     return Column(
       children: [
-        _PendingTaskCard(
-          task: pending,
-          onRemove: _viewModel.removePendingTask,
-        ),
+        _PendingTaskCard(task: pending, onRemove: _viewModel.removePendingTask),
         const SizedBox(height: 15),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
@@ -565,34 +649,85 @@ class _HeaderAvatar extends StatelessWidget {
 class _CurrentAssignmentBanner extends StatelessWidget {
   final String taskName;
 
-  const _CurrentAssignmentBanner({required this.taskName});
+  /// The task catalog's own daily quantity goal / hourly-piece rate (see
+  /// Task.target/Task.rate) — shown alongside the task name when the
+  /// backend has set either; a null one is left out rather than shown
+  /// blank or as zero.
+  final int? target;
+  final int? rate;
+
+  const _CurrentAssignmentBanner({
+    required this.taskName,
+    this.target,
+    this.rate,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final targetRate = _formatTargetRate(target, rate);
+    // A plain Container, not Expanded(Container(...)) — this widget is
+    // always placed directly as a ListView item (see _buildCheckoutBody/
+    // _buildSupervisorBody), never as a Row/Column child, and Expanded
+    // only works as a direct child of a Flex. Wrapping it here threw
+    // "Incorrect use of ParentDataWidget" the moment this banner rendered.
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
       decoration: BoxDecoration(
         color: const Color(0xFFE7F6EC),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.task_alt, size: 18, color: AppColors.success),
-          const SizedBox(width: 10),
-          Expanded(
+          Row(
+            children: [
+              const Icon(Icons.task_alt, size: 18, color: AppColors.success),
+              const SizedBox(width: 5),
+              Text(
+                'Currently assigned:',
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.ink,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Padding(
+            padding: const EdgeInsets.only(left: 20.0),
             child: Text(
-              'Currently assigned: $taskName',
+              taskName,
               style: const TextStyle(
-                fontSize: 13.5,
+                fontSize: 16,
                 fontWeight: FontWeight.w600,
                 color: AppColors.ink,
               ),
             ),
           ),
+          if (targetRate != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 20.0, top: 2),
+              child: Text(
+                targetRate,
+                style: const TextStyle(fontSize: 13, color: AppColors.slate),
+              ),
+            ),
         ],
       ),
     );
   }
+}
+
+/// "Target: 50 · Rate: 12" (either half omitted when its own value is
+/// null), or null outright when both are — never shown blank or as zero.
+/// Shared by [_CurrentAssignmentBanner] and [_PendingTaskCard].
+String? _formatTargetRate(int? target, int? rate) {
+  final parts = [
+    if (target != null) 'Target: $target',
+    if (rate != null) 'Rate: $rate',
+  ];
+  return parts.isEmpty ? null : parts.join(' · ');
 }
 
 /// A task picked in the dropdown above but not assigned yet.
@@ -604,6 +739,7 @@ class _PendingTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final targetRate = _formatTargetRate(task.target, task.rate);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
@@ -613,17 +749,37 @@ class _PendingTaskCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.task_alt_outlined, size: 20, color: AppColors.warning),
+          const Icon(
+            Icons.task_alt_outlined,
+            size: 20,
+            color: AppColors.warning,
+          ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              task.name,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppColors.ink,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  task.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.ink,
+                  ),
+                ),
+                if (targetRate != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      targetRate,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.slate,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           IconButton(
@@ -635,6 +791,150 @@ class _PendingTaskCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The supervisor's read-only view of the worker's own checkout-time
+/// submission — shown once the worker has actually entered something (see
+/// _AssignTaskScreenState._hasWorkerSubmission), never editable here and
+/// with no Save button of its own.
+class _WorkerSubmissionReadOnlyCard extends StatelessWidget {
+  final WorkerTask task;
+
+  const _WorkerSubmissionReadOnlyCard({required this.task});
+
+  @override
+  Widget build(BuildContext context) {
+    final photoPath = task.workPhoto;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReadOnlyValueField(
+            label: 'Target',
+            icon: Icons.numbers,
+            value: task.employeeTarget?.toString() ?? 'Not provided',
+          ),
+          const SizedBox(height: 14),
+          AppImageCaptureField(
+            label: 'Task Photo',
+            hint: 'No photo submitted',
+            image: photoPath == null ? null : File(photoPath),
+            enabled: false,
+            onCapture: () {},
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The supervisor's own read-only view of *today's* review, once it's
+/// already synced to the backend (see AssignTaskViewModel.isReviewLocked)
+/// — there's nothing left to edit for today, so no Save button either.
+/// Becomes editable again on its own the moment a new day's row exists.
+class _SupervisorReviewReadOnlyCard extends StatelessWidget {
+  final WorkerTask task;
+
+  const _SupervisorReviewReadOnlyCard({required this.task});
+
+  static String _taskStatusLabel(String status) => switch (status) {
+    'approved' => 'Approve',
+    'rejected' => 'Reject',
+    _ => 'Pending',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final photoPath = task.workPhoto;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _ReadOnlyValueField(
+            label: 'Target',
+            icon: Icons.numbers,
+            value: task.completedTarget?.toString() ?? 'Not provided',
+          ),
+          const SizedBox(height: 14),
+          _ReadOnlyValueField(
+            label: 'Work Task Status',
+            icon: Icons.task_alt,
+            value: _taskStatusLabel(task.taskStatus),
+          ),
+          const SizedBox(height: 14),
+          AppImageCaptureField(
+            label: 'Task Photo',
+            hint: 'No photo submitted',
+            image: photoPath == null ? null : File(photoPath),
+            enabled: false,
+            onCapture: () {},
+          ),
+          const SizedBox(height: 14),
+          _ReadOnlyValueField(
+            label: 'Note',
+            icon: Icons.notes_outlined,
+            value: (task.note == null || task.note!.trim().isEmpty)
+                ? 'No note added'
+                : task.note!,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A labelled, non-interactive value display matching [AppFormField]'s
+/// look — used where a field needs the same visual weight as an editable
+/// one but must never accept input (e.g. the supervisor's read-only view
+/// of the worker's own submission).
+class _ReadOnlyValueField extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+
+  const _ReadOnlyValueField({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w600,
+            color: AppColors.slate,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.cardBorder),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 20, color: AppColors.muted),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  value,
+                  style: const TextStyle(fontSize: 15, color: AppColors.ink),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -691,11 +991,13 @@ class _WorkerSubmissionCardState extends State<_WorkerSubmissionCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppFormField(
-            label: 'Quantity',
+            label: 'Target',
             hint: 'Enter a numeric value',
             icon: Icons.numbers,
             controller: _numericController,
             keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            isRequired: true,
           ),
           const SizedBox(height: 14),
           AppImageCaptureField(
@@ -707,7 +1009,9 @@ class _WorkerSubmissionCardState extends State<_WorkerSubmissionCard> {
           const SizedBox(height: 14),
           AppSecondaryButton(
             label: widget.isSaving ? 'Saving...' : 'Save',
-            onPressed: widget.isSaving ? null : widget.onSave,
+            onPressed: (widget.isSaving || widget.numericValue == null)
+                ? null
+                : widget.onSave,
           ),
         ],
       ),
@@ -722,20 +1026,27 @@ class _SupervisorReviewCard extends StatefulWidget {
   final int? numericValue;
   final File? photo;
   final String note;
+
+  /// The assignment's own approve/reject/pending verdict
+  /// (`worker_tasks.task_status`) — always one of [_taskStatusOptions].
+  final String taskStatus;
   final bool isSaving;
   final ValueChanged<int?> onNumericChanged;
   final VoidCallback onCapturePhoto;
   final ValueChanged<String> onNoteChanged;
+  final ValueChanged<String> onTaskStatusChanged;
   final VoidCallback onSave;
 
   const _SupervisorReviewCard({
     required this.numericValue,
     required this.photo,
     required this.note,
+    required this.taskStatus,
     required this.isSaving,
     required this.onNumericChanged,
     required this.onCapturePhoto,
     required this.onNoteChanged,
+    required this.onTaskStatusChanged,
     required this.onSave,
   });
 
@@ -744,6 +1055,21 @@ class _SupervisorReviewCard extends StatefulWidget {
 }
 
 class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
+  // The three verdicts a supervisor can record against an assignment —
+  // stored in `worker_tasks.task_status` under their raw (backend-ENUM-
+  // matching) names; [_taskStatusLabel] is what the picker actually shows.
+  static const List<String> _taskStatusOptions = [
+    'approved',
+    'rejected',
+    'pending',
+  ];
+
+  static String _taskStatusLabel(String status) => switch (status) {
+    'approved' => 'Approve',
+    'rejected' => 'Reject',
+    _ => 'Pending',
+  };
+
   late final TextEditingController _numericController;
   late final TextEditingController _noteController;
 
@@ -779,11 +1105,21 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppFormField(
-            label: 'Quantity',
+            label: 'Target',
             hint: 'Enter a numeric value',
             icon: Icons.numbers,
             controller: _numericController,
             keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            isRequired: true,
+          ),
+          const SizedBox(height: 14),
+          AppOptionSelector<String>(
+            label: 'Work Task Status',
+            options: _taskStatusOptions,
+            selected: widget.taskStatus,
+            onSelected: widget.onTaskStatusChanged,
+            labelBuilder: _taskStatusLabel,
           ),
           const SizedBox(height: 14),
           AppImageCaptureField(
@@ -804,7 +1140,9 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
           const SizedBox(height: 14),
           AppSecondaryButton(
             label: widget.isSaving ? 'Saving...' : 'Save',
-            onPressed: widget.isSaving ? null : widget.onSave,
+            onPressed: (widget.isSaving || widget.numericValue == null)
+                ? null
+                : widget.onSave,
           ),
         ],
       ),

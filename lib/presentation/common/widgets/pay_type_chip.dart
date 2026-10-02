@@ -14,6 +14,7 @@ class PayTypeChip extends StatelessWidget {
       PayType.daily => (const Color(0xFFE3F0FD), const Color(0xFF1565C0)),
       PayType.monthly => (const Color(0xFFF2E7FA), const Color(0xFF6A1B9A)),
       PayType.taskBased => (const Color(0xFFFDECD9), const Color(0xFFC2570B)),
+      PayType.shiftBased => (const Color(0xFFE3F6E8), const Color(0xFF2E9E4F)),
     };
 
     return Container(

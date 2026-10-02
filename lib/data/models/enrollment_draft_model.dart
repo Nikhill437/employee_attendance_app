@@ -17,6 +17,16 @@ class EnrollmentDraft {
   /// The task picked on the Task dropdown, or null if none was picked.
   final int? taskId;
 
+  /// The optional note entered alongside the picked task, or null if left
+  /// blank — stored in `worker_tasks.note` once the task is assigned (see
+  /// CreateEmployeeViewModel.save). Meaningless when [taskId] is null.
+  final String? taskNote;
+
+  /// Which shift the worker works, when [enrollmentType] is
+  /// [PayType.shiftBased] — null for every other enrollment type. Stored in
+  /// `workers.shift_based_type`.
+  final String? shiftBasedType;
+
   const EnrollmentDraft({
     required this.fullName,
     required this.dateOfBirth,
@@ -29,5 +39,7 @@ class EnrollmentDraft {
     required this.departmentName,
     required this.nationalIdImagePath,
     this.taskId,
+    this.taskNote,
+    this.shiftBasedType,
   });
 }

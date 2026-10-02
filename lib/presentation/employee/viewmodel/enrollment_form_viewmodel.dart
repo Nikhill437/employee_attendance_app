@@ -44,6 +44,8 @@ class EnrollmentFormViewModel extends BaseViewModel {
   Task? _task;
   List<Task> _tasks = const [];
   bool _isLoadingTasks = false;
+  String _taskNote = '';
+  ShiftType? _shiftType;
 
   Gender get gender => _gender;
   PayType get enrollmentType => _enrollmentType;
@@ -56,6 +58,8 @@ class EnrollmentFormViewModel extends BaseViewModel {
   Task? get task => _task;
   List<Task> get tasks => _tasks;
   bool get isLoadingTasks => _isLoadingTasks;
+  String get taskNote => _taskNote;
+  ShiftType? get shiftType => _shiftType;
 
   /// Loads the departments cached from the last successful login sync —
   /// call once from the screen's initState. Pre-selects
@@ -98,16 +102,42 @@ class EnrollmentFormViewModel extends BaseViewModel {
 
   void selectTask(Task? task) {
     _task = task;
+    // A note only makes sense alongside the task it was written for.
+    _taskNote = '';
     safeNotify();
   }
 
-  /// Edit mode only: sets the display-only Gender/Enrollment Type pills to
-  /// the worker's actual values — they're disabled in edit mode, but
-  /// should still show the truth rather than these fields' plain defaults.
-  void presetForEditing({required Gender gender, required PayType enrollmentType}) {
+  void setTaskNote(String note) {
+    _taskNote = note;
+    safeNotify();
+  }
+
+  void selectShiftType(ShiftType? type) {
+    _shiftType = type;
+    safeNotify();
+  }
+
+  /// Edit mode only: sets the display-only Gender/Enrollment Type (and, for
+  /// a Shift Based worker, their shift) fields to the worker's actual
+  /// values — they're disabled in edit mode, but should still show the
+  /// truth rather than these fields' plain defaults.
+  void presetForEditing({
+    required Gender gender,
+    required PayType enrollmentType,
+    String? shiftBasedType,
+  }) {
     _gender = gender;
     _enrollmentType = enrollmentType;
+    _shiftType = _enumOrNull(ShiftType.values, shiftBasedType);
     safeNotify();
+  }
+
+  static T? _enumOrNull<T extends Enum>(List<T> values, String? storedName) {
+    if (storedName == null) return null;
+    for (final value in values) {
+      if (value.name == storedName) return value;
+    }
+    return null;
   }
 
   void selectGender(Gender gender) {
@@ -117,6 +147,9 @@ class EnrollmentFormViewModel extends BaseViewModel {
 
   void selectEnrollmentType(PayType type) {
     _enrollmentType = type;
+    // Only meaningful for Shift Based — picking any other type drops
+    // whatever shift was selected so a stale one can't be saved under it.
+    if (type != PayType.shiftBased) _shiftType = null;
     safeNotify();
   }
 
@@ -163,9 +196,7 @@ class EnrollmentFormViewModel extends BaseViewModel {
       throw StateError('buildDraft called before a department was selected');
     }
     if (nationalIdImage == null) {
-      throw StateError(
-        'buildDraft called before the National ID was captured',
-      );
+      throw StateError('buildDraft called before the National ID was captured');
     }
     return EnrollmentDraft(
       fullName: fullName,
@@ -178,6 +209,12 @@ class EnrollmentFormViewModel extends BaseViewModel {
       departmentId: department.id,
       departmentName: department.name,
       taskId: _task?.id,
+      taskNote: _task == null || _taskNote.trim().isEmpty
+          ? null
+          : _taskNote.trim(),
+      shiftBasedType: _enrollmentType == PayType.shiftBased
+          ? _shiftType?.name
+          : null,
       nationalIdImagePath: nationalIdImage.path,
     );
   }

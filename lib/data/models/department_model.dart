@@ -42,11 +42,21 @@ class Task {
   final String name;
   final bool isDefault;
 
+  /// A per-task daily quantity goal and hourly/piece rate — both
+  /// backend-defined and read-only here, null when the backend hasn't set
+  /// one. Shown alongside the task wherever it's picked or already
+  /// assigned (enrollment_form_screen.dart, assign_task_screen.dart) —
+  /// hidden rather than shown as blank/zero when either is null.
+  final int? target;
+  final int? rate;
+
   const Task({
     required this.id,
     required this.departmentId,
     required this.name,
     this.isDefault = false,
+    this.target,
+    this.rate,
   });
 
   factory Task.fromRemote(Map<String, dynamic> json) {
@@ -55,6 +65,8 @@ class Task {
       departmentId: _asInt(json['department_id']),
       name: (json['task_name'] ?? json['name']).toString(),
       isDefault: json['isdefault']?.toString() == 'yes',
+      target: _asIntOrNull(json['target']),
+      rate: _asIntOrNull(json['rate']),
     );
   }
 
@@ -65,6 +77,8 @@ class Task {
       departmentId: map['department_id'] as int,
       name: map['task_name'] as String,
       isDefault: map['isdefault']?.toString() == 'yes',
+      target: map['target'] as int?,
+      rate: map['rate'] as int?,
     );
   }
 }
@@ -72,5 +86,14 @@ class Task {
 int _asInt(dynamic value) {
   if (value is int) return value;
   if (value is String) return int.parse(value);
-  throw FormatException('Expected an int id, got $value (${value.runtimeType})');
+  throw FormatException(
+    'Expected an int id, got $value (${value.runtimeType})',
+  );
+}
+
+int? _asIntOrNull(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is String) return int.tryParse(value);
+  return null;
 }
