@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../data/models/worker_task_model.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/worker_task_list_viewmodel.dart';
 
@@ -90,6 +91,12 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
                     color: AppColors.deepGreen,
                   ),
                   title: Text(task.taskName),
+                  subtitle: _targetRateText(task) == null
+                      ? null
+                      : Text(
+                          _targetRateText(task)!,
+                          style: const TextStyle(color: AppColors.slate),
+                        ),
                 ),
                 if (task != _viewModel.tasks.last)
                   const Divider(height: 1, color: AppColors.cardBorder),
@@ -100,4 +107,14 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
       ],
     );
   }
+}
+
+/// "Target: X · Rate: Y" for [task], or null when neither is set. Matches
+/// the format the Assign Task screen uses.
+String? _targetRateText(WorkerTask task) {
+  final parts = [
+    if (task.taskTarget != null) 'Target: ${task.taskTarget}',
+    if (task.taskRate != null) 'Rate: ${task.taskRate}',
+  ];
+  return parts.isEmpty ? null : parts.join(' · ');
 }

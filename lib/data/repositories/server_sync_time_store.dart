@@ -19,3 +19,15 @@ class ServerSyncTimeStore {
     await prefs.setString(_key, serverTime);
   }
 }
+
+/// The Task download's stored server time. Sent as `date` to the task
+/// count and task data calls, and saved only after tasks are stored.
+const ServerSyncTimeStore lastTaskServerTime = ServerSyncTimeStore(
+  'last_task_server_time',
+);
+
+/// The Department download's stored server time, kept separate from
+/// [lastTaskServerTime] and handled the same way.
+const ServerSyncTimeStore lastDepartmentServerTime = ServerSyncTimeStore(
+  'last_department_server_time',
+);

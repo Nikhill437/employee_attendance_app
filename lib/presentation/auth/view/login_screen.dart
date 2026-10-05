@@ -51,6 +51,12 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
+    // Shown through the app-level messenger, so it stays visible on the
+    // dashboard once this screen's route is replaced below.
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Login Successfully')));
+
     // Clears the whole stack (splash included), not just this screen —
     // pushReplacementNamed alone would leave splash sitting right below
     // Dashboard, so back/swipe-back could still escape to it. Dashboard

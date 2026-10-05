@@ -1,6 +1,8 @@
 import '../../core/network/api_client.dart';
+import '../../core/network/api_exception.dart';
 import '../../core/network/api_routes.dart';
 import '../../core/utils/app_time.dart';
+import '../models/remote_worker_attendance_model.dart';
 import '../models/worker_attendance_model.dart';
 
 /// Remote datasource for pushing one day's check-in/check-out record to the
@@ -10,6 +12,22 @@ class WorkerAttendanceSyncApi {
 
   WorkerAttendanceSyncApi({ApiClient? client})
     : _client = client ?? ApiClient();
+
+  /// GET attendance/departmentwise_attendance — the check-ins and check-outs
+  /// the server holds for the supervisor's department. Response:
+  /// `{"success", "message", "department_id", "total", "data": [...]}`, with
+  /// each row shaped like [RemoteWorkerAttendance.fromJson]. Errors propagate.
+  Future<List<RemoteWorkerAttendance>> fetchDepartmentAttendance() async {
+    final data = await _client.get(ApiRoutes.departmentwiseAttendance);
+    if (data is! Map || data['data'] is! List) {
+      throw ApiException('Unexpected attendance response from the server.');
+    }
+    return (data['data'] as List)
+        .map(
+          (row) => RemoteWorkerAttendance.fromJson(row as Map<String, dynamic>),
+        )
+        .toList();
+  }
 
   /// POST attendance/check-in. Confirmed request body: `{"worker_id": ...,
   /// "attendance_date": ..., "check_in_time": ..., "check_out_time": ...,

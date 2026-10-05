@@ -11,6 +11,7 @@ import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/worker_edit_queue.dart';
 import '../../../data/repositories/lookup_repository.dart';
+import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_repository.dart';
 
 /// Holds the selections on the enrollment form that aren't text fields.
@@ -26,6 +27,7 @@ class EnrollmentFormViewModel extends BaseViewModel {
   final EmployeeRepository _employeeRepository;
   final TaskRepository _taskRepository;
   final WorkerEditQueue _editQueue;
+  final SupervisorSessionRepository _session;
   final int? initialDepartmentId;
 
   EnrollmentFormViewModel({
@@ -33,11 +35,13 @@ class EnrollmentFormViewModel extends BaseViewModel {
     EmployeeRepository? employeeRepository,
     TaskRepository? taskRepository,
     WorkerEditQueue? editQueue,
+    SupervisorSessionRepository? session,
     this.initialDepartmentId,
   }) : _lookupRepository = lookupRepository ?? LookupRepository(),
        _employeeRepository = employeeRepository ?? EmployeeRepository(),
        _taskRepository = taskRepository ?? TaskRepository(),
-       _editQueue = editQueue ?? WorkerEditQueue();
+       _editQueue = editQueue ?? WorkerEditQueue(),
+       _session = session ?? SupervisorSessionRepository();
 
   Gender _gender = Gender.male;
   PayType _enrollmentType = PayType.daily;
@@ -47,12 +51,17 @@ class EnrollmentFormViewModel extends BaseViewModel {
   bool _isLoadingDepartments = true;
   bool _isSavingDepartment = false;
   File? _nationalIdImage;
+  String? _remoteNationalIdImage;
   Task? _task;
   List<Task> _tasks = const [];
   bool _isLoadingTasks = false;
   String _taskNote = '';
   ShiftType? _shiftType;
+  String? _workerStatus;
 
+  /// The worker's status as last read from the `workers` table (see
+  /// [loadWorkerStatus]); null until that read finishes.
+  String? get workerStatus => _workerStatus;
   Gender get gender => _gender;
   PayType get enrollmentType => _enrollmentType;
   DateTime? get dateOfBirth => _dateOfBirth;
@@ -61,6 +70,11 @@ class EnrollmentFormViewModel extends BaseViewModel {
   bool get isLoadingDepartments => _isLoadingDepartments;
   bool get isSavingDepartment => _isSavingDepartment;
   File? get nationalIdImage => _nationalIdImage;
+
+  /// The stored attachment when it's a server file (a worker fetched from
+  /// the backend has a relative URL here), not a local copy. Null once a
+  /// local image is captured or when there's no attachment.
+  String? get remoteNationalIdImage => _remoteNationalIdImage;
   Task? get task => _task;
   List<Task> get tasks => _tasks;
   bool get isLoadingTasks => _isLoadingTasks;
@@ -75,7 +89,10 @@ class EnrollmentFormViewModel extends BaseViewModel {
     safeNotify();
     _departments = await _lookupRepository.getDepartments();
 
-    final initialId = initialDepartmentId;
+    // A new enrollment starts on the supervisor's own department. Edit mode
+    // passes the worker's department, which takes precedence.
+    final initialId =
+        initialDepartmentId ?? await _session.getSupervisorDepartmentId();
     if (initialId != null) {
       for (final department in _departments) {
         if (department.id == initialId) {
@@ -123,6 +140,13 @@ class EnrollmentFormViewModel extends BaseViewModel {
     safeNotify();
   }
 
+  /// Reads the worker's current status from the local `workers` table. Edit
+  /// mode locks its fields once that status is approved or rejected.
+  Future<void> loadWorkerStatus(int offlineWorkerId) async {
+    _workerStatus = await _employeeRepository.getWorkerStatus(offlineWorkerId);
+    safeNotify();
+  }
+
   /// Edit mode only: sets the display-only Gender/Enrollment Type (and, for
   /// a Shift Based worker, their shift) fields to the worker's actual
   /// values — they're disabled in edit mode, but should still show the
@@ -131,10 +155,21 @@ class EnrollmentFormViewModel extends BaseViewModel {
     required Gender gender,
     required PayType enrollmentType,
     String? shiftBasedType,
+    DateTime? dateOfBirth,
+    String? nationalIdImagePath,
   }) {
     _gender = gender;
     _enrollmentType = enrollmentType;
     _shiftType = _enumOrNull(ShiftType.values, shiftBasedType);
+    _dateOfBirth = dateOfBirth;
+    // A stored path is either a local copy (exists on this device) or a
+    // server file URL, which can't be opened as a File.
+    final localFile = nationalIdImagePath == null
+        ? null
+        : File(nationalIdImagePath);
+    final isLocal = localFile != null && localFile.existsSync();
+    _nationalIdImage = isLocal ? localFile : null;
+    _remoteNationalIdImage = isLocal ? null : nationalIdImagePath;
     safeNotify();
   }
 
@@ -187,6 +222,7 @@ class EnrollmentFormViewModel extends BaseViewModel {
     final destPath =
         '${idDir.path}/${DateTime.now().millisecondsSinceEpoch}.$extension';
     _nationalIdImage = await pickedFile.copy(destPath);
+    _remoteNationalIdImage = null;
     safeNotify();
   }
 
@@ -225,12 +261,22 @@ class EnrollmentFormViewModel extends BaseViewModel {
     );
   }
 
-  /// Edit mode only: saves the fields the supervisor changed on [original] —
-  /// department, enrollment type, and shift (for Shift Based only). Unchanged
-  /// fields are neither written locally nor queued for the next sync; the
-  /// changed ones are queued (see WorkerEditQueue) so the sync sends only
-  /// them. Returns an error message on failure, or null on success.
-  Future<String?> saveEdits(int workerId, Employee original) async {
+  /// Edit mode's save. Writes each field the supervisor changed to the
+  /// worker's existing `workers` row (never a new one) and queues the
+  /// matching backend fields. updateWorkerEnrollment then marks the worker
+  /// NOT SYNCED. The status is not touched, so a Pending worker stays Pending.
+  /// The ID photo is saved locally only: the backend update sends text
+  /// fields, not files.
+  ///
+  /// Returns an error message, or null on success or when nothing changed.
+  Future<String?> saveEdits(
+    int workerId,
+    Employee original, {
+    required String fullName,
+    required String nationalId,
+    required String phoneNumber,
+    required String address,
+  }) async {
     final department = _department;
     if (department == null) return 'Select the department';
     if (_enrollmentType == PayType.shiftBased && _shiftType == null) {
@@ -238,17 +284,65 @@ class EnrollmentFormViewModel extends BaseViewModel {
     }
     if (_isSavingDepartment) return null;
 
+    final trimmedName = fullName.trim();
+    final trimmedNationalId = nationalId.trim();
+    final trimmedPhone = phoneNumber.trim();
+    final trimmedAddress = address.trim();
+
+    final nationalIdChanged = trimmedNationalId != original.employeeId;
+    if (nationalIdChanged) {
+      final clash = await _employeeRepository.findByEmployeeId(
+        trimmedNationalId,
+      );
+      if (clash != null && clash.id != workerId) {
+        return 'National ID $trimmedNationalId is already enrolled';
+      }
+    }
+
     final isShiftBased = _enrollmentType == PayType.shiftBased;
     final newShift = isShiftBased ? _shiftType?.name : null;
+    final newDob = _dateOfBirth?.toIso8601String();
+    final newGender = _gender.name;
+    // Keeps the stored attachment unless a new one was captured, so saving
+    // doesn't clear a server-side attachment.
+    final newImage = _nationalIdImage?.path ?? original.nationalIdImage;
+
     final departmentChanged = department.id != original.departmentId;
     final typeChanged = _enrollmentType != original.payType;
     final shiftChanged = newShift != original.shiftBasedType;
+    final nameChanged = trimmedName != original.name;
+    final phoneChanged = trimmedPhone != original.number;
+    final addressChanged = trimmedAddress != (original.address ?? '');
+    final dobChanged = !_sameDay(
+      _dateOfBirth,
+      DateTime.tryParse(original.dateOfBirth ?? ''),
+    );
+    final genderChanged = _gender != original.gender;
+    final imageChanged = newImage != original.nationalIdImage;
 
-    if (!departmentChanged && !typeChanged && !shiftChanged) return null;
+    final anyChange =
+        departmentChanged ||
+        typeChanged ||
+        shiftChanged ||
+        nameChanged ||
+        nationalIdChanged ||
+        phoneChanged ||
+        addressChanged ||
+        dobChanged ||
+        genderChanged ||
+        imageChanged;
+    if (!anyChange) return null;
     // Only modified_date moves on an edit — created_date is never rewritten.
     final editedAt = AppTime.nowInUserZone().toIso8601String();
 
     final localColumns = <String, Object?>{
+      if (nameChanged) 'full_name': trimmedName,
+      if (nationalIdChanged) 'national_id': trimmedNationalId,
+      if (phoneChanged) 'phone_number': trimmedPhone,
+      if (addressChanged) 'address': trimmedAddress,
+      if (dobChanged) 'birth_date': newDob,
+      if (genderChanged) 'gender': newGender,
+      if (imageChanged) 'national_id_image': newImage,
       if (departmentChanged) 'department_id': department.id,
       if (typeChanged) 'enrollment_type': _enrollmentType.name,
       // Local copy always mirrors the type: null whenever it isn't Shift Based.
@@ -258,6 +352,12 @@ class EnrollmentFormViewModel extends BaseViewModel {
     // Shift is only sent when Shift Based is selected or its shift changed —
     // switching away from Shift Based clears it locally but sends nothing.
     final remoteChanges = <String, String>{
+      if (nameChanged) 'full_name': trimmedName,
+      if (nationalIdChanged) 'national_id': trimmedNationalId,
+      if (phoneChanged) 'phone_number': trimmedPhone,
+      if (addressChanged) 'address': trimmedAddress,
+      if (dobChanged && newDob != null) 'birth_date': newDob,
+      if (genderChanged) 'gender': newGender,
       if (departmentChanged) 'department_id': department.id.toString(),
       if (typeChanged) 'enrollment_type': _enrollmentType.name,
       if (isShiftBased && (typeChanged || shiftChanged))
@@ -281,5 +381,10 @@ class EnrollmentFormViewModel extends BaseViewModel {
       _isSavingDepartment = false;
       safeNotify();
     }
+  }
+
+  static bool _sameDay(DateTime? a, DateTime? b) {
+    if (a == null || b == null) return a == b;
+    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 }

@@ -22,7 +22,11 @@ class RemoteWorkerRecord {
   final String? nationalIdImage;
   final String? phoneNumber;
   final int departmentId;
-  final String departmentName;
+
+  /// Null when the response row didn't include `department_name`. Never
+  /// defaulted here, so an absent name can't overwrite a stored one (see
+  /// DatabaseHelper.upsertRemoteWorkers).
+  final String? departmentName;
   final String? address;
   final String? faceDetection;
   final String status;
@@ -83,7 +87,7 @@ class RemoteWorkerRecord {
       nationalIdImage: json['national_id_image'] as String?,
       phoneNumber: json['phone_number'] as String?,
       departmentId: json['department_id'] as int,
-      departmentName: (json['department_name'] as String?) ?? 'Unassigned',
+      departmentName: json['department_name'] as String?,
       address: json['address'] as String?,
       // Not real embeddings from this endpoint (can be a placeholder string
       // like "embedding_data_009") — stored as-is; Employee.fromMap decodes

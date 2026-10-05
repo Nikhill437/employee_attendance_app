@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/network/api_config.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/date_time_formatter.dart';
@@ -12,6 +13,7 @@ import '../../../data/models/department_model.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/models/enrollment_draft_model.dart';
 import '../../../data/models/worker_model.dart';
+import '../../../data/repositories/api_token_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../face_scan/view/face_capture_screen.dart';
 import '../viewmodel/create_employee_viewmodel.dart';
@@ -20,9 +22,9 @@ import 'enrollment_complete_screen.dart';
 
 /// Step 1 of enrollment: the worker's personal details, before the face
 /// capture on step 2. Also doubles as the (much simpler) edit screen for an
-/// existing worker — see [editingWorker] — where only Department and
-/// Enrollment Type can
-/// actually change; every other field is shown for context but disabled.
+/// existing worker — see [editingWorker]. While the worker is Pending every
+/// field can be edited; once Approved or Rejected only Department and
+/// Enrollment Type can change, and the rest is shown for context but disabled.
 class EnrollmentFormScreen extends StatefulWidget {
   /// Overridable so tests can inject a fake (avoids the real
   /// DatabaseHelper/ApiClient, which need plugins the test environment
@@ -30,8 +32,9 @@ class EnrollmentFormScreen extends StatefulWidget {
   final EnrollmentFormViewModel? formViewModel;
 
   /// Non-null puts the screen in edit mode for this worker: every field is
-  /// pre-filled and read-only except Department, and saving updates only
-  /// `workers.department_id` rather than creating a new enrollment.
+  /// pre-filled. A Pending worker can edit any field. An Approved or
+  /// Rejected worker can change only Department and Enrollment Type. Saving
+  /// updates the existing worker record rather than creating a new one.
   final Employee? editingWorker;
 
   const EnrollmentFormScreen({
@@ -62,6 +65,31 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
 
   bool get _isEditing => widget.editingWorker != null;
 
+  /// The auth token, sent with a server-hosted National ID attachment.
+  String? _authToken;
+
+  /// Full URL of the stored attachment when it's on the server, else null.
+  String? get _nationalIdImageUrl {
+    final stored = _formViewModel.remoteNationalIdImage;
+    if (stored == null) return null;
+    return stored.startsWith('http') ? stored : '${ApiConfig.baseUrl}$stored';
+  }
+
+  Future<void> _loadAuthToken() async {
+    final token = await ApiTokenRepository().getToken();
+    if (mounted && token != null) setState(() => _authToken = token);
+  }
+
+  /// Edit mode locks the personal details once the worker is approved or
+  /// rejected. While Pending, every field stays editable. The status comes
+  /// from the local `workers` table (see EnrollmentFormViewModel.loadWorkerStatus),
+  /// falling back to the status the screen was opened with until that loads.
+  bool get _detailsLocked {
+    if (!_isEditing) return false;
+    final status = _formViewModel.workerStatus ?? widget.editingWorker?.status;
+    return status == 'approved' || status == 'rejected';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -88,7 +116,12 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
         gender: editing.gender,
         enrollmentType: editing.payType,
         shiftBasedType: editing.shiftBasedType,
+        dateOfBirth: dob,
+        nationalIdImagePath: editing.nationalIdImage,
       );
+      final workerId = editing.id;
+      if (workerId != null) _formViewModel.loadWorkerStatus(workerId);
+      if (_formViewModel.remoteNationalIdImage != null) _loadAuthToken();
     }
 
     _formViewModel.loadDepartments();
@@ -242,14 +275,23 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
   String _systemIdFor(int? rowId) =>
       'EMP-${(rowId ?? 0).toString().padLeft(3, '0')}';
 
-  /// Edit mode's save: updates the worker's department and enrollment type
-  /// (see EnrollmentFormViewModel.saveEdits) and returns to the caller.
+  /// Edit mode's save: validates the form, then saves every changed field
+  /// to the existing worker record (see EnrollmentFormViewModel.saveEdits)
+  /// and returns to the caller.
   Future<void> _saveEdits() async {
     final workerId = widget.editingWorker?.id;
     final original = widget.editingWorker;
     if (workerId == null || original == null) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    final error = await _formViewModel.saveEdits(workerId, original);
+    final error = await _formViewModel.saveEdits(
+      workerId,
+      original,
+      fullName: _nameController.text,
+      nationalId: _nationalIdController.text,
+      phoneNumber: _phoneController.text,
+      address: _addressController.text,
+    );
     if (!mounted) return;
     if (error != null) {
       _showSnackBar(error);
@@ -265,7 +307,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       body: Column(
         children: [
           AppScreenHeader(
-            title: _isEditing ? 'Edit Worker' : 'New Enrollment',
+            title: _isEditing ? 'Edit Employee' : 'New Enrollment',
             subtitle: _isEditing
                 ? widget.editingWorker!.name
                 : 'Supervisor Panel',
@@ -330,7 +372,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               icon: Icons.person_outline,
               controller: _nameController,
               maxLength: _fullNameMaxLength,
-              enabled: !_isEditing,
+              enabled: !_detailsLocked,
               inputFormatters: [
                 // Blocks digits and symbols as they're typed rather than
                 // rejecting them only after the field is submitted.
@@ -344,8 +386,8 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               hint: 'Select Date of Birth',
               icon: Icons.calendar_today_outlined,
               controller: _dobController,
-              enabled: !_isEditing,
-              onTap: _isEditing ? null : _pickDateOfBirth,
+              enabled: !_detailsLocked,
+              onTap: _detailsLocked ? null : _pickDateOfBirth,
             ),
             const SizedBox(height: 18),
             AppOptionSelector<Gender>(
@@ -354,7 +396,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               selected: _formViewModel.gender,
               onSelected: _formViewModel.selectGender,
               labelBuilder: (gender) => gender.label,
-              enabled: !_isEditing,
+              enabled: !_detailsLocked,
             ),
             const SizedBox(height: 18),
             AppFormField(
@@ -363,7 +405,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               hint: 'Enter National ID Card Number',
               icon: Icons.badge_outlined,
               controller: _nationalIdController,
-              enabled: !_isEditing,
+              enabled: !_detailsLocked,
               inputFormatters: AppInputFormatters.alphanumericUppercase,
               validator: (v) => _requireText(v, 'Enter the National ID'),
             ),
@@ -373,8 +415,12 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               isRequired: true,
               hint: 'Tap to capture National ID',
               image: _formViewModel.nationalIdImage,
+              imageUrl: _nationalIdImageUrl,
+              imageHeaders: _authToken == null
+                  ? null
+                  : {'Authorization': 'Bearer $_authToken'},
               onCapture: _captureNationalIdImage,
-              enabled: !_isEditing,
+              enabled: !_detailsLocked,
             ),
             const SizedBox(height: 18),
             AppFormField(
@@ -384,7 +430,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               icon: Icons.phone_outlined,
               controller: _phoneController,
               keyboardType: TextInputType.phone,
-              enabled: !_isEditing,
+              enabled: !_detailsLocked,
               inputFormatters: [
                 LengthLimitingTextInputFormatter(10),
                 FilteringTextInputFormatter.digitsOnly,
@@ -394,12 +440,12 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             const SizedBox(height: 18),
             AppFormField(
               label: 'Address',
-              isRequired: false,
+              isRequired: true,
               hint: 'Enter permanent residential address...',
               controller: _addressController,
               minLines: 3,
               maxLines: 4,
-              enabled: !_isEditing,
+              enabled: !_detailsLocked,
               validator: (v) => _requireText(v, 'Enter the address'),
             ),
             const SizedBox(height: 18),
@@ -420,6 +466,9 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             const SizedBox(height: 18),
             AppDropdownField<Task>(
               label: 'Task',
+              // Required for a new enrollment. Edit mode keeps the task
+              // optional, so workers enrolled without one can still be edited.
+              isRequired: !_isEditing,
               hint: _formViewModel.isLoadingTasks
                   ? 'Loading tasks...'
                   : 'Select task',
@@ -428,6 +477,8 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               items: _formViewModel.tasks,
               labelBuilder: (task) => task.name,
               onChanged: _onTaskSelected,
+              validator: (task) =>
+                  !_isEditing && task == null ? 'Select the task' : null,
             ),
             if (_formViewModel.task != null) ...[
               const SizedBox(height: 8),
@@ -457,7 +508,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               ),
             ],
             const SizedBox(height: 18),
-            
+
             AppOptionSelector<PayType>(
               label: 'Enrollment Type',
               options: PayType.values,

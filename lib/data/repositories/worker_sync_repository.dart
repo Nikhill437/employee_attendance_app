@@ -1,4 +1,3 @@
-import '../../core/network/api_exception.dart';
 import '../datasources/worker_sync_api.dart';
 import 'employee_repository.dart';
 import 'worker_edit_queue.dart';
@@ -42,17 +41,12 @@ class WorkerSyncRepository {
       return;
     }
 
-    int? realWorkerId;
-    try {
-      realWorkerId = await _api.syncWorker(worker);
-    } on ApiException catch (e) {
-      // 409 means the backend already has this National ID — a previous
-      // sync succeeded server-side but the local `is_synced` flag never
-      // got set (e.g. a reinstalled/reset local DB). That's "already
-      // synced", not a failure, so fall through to markSynced below
-      // instead of rethrowing.
-      if (e.statusCode != 409) rethrow;
-    }
+    // Any failure here, including a 409 Conflict (the backend already has
+    // this National ID), propagates as an ApiException before anything local
+    // is touched. The worker keeps is_synced = 0 and its local record and
+    // edit queue stay as they were, so the sync can be retried. The caller
+    // shows the server's message.
+    final realWorkerId = await _api.syncWorker(worker);
     if (offlineId != null) await _editQueue.clear(offlineId);
     await _employees.markSynced(employeeId, realWorkerId: realWorkerId);
   }

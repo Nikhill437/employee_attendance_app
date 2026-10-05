@@ -7,6 +7,7 @@ import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/lookup_repository.dart';
 import '../../../data/repositories/updated_counts_repository.dart';
+import '../../../data/repositories/worker_attendance_repository.dart';
 import '../../../data/repositories/worker_import_repository.dart';
 import '../../../data/repositories/worker_task_import_repository.dart';
 
@@ -16,6 +17,7 @@ class DashboardViewModel extends BaseViewModel {
   final AttendanceRepository _attendance;
   final WorkerImportRepository _workerImport;
   final WorkerTaskImportRepository _workerTaskImport;
+  final WorkerAttendanceRepository _workerAttendance;
   final LookupRepository _lookup;
   final UpdatedCountsRepository _updatedCountsRepository;
 
@@ -24,12 +26,14 @@ class DashboardViewModel extends BaseViewModel {
     AttendanceRepository? attendance,
     WorkerImportRepository? workerImport,
     WorkerTaskImportRepository? workerTaskImport,
+    WorkerAttendanceRepository? workerAttendance,
     LookupRepository? lookup,
     UpdatedCountsRepository? updatedCountsRepository,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _workerImport = workerImport ?? WorkerImportRepository(),
        _workerTaskImport = workerTaskImport ?? WorkerTaskImportRepository(),
+       _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
        _lookup = lookup ?? LookupRepository(),
        _updatedCountsRepository =
            updatedCountsRepository ?? UpdatedCountsRepository();
@@ -39,6 +43,7 @@ class DashboardViewModel extends BaseViewModel {
   bool _isFetchingDepartments = false;
   bool _isFetchingTasks = false;
   bool _isFetchingWorkerTasks = false;
+  bool _isFetchingAttendance = false;
   DashboardSummary _summary = const DashboardSummary();
   List<Employee> _roster = const [];
   UpdatedCounts _updatedCounts = UpdatedCounts.zero;
@@ -48,6 +53,7 @@ class DashboardViewModel extends BaseViewModel {
   bool get isFetchingDepartments => _isFetchingDepartments;
   bool get isFetchingTasks => _isFetchingTasks;
   bool get isFetchingWorkerTasks => _isFetchingWorkerTasks;
+  bool get isFetchingAttendance => _isFetchingAttendance;
   DashboardSummary get summary => _summary;
 
   /// How many worker/department/task records the server reports as changed
@@ -135,6 +141,21 @@ class DashboardViewModel extends BaseViewModel {
       return count;
     } finally {
       _isFetchingTasks = false;
+      safeNotify();
+    }
+  }
+
+  /// The dashboard's "Attendance" button: pulls the department's check-ins
+  /// and check-outs (`GET attendance/departmentwise_attendance`) into
+  /// `worker_attendance`. Returns how many rows were stored; lets any failure
+  /// propagate for the caller to surface.
+  Future<int> fetchDepartmentAttendance() async {
+    _isFetchingAttendance = true;
+    safeNotify();
+    try {
+      return await _workerAttendance.importDepartmentAttendance();
+    } finally {
+      _isFetchingAttendance = false;
       safeNotify();
     }
   }

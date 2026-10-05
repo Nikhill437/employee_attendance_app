@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../../core/utils/app_time.dart';
+import '../models/remote_worker_attendance_model.dart';
 import '../models/attendance_log_model.dart';
 import '../models/department_model.dart';
 import '../models/employee_model.dart';
@@ -560,6 +561,21 @@ class DatabaseHelper {
     );
   }
 
+  /// The worker's current `status` in the local `workers` table ('pending',
+  /// 'approved' or 'rejected'), or null if no such worker row exists.
+  Future<String?> getWorkerStatus(int offlineWorkerId) async {
+    final db = await database;
+    final rows = await db.query(
+      'workers',
+      columns: ['status'],
+      where: 'offline_worker_id = ?',
+      whereArgs: [offlineWorkerId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['status'] as String?;
+  }
+
   /// The backend's real id for the worker at local id [offlineWorkerId], or
   /// null if they haven't been synced or imported yet — every sync call
   /// that needs a worker_id in its outgoing payload resolves it through
@@ -760,7 +776,6 @@ class DatabaseHelper {
   /// _createWorkerTables).
   Future<List<WorkerTask>> getWorkerTasks(int workerId) async {
     final db = await database;
-    await _ensureTodaysWorkerTaskRow(db, workerId);
     final maps = await db.rawQuery(
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
@@ -872,6 +887,11 @@ class DatabaseHelper {
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
         AND worker_tasks.worker_task_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM worker_attendance
+          WHERE worker_attendance.worker_id = worker_tasks.worker_id
+            AND worker_attendance.attendance_date = worker_tasks.task_date
+        )
       ORDER BY worker_tasks.task_date ASC, tasks.task_name COLLATE NOCASE
     ''',
       [workerId],
@@ -1164,6 +1184,9 @@ class DatabaseHelper {
         'is_synced': 0,
       };
       final id = await db.insert('worker_attendance', row);
+      // Today's task row exists only once the worker has checked in, so a
+      // day with no check-in never gets one.
+      await _ensureTodaysWorkerTaskRow(db, workerId);
       return WorkerAttendanceRecord.fromMap({
         ...row,
         'offline_worker_id': id,
@@ -1309,15 +1332,30 @@ class DatabaseHelper {
     await db.transaction((txn) async {
       // Departments first, the same way replaceDepartments already does —
       // a worker's department_id FK needs its department row to exist.
-      final departmentNamesById = <int, String>{
-        for (final worker in workers)
-          worker.departmentId: worker.departmentName,
-      };
+      // Only a real, non-empty name from the response is written. A row
+      // without one keeps the stored name instead of overwriting it.
+      final departmentNamesById = <int, String>{};
+      for (final worker in workers) {
+        final name = worker.departmentName;
+        if (name != null && name.trim().isNotEmpty) {
+          departmentNamesById[worker.departmentId] = name;
+        }
+      }
       for (final entry in departmentNamesById.entries) {
         await txn.insert('departments', {
           'department_id': entry.key,
           'department_name': entry.value,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      // A department id with no name in this response and no stored row yet
+      // still needs a row for the FK. A placeholder is inserted only then,
+      // and ignored if the row exists, so it never overwrites a real name.
+      for (final worker in workers) {
+        if (departmentNamesById.containsKey(worker.departmentId)) continue;
+        await txn.insert('departments', {
+          'department_id': worker.departmentId,
+          'department_name': 'Department ${worker.departmentId}',
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
 
       for (final worker in workers) {
@@ -1458,6 +1496,90 @@ class DatabaseHelper {
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
+  }
+
+  /// Stores the server's check-in/check-out rows in `worker_attendance`.
+  /// A row is matched to a local worker by `workers.worker_id`, and rows for
+  /// unknown workers are skipped. An existing row is matched by
+  /// `attendance_id`, then by (worker, date). A local row that hasn't synced
+  /// yet is left alone, so pending local changes are never overwritten.
+  /// Returns how many rows were stored.
+  Future<int> upsertRemoteWorkerAttendance(
+    List<RemoteWorkerAttendance> records,
+  ) async {
+    final db = await database;
+    final now = AppTime.nowInUserZone().toIso8601String();
+    var stored = 0;
+    await db.transaction((txn) async {
+      for (final record in records) {
+        final workerRows = await txn.query(
+          'workers',
+          columns: ['offline_worker_id'],
+          where: 'worker_id = ?',
+          whereArgs: [record.workerId],
+          limit: 1,
+        );
+        if (workerRows.isEmpty) continue;
+        final offlineWorkerId = workerRows.first['offline_worker_id'] as int;
+
+        final byServerId = await txn.query(
+          'worker_attendance',
+          columns: ['offline_worker_id', 'is_synced'],
+          where: 'attendance_id = ?',
+          whereArgs: [record.attendanceId],
+          limit: 1,
+        );
+        final byDay = byServerId.isNotEmpty
+            ? const <Map<String, Object?>>[]
+            : await txn.query(
+                'worker_attendance',
+                columns: ['offline_worker_id', 'is_synced'],
+                where: 'worker_id = ? AND attendance_date = ?',
+                whereArgs: [offlineWorkerId, record.attendanceDate],
+                limit: 1,
+              );
+        final existing = byServerId.isNotEmpty ? byServerId : byDay;
+        if (existing.isNotEmpty && existing.first['is_synced'] == 0) continue;
+
+        final checkIn = record.checkInTime == null
+            ? null
+            : AppTime.toUserTime(
+                DateTime.parse(record.checkInTime!),
+              ).toIso8601String();
+        final checkOut = record.checkOutTime == null
+            ? null
+            : AppTime.toUserTime(
+                DateTime.parse(record.checkOutTime!),
+              ).toIso8601String();
+        final row = {
+          'attendance_id': record.attendanceId,
+          'worker_id': offlineWorkerId,
+          'attendance_date': record.attendanceDate,
+          'check_in_time': checkIn,
+          'check_out_time': checkOut,
+          'check_in_by': record.checkInBy,
+          'check_out_by': record.checkOutBy,
+          'check_in_face_verified': record.checkInFaceVerified,
+          'check_out_face_verified': record.checkOutFaceVerified,
+          'status': checkOut == null ? 'checked_in' : 'checked_out',
+          'updated_at': now,
+          'is_synced': 1,
+        };
+
+        if (existing.isEmpty) {
+          await txn.insert('worker_attendance', {...row, 'created_at': now});
+        } else {
+          await txn.update(
+            'worker_attendance',
+            row,
+            where: 'offline_worker_id = ?',
+            whereArgs: [existing.first['offline_worker_id']],
+          );
+        }
+        stored++;
+      }
+    });
+    return stored;
   }
 
   /// Imports/updates worker-task assignments fetched from the backend

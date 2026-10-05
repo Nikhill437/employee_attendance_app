@@ -15,17 +15,35 @@ class WorkerImportRepository {
     'worker_last_server_sync_time',
   );
 
+  /// `_lastUpdatedCountsServerTime`: the dashboard's badge counts send this
+  /// as `serverTime`. Every successful worker-list fetch replaces it with
+  /// that fetch's start time, and a failed fetch leaves it unchanged. The
+  /// counts API only reads it.
+  static const ServerSyncTimeStore _defaultLastUpdatedCountsServerTime =
+      ServerSyncTimeStore('last_updated_counts_server_time');
+
   final WorkerListApi _api;
   final DatabaseHelper _dbHelper;
   final ServerSyncTimeStore _lastSyncTime;
+  final ServerSyncTimeStore _lastUpdatedCountsServerTime;
 
   WorkerImportRepository({
     WorkerListApi? api,
     DatabaseHelper? dbHelper,
     ServerSyncTimeStore? lastSyncTime,
+    ServerSyncTimeStore? lastUpdatedCountsServerTime,
   }) : _api = api ?? WorkerListApi(),
        _dbHelper = dbHelper ?? DatabaseHelper(),
-       _lastSyncTime = lastSyncTime ?? _defaultLastSyncTime;
+       _lastSyncTime = lastSyncTime ?? _defaultLastSyncTime,
+       _lastUpdatedCountsServerTime =
+           lastUpdatedCountsServerTime ?? _defaultLastUpdatedCountsServerTime;
+
+  /// Runs only after a worker fetch and upsert have both succeeded, so a
+  /// failed fetch never moves either checkpoint.
+  Future<void> _recordSuccessfulFetch(String syncStartedAt) async {
+    await _lastSyncTime.save(syncStartedAt);
+    await _lastUpdatedCountsServerTime.save(syncStartedAt);
+  }
 
   /// Fetches every worker from the backend and upserts them locally,
   /// stamping every row's `server_time` with the UTC instant of this
@@ -35,7 +53,7 @@ class WorkerImportRepository {
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
     final workers = await _api.fetchAll();
     await _dbHelper.upsertRemoteWorkers(workers, serverTime: syncStartedAt);
-    await _lastSyncTime.save(syncStartedAt);
+    await _recordSuccessfulFetch(syncStartedAt);
     return workers.length;
   }
 
@@ -61,7 +79,7 @@ class WorkerImportRepository {
         syncStartedAt;
     final workers = await _api.fetchServerWorkers(date: serverTime);
     await _dbHelper.upsertRemoteWorkers(workers);
-    await _lastSyncTime.save(syncStartedAt);
+    await _recordSuccessfulFetch(syncStartedAt);
     return workers.length;
   }
 

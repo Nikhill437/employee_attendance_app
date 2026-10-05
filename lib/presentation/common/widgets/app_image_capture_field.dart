@@ -14,6 +14,11 @@ class AppImageCaptureField extends StatelessWidget {
   final String hint;
   final bool isRequired;
   final File? image;
+
+  /// Shown when there's no local [image] — a full URL for an attachment that
+  /// lives on the server. [imageHeaders] goes with it (e.g. the auth token).
+  final String? imageUrl;
+  final Map<String, String>? imageHeaders;
   final VoidCallback onCapture;
 
   /// False blocks capturing/retaking — still shows the existing image (if
@@ -27,8 +32,16 @@ class AppImageCaptureField extends StatelessWidget {
     required this.onCapture,
     this.isRequired = false,
     this.image,
+    this.imageUrl,
+    this.imageHeaders,
     this.enabled = true,
   });
+
+  bool get _hasImage => image != null || imageUrl != null;
+
+  ImageProvider get _provider => image != null
+      ? FileImage(image!)
+      : NetworkImage(imageUrl!, headers: imageHeaders);
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +71,7 @@ class AppImageCaptureField extends StatelessWidget {
         const SizedBox(height: 8),
         SizedBox(
           height: 160,
-          child: image == null ? _buildCaptureTarget() : _buildPreview(context),
+          child: _hasImage ? _buildPreview(context) : _buildCaptureTarget(),
         ),
       ],
     );
@@ -104,7 +117,12 @@ class AppImageCaptureField extends StatelessWidget {
             onTap: () => _openFullPreview(context),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Image.file(image!, fit: BoxFit.cover),
+              child: Image(
+                image: _provider,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) =>
+                    _buildUnavailable(),
+              ),
             ),
           ),
         ),
@@ -123,10 +141,34 @@ class AppImageCaptureField extends StatelessWidget {
         child: Stack(
           alignment: Alignment.topRight,
           children: [
-            InteractiveViewer(child: Image.file(image!)),
+            InteractiveViewer(child: Image(image: _provider)),
             IconButton(
               onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.close, color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Shown when a stored attachment can't be loaded, instead of a blank box.
+  Widget _buildUnavailable() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.broken_image_outlined, size: 28, color: AppColors.muted),
+            SizedBox(height: 8),
+            Text(
+              'Attachment unavailable',
+              style: TextStyle(fontSize: 13, color: AppColors.muted),
             ),
           ],
         ),

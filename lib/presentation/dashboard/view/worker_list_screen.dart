@@ -8,6 +8,7 @@ import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/worker_model.dart';
 import '../../auth/view/mark_attendance_screen.dart';
+import '../../employee/view/enrollment_form_screen.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../history/view/worker_history_screen.dart';
 import '../../history/view/worker_profile_screen.dart';
@@ -186,14 +187,16 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       );
       return;
     }
-    final marked = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) =>
             MarkAttendanceScreen(initialEmployeeId: employeeId.toString()),
       ),
     );
-    if (marked == true && mounted) await _viewModel.load();
+    // Reload however the screen was left, so the card's Check In/Check Out
+    // button reflects today's attendance right away.
+    if (mounted) await _viewModel.load();
   }
 
   /// Opens [worker]'s own attendance/task/sync report — falls back to the
@@ -227,6 +230,21 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     if (changed == true && mounted) await _viewModel.load();
   }
 
+  /// Opens the enrollment form in edit mode for a Pending [worker]. The
+  /// full local record is read first, so the form pre-fills with the saved
+  /// values. Reloads the list when the edit was saved.
+  Future<void> _openEditWorker(Worker worker) async {
+    final employee = await _viewModel.getEmployee(worker.employeeId);
+    if (!mounted || employee == null) return;
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EnrollmentFormScreen(editingWorker: employee),
+      ),
+    );
+    if (saved == true && mounted) await _viewModel.load();
+  }
+
   /// Fetches the full worker roster from the backend — existing workers
   /// matched by National ID are updated, new ones inserted (see
   /// DatabaseHelper.upsertRemoteWorkers).
@@ -256,6 +274,11 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       subtitle: 'Today, ${DateTimeFormatter.dayLabel(AppTime.nowInUserZone())}',
       titleOverride: _isSearching ? _buildSearchField() : null,
       actions: [
+        CircleHeaderAction(
+          icon: Icons.add,
+          onPressed: _enrollWorker,
+          tooltip: 'Enroll employee',
+        ),
         CircleHeaderAction(
           icon: _isSearching ? Icons.close : Icons.search,
           onPressed: _toggleSearch,
@@ -294,7 +317,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       style: const TextStyle(color: Colors.white),
       decoration: const InputDecoration(
         isDense: true,
-        hintText: 'Search name or ID',
+        hintText: 'Search name, National ID or employee ID',
         hintStyle: TextStyle(color: Colors.white54),
         enabledBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: Colors.white54),
@@ -317,16 +340,6 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
             _buildHeader(),
             Expanded(child: _buildBody()),
           ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _enrollWorker,
-        backgroundColor: AppColors.deepGreen,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.person_add_alt_1),
-        label: const Text(
-          'Enroll Worker',
-          style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
       bottomNavigationBar: AppBottomNavBar(
@@ -367,7 +380,11 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
           for (final worker in _viewModel.workers) ...[
             Dismissible(
               key: ValueKey(worker.employeeId),
-              direction: DismissDirection.endToStart,
+              // Delete is offered only while the worker is Pending. Approved
+              // and Rejected workers can't be swiped away.
+              direction: worker.status == 'pending'
+                  ? DismissDirection.endToStart
+                  : DismissDirection.none,
               confirmDismiss: (_) => _confirmDeleteWorker(worker),
               onDismissed: (_) => _deleteWorker(worker),
               background: _buildDeleteBackground(),
@@ -378,6 +395,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
                 onViewTasks: () => _openTasks(worker),
                 onMarkAttendance: () => _openMarkAttendance(worker),
                 onOpenWorkerReport: () => _openWorkerReport(worker),
+                onEdit: () => _openEditWorker(worker),
               ),
             ),
             const SizedBox(height: 12),
@@ -508,6 +526,7 @@ class _WorkerCard extends StatelessWidget {
   final VoidCallback onViewTasks;
   final VoidCallback onMarkAttendance;
   final VoidCallback onOpenWorkerReport;
+  final VoidCallback onEdit;
 
   const _WorkerCard({
     required this.worker,
@@ -516,6 +535,7 @@ class _WorkerCard extends StatelessWidget {
     required this.onViewTasks,
     required this.onMarkAttendance,
     required this.onOpenWorkerReport,
+    required this.onEdit,
   });
 
   // A bespoke container instead of the shared AppCard — a soft shadow (in
@@ -548,6 +568,16 @@ class _WorkerCard extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(child: _buildIdentity()),
               const SizedBox(width: 8),
+              // Edit is offered only while the worker is Pending and not yet
+              // synced (s_sync 0). Approved and Rejected workers' details are
+              // locked, and a synced Pending worker can't be edited.
+              if (worker.status == 'pending' && !worker.isSynced)
+                IconButton(
+                  tooltip: 'Edit worker',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_outlined, size: 17),
+                  onPressed: onEdit,
+                ),
               _buildAttendance(),
             ],
           ),
@@ -592,22 +622,41 @@ class _WorkerCard extends StatelessWidget {
   /// pushed early. A not-yet-verified worker (new or locally edited) is
   /// unaffected by this and stays tappable as soon as there's anything to
   /// push.
+  ///
+  /// Status decides which rule applies:
+  /// - Not Approved and not Rejected (Pending): always tappable, with no
+  ///   check-in/checkout requirement.
+  /// - Approved and checked in today but not checked out: blocked until
+  ///   checkout is recorded.
+  /// - Approved, not checked in today, with a department or enrollment type
+  ///   change not yet synced: tappable.
+  /// - Everything else (Approved without a check-in today, or Rejected):
+  ///   the rule above applies unchanged.
   bool get _canTapSync {
     if (_effectiveSynced) return false;
+    final isApproved = worker.status == 'approved';
+    final isRejected = worker.status == 'rejected';
+    if (!isApproved && !isRejected) return true;
+    if (isApproved && worker.hasCheckedInToday && !worker.hasCheckedOutToday) {
+      return false;
+    }
+    // An Approved worker who hasn't checked in today can sync a department
+    // or enrollment type change.
+    if (isApproved &&
+        !worker.hasCheckedInToday &&
+        worker.hasPendingDepartmentOrTypeChange) {
+      return true;
+    }
     if (worker.verification != VerificationStatus.verified) return true;
     return worker.hasCheckedInToday && worker.hasCheckedOutToday;
   }
 
-  /// Once today's full check-in/checkout cycle is both done AND pushed to
-  /// the backend, there's nothing left for this button to do today — hide
-  /// it rather than leaving a tappable "Check out" sitting there with
-  /// nowhere further to go. Checked only once both sides of the day are
-  /// in: a worker who's merely checked in (not yet out) still needs this
-  /// button to show "Check in"/"Check out" regardless of [_effectiveSynced]
-  /// (which, before any check-in today, reflects stale profile-sync state
-  /// rather than anything about today).
+  /// Once today's attendance has both a check-in and a check-out, there's
+  /// nothing left for this button to do today, so it's hidden. A worker who
+  /// has only checked in still sees "Check out". Both flags come from
+  /// today's `worker_attendance` record (see WorkerListViewModel.load).
   bool get _hideMarkAttendance =>
-      worker.hasCheckedInToday && worker.hasCheckedOutToday && _effectiveSynced;
+      worker.hasCheckedInToday && worker.hasCheckedOutToday;
 
   Widget _buildSyncRow() {
     final effectiveSynced = _effectiveSynced;
@@ -690,13 +739,19 @@ class _WorkerCard extends StatelessWidget {
   /// just because today's attendance is already "complete". It does
   /// disappear once that complete day has actually been pushed to the
   /// backend, though — see [_hideMarkAttendance].
+  ///
+  /// When the Check In/Check Out button is hidden, it's left out of the row
+  /// entirely (no empty slot or spacing), so View tasks and Employee report
+  /// share the full width.
   Widget _buildActionButtons() {
     return Row(
       children: [
         Expanded(child: _buildViewTasksButton()),
         const SizedBox(width: 8),
-        Expanded(child: _buildMarkAttendanceButton()),
-        const SizedBox(width: 8),
+        if (!_hideMarkAttendance) ...[
+          Expanded(child: _buildMarkAttendanceButton()),
+          const SizedBox(width: 8),
+        ],
         Expanded(child: _buildWorkerReportButton()),
       ],
     );
@@ -750,8 +805,6 @@ class _WorkerCard extends StatelessWidget {
   }
 
   Widget _buildMarkAttendanceButton() {
-    if (_hideMarkAttendance) return const SizedBox.shrink();
-
     final label = worker.hasCheckedInToday ? 'Check out' : 'Check in';
     final icon = worker.hasCheckedInToday ? Icons.logout : Icons.login;
     return OutlinedButton(
@@ -804,7 +857,7 @@ class _WorkerCard extends StatelessWidget {
           Icon(Icons.grid_view_outlined, size: 16),
           SizedBox(height: 4),
           Text(
-            'Employee report',
+            'Employee profile',
             textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
           ),

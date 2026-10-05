@@ -14,6 +14,15 @@ class WorkerAttendanceRepository {
   }) : _dbHelper = dbHelper ?? DatabaseHelper(),
        _syncApi = syncApi ?? WorkerAttendanceSyncApi();
 
+  /// The dashboard's "Attendance" button: pulls the supervisor's department's
+  /// check-ins and check-outs from the server and stores them in
+  /// `worker_attendance` (see DatabaseHelper.upsertRemoteWorkerAttendance).
+  /// Errors propagate. Returns how many rows were stored.
+  Future<int> importDepartmentAttendance() async {
+    final records = await _syncApi.fetchDepartmentAttendance();
+    return _dbHelper.upsertRemoteWorkerAttendance(records);
+  }
+
   /// Records a face-scan event for [workerId] — checks them in on the
   /// day's first scan, checks them out on the next.
   Future<WorkerAttendanceRecord> recordScan(int workerId) =>

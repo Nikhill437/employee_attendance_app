@@ -10,6 +10,7 @@ import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/attendance_submission_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
+import '../../../data/repositories/worker_edit_queue.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_repository.dart';
 import '../../../data/repositories/task_sync_repository.dart';
@@ -29,6 +30,7 @@ class WorkerListViewModel extends BaseViewModel {
   final WorkerAttendanceRepository _workerAttendance;
   final AttendanceSubmissionRepository _attendanceSubmission;
   final TaskRepository _tasks;
+  final WorkerEditQueue _editQueue;
 
   WorkerListViewModel({
     EmployeeRepository? employees,
@@ -40,6 +42,7 @@ class WorkerListViewModel extends BaseViewModel {
     WorkerAttendanceRepository? workerAttendance,
     AttendanceSubmissionRepository? attendanceSubmission,
     TaskRepository? tasks,
+    WorkerEditQueue? editQueue,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _sync = sync ?? WorkerSyncRepository(),
@@ -49,7 +52,8 @@ class WorkerListViewModel extends BaseViewModel {
        _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
        _attendanceSubmission =
            attendanceSubmission ?? AttendanceSubmissionRepository(),
-       _tasks = tasks ?? TaskRepository();
+       _tasks = tasks ?? TaskRepository(),
+       _editQueue = editQueue ?? WorkerEditQueue();
 
   bool _isLoading = true;
   bool _isFetchingFromServer = false;
@@ -105,7 +109,8 @@ class WorkerListViewModel extends BaseViewModel {
       final matchesTerm =
           term.isEmpty ||
           worker.name.toLowerCase().contains(term) ||
-          worker.employeeId.toLowerCase().contains(term);
+          worker.employeeId.toLowerCase().contains(term) ||
+          (worker.remoteEmployeeId?.toString().contains(term) ?? false);
       return matchesFilter && matchesTerm;
     });
 
@@ -164,7 +169,17 @@ class WorkerListViewModel extends BaseViewModel {
 
   /// Deletes [employeeId] and refreshes the roster. Callers are expected to
   /// confirm with the user first — this performs the deletion outright.
+  ///
+  /// Only a Pending worker can be deleted. The status is re-read from the
+  /// local `workers` table here, not taken from the card, so a delete can't
+  /// go through another UI path. Throws [StateError] otherwise.
   Future<void> deleteWorker(String employeeId) async {
+    final worker = await _employees.findByEmployeeId(employeeId);
+    if (worker != null && worker.status != 'pending') {
+      throw StateError(
+        'Only pending workers can be deleted. ${worker.name} is ${worker.status}.',
+      );
+    }
     await _employees.delete(employeeId);
     await load();
   }
@@ -320,6 +335,18 @@ class WorkerListViewModel extends BaseViewModel {
     final taskStatusByWorker = await _tasks.getWorkerTaskStatusByWorker();
     _supervisorDepartmentId = await _session.getSupervisorDepartmentId();
 
+    // Workers whose department or enrollment type was edited and not synced.
+    final pendingDepartmentOrType = <int>{};
+    for (final employee in employees) {
+      final id = employee.id;
+      if (id == null) continue;
+      final pending = await _editQueue.pendingFor(id);
+      if (pending.containsKey('department_id') ||
+          pending.containsKey('enrollment_type')) {
+        pendingDepartmentOrType.add(id);
+      }
+    }
+
     _workers = [
       for (final employee in employees)
         Worker(
@@ -351,6 +378,9 @@ class WorkerListViewModel extends BaseViewModel {
           remoteEmployeeId: employee.remoteEmployeeId,
           remoteWorkerId: employee.remoteWorkerId,
           taskStatus: taskStatusByWorker[employee.id],
+          hasPendingDepartmentOrTypeChange: pendingDepartmentOrType.contains(
+            employee.id,
+          ),
         ),
     ];
 

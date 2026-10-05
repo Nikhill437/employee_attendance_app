@@ -5,8 +5,8 @@
 class ApiConfig {
   const ApiConfig._();
 
-  static const String baseUrl = 'http://192.168.1.106:3001';
-  // static const String baseUrl = 'https://admin.ittrails.com/IV-API';
+  // static const String baseUrl = 'http://10.83.68.1:3001';
+  static const String baseUrl = 'https://admin.ittrails.com/IV-API';
   static const Duration connectTimeout = Duration(seconds: 15);
   static const Duration receiveTimeout = Duration(seconds: 15);
 }

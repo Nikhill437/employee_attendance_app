@@ -1,6 +1,7 @@
 import 'package:employee_attendance_app/presentation/settings/view/settings_screen.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/network/api_exception.dart';
 import '../../../core/routes/app_routes.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
@@ -86,7 +87,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Could not fetch departments: $e')),
+        SnackBar(
+          content: Text(
+            'Could not fetch departments: ${ApiException.messageFor(e)}',
+          ),
+        ),
       );
     }
   }
@@ -103,6 +108,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text('Could not fetch tasks: $e')),
+      );
+    }
+  }
+
+  Future<void> _fetchAttendance() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final count = await _viewModel.fetchDepartmentAttendance();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Stored $count attendance records from server')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not fetch attendance: ${ApiException.messageFor(e)}',
+          ),
+        ),
       );
     }
   }
@@ -153,6 +178,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _FetchWorkerTasksCard(
                   isFetching: _viewModel.isFetchingWorkerTasks,
                   onPressed: _fetchWorkerTasks,
+                ),
+                const SizedBox(height: 14),
+                _FetchAttendanceCard(
+                  isFetching: _viewModel.isFetchingAttendance,
+                  onPressed: _fetchAttendance,
                 ),
                 const SizedBox(height: 14),
                 _RefreshLookupsCard(
@@ -495,6 +525,64 @@ class _ImportWorkersCard extends StatelessWidget {
                 label: Text(isImporting ? 'Fetching...' : 'Download'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Downloads the department's check-ins and check-outs into the local
+/// `worker_attendance` table.
+class _FetchAttendanceCard extends StatelessWidget {
+  final bool isFetching;
+  final VoidCallback onPressed;
+
+  const _FetchAttendanceCard({
+    required this.isFetching,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionLabel('EMPLOYEE ATTENDANCE'),
+                const SizedBox(height: 6),
+                const Text(
+                  'Fetch the latest check-ins and check-outs for your department',
+                  style: TextStyle(fontSize: 13, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          ElevatedButton.icon(
+            onPressed: isFetching ? null : onPressed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.deepGreen,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              shape: const StadiumBorder(),
+            ),
+            icon: isFetching
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.cloud_download_outlined, size: 16),
+            label: Text(isFetching ? 'Fetching...' : 'Download'),
           ),
         ],
       ),

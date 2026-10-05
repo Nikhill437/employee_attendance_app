@@ -1,6 +1,7 @@
 import '../datasources/attendance_lookup_api.dart';
 import '../datasources/database_helper.dart';
 import '../models/department_model.dart';
+import 'server_sync_time_store.dart';
 
 /// Departments/tasks the enrollment form picks from — fetched from the
 /// backend right after supervisor login (see SupervisorLoginViewModel) and
@@ -47,18 +48,27 @@ class LookupRepository {
   /// department is left untouched. Returns 1 if a department came back, 0
   /// if the server had nothing to report.
   Future<int> refreshDepartmentFromServerTime() async {
-    final department = await _api.fetchServertimeDepartment();
-    if (department == null) return 0;
-    await _dbHelper.replaceDepartments([department]);
-    return 1;
+    final syncStartedAt = DateTime.now().toUtc().toIso8601String();
+    final serverTime = await lastDepartmentServerTime.read() ?? syncStartedAt;
+    final department = await _api.fetchServertimeDepartment(date: serverTime);
+    if (department != null) {
+      await _dbHelper.replaceDepartments([department]);
+    }
+    // Saved only after the local write succeeded.
+    await lastDepartmentServerTime.save(syncStartedAt);
+    return department == null ? 0 : 1;
   }
 
   /// The dashboard's "Refresh Tasks" button
   /// (`POST attendance/task_data`) — same upsert-in-place approach as
   /// [refreshDepartmentFromServerTime].
   Future<int> refreshTasksFromServerTime() async {
-    final tasks = await _api.fetchServertimeTask();
+    final syncStartedAt = DateTime.now().toUtc().toIso8601String();
+    final serverTime = await lastTaskServerTime.read() ?? syncStartedAt;
+    final tasks = await _api.fetchServertimeTask(date: serverTime);
     await _dbHelper.replaceTasks(tasks);
+    // Saved only after the local write succeeded.
+    await lastTaskServerTime.save(syncStartedAt);
     return tasks.length;
   }
 

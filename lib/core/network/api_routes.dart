@@ -7,7 +7,7 @@ class ApiRoutes {
 
   static const String login = '/auth/verifyUser';
   static const String listDepartments = '/attendance/searchDept';
-  static const String serverTimeDepartment = 'attendance/department_data';
+  static const String serverTimeDepartment = '/attendance/department_data';
   static const String deptTasks = '/attendance/dept_task';
   static const String serverTimeTasks = '/attendance/task_data';
   static const String syncWorker = '/attendance/sync-worker';
@@ -16,7 +16,11 @@ class ApiRoutes {
   static const String workerTaskList = '/attendance/department_assigned_tasks';
   static const String serverWorkerTaskList =
       '/attendance/server_time_worker_task_list';
-  static const String count = '/attendance/updated-counts';
+  static const String workerCount = '/attendance/updated-counts-worker';
+  static const String taskCount = '/attendance/updated-counts-task';
+  static const String departmentCount = '/attendance/updated-counts-dept';
+  static const String departmentwiseAttendance =
+      '/attendance/departmentwise_attendance';
   static const String assignTask = '/attendance/assigntask';
   static const String checkIn = '/attendance/check-in';
   static const String submitAttendance = '/attendance/submit-attendance';

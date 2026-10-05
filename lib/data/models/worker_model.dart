@@ -139,6 +139,11 @@ class Worker {
   /// be nothing to show.
   final bool hasAssignedTasks;
 
+  /// Whether this worker's department or enrollment type was edited locally
+  /// and hasn't synced yet (see WorkerEditQueue). Drives the sync button for
+  /// an Approved worker who hasn't checked in today.
+  final bool hasPendingDepartmentOrTypeChange;
+
   /// The backend's `employee_id` (`workers.employee_id`) — distinct from
   /// [employeeId] (their National ID). Null until this worker has been
   /// imported/synced from the server.
@@ -176,6 +181,7 @@ class Worker {
     this.isAttendanceSynced = false,
     this.hasRealAttendanceIdToday = false,
     this.hasAssignedTasks = false,
+    this.hasPendingDepartmentOrTypeChange = false,
     this.remoteEmployeeId,
     this.remoteWorkerId,
     this.taskStatus,
