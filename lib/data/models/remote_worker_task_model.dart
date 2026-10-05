@@ -73,7 +73,9 @@ class RemoteWorkerTaskRecord {
 int _asInt(dynamic value) {
   if (value is int) return value;
   if (value is String) return int.parse(value);
-  throw FormatException('Expected an int id, got $value (${value.runtimeType})');
+  throw FormatException(
+    'Expected an int id, got $value (${value.runtimeType})',
+  );
 }
 
 int? _asIntOrNull(dynamic value) {

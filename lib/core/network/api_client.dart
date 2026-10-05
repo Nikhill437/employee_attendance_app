@@ -28,6 +28,22 @@ class ApiClient {
     dio.interceptors.addAll([AuthInterceptor(), LoggingInterceptor()]);
   }
 
+  /// GETs [path], returning the decoded response body. Throws [ApiException]
+  /// on failure, same as [post].
+  Future<dynamic> get(String path) async {
+    try {
+      final response = await dio.get(path);
+      return response.data;
+    } on DioException catch (e) {
+      final error = e.error;
+      throw error is ApiException
+          ? error
+          : ApiException(
+              e.message ?? 'Something went wrong. Please try again.',
+            );
+    }
+  }
+
   /// POSTs [path] with [data] (a JSON-able `Map`, or `FormData` for a
   /// multipart upload — e.g. syncing a worker's National ID photo),
   /// returning the decoded response body. Always throws [ApiException] on
@@ -41,7 +57,9 @@ class ApiClient {
       final error = e.error;
       throw error is ApiException
           ? error
-          : ApiException(e.message ?? 'Something went wrong. Please try again.');
+          : ApiException(
+              e.message ?? 'Something went wrong. Please try again.',
+            );
     }
   }
 }

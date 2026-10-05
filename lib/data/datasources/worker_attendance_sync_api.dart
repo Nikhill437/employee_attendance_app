@@ -8,7 +8,8 @@ import '../models/worker_attendance_model.dart';
 class WorkerAttendanceSyncApi {
   final ApiClient _client;
 
-  WorkerAttendanceSyncApi({ApiClient? client}) : _client = client ?? ApiClient();
+  WorkerAttendanceSyncApi({ApiClient? client})
+    : _client = client ?? ApiClient();
 
   /// POST attendance/check-in. Confirmed request body: `{"worker_id": ...,
   /// "attendance_date": ..., "check_in_time": ..., "check_out_time": ...,

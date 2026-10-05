@@ -6,9 +6,6 @@ import '../viewmodel/supervisor_login_viewmodel.dart';
 
 /// Supervisor login, authenticated against the backend.
 class LoginScreen extends StatefulWidget {
-  /// Overridable so tests can inject a fake (avoids the real
-  /// SupervisorAuthRepository/LookupRepository, which need network access
-  /// the test environment doesn't provide).
   final SupervisorLoginViewModel? viewModel;
 
   const LoginScreen({super.key, this.viewModel});
@@ -22,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   late final SupervisorLoginViewModel _viewModel;
+  bool _obscurePassword = true;
 
   @override
   void initState() {
@@ -46,9 +44,9 @@ class _LoginScreenState extends State<LoginScreen> {
     );
     if (!mounted) return;
     if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_viewModel.errorMessage!)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_viewModel.errorMessage!)));
       _viewModel.consumeError();
       return;
     }
@@ -122,11 +120,19 @@ class _LoginScreenState extends State<LoginScreen> {
               hint: 'Enter your password',
               icon: Icons.password,
               controller: _passwordController,
-              obscureText: true,
+              obscureText: _obscurePassword,
+              suffixIcon: IconButton(
+                tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                icon: Icon(
+                  _obscurePassword
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  color: Colors.grey,
+                ),
+                onPressed: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
+              ),
               validator: _validateRequired,
-              // No onSubmitted → _login(): login only ever runs from the
-              // explicit tap on the Login button below, not from pressing
-              // the keyboard's done/return action.
             ),
             const SizedBox(height: 28),
             AppPrimaryButton(label: 'Login', onPressed: _login),

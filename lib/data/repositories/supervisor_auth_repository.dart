@@ -35,6 +35,9 @@ class SupervisorAuthRepository {
         username: username.trim(),
         password: password,
       );
+      if (!_isSupervisor(response)) {
+        return 'Only supervisors can log in to this app.';
+      }
       final token = _extractToken(response);
       if (token == null || token.isEmpty) {
         return 'Login succeeded but no token was returned.';
@@ -51,6 +54,15 @@ class SupervisorAuthRepository {
     } on ApiException catch (e) {
       return e.message;
     }
+  }
+
+  /// Only a `supervisor` role may sign in. The role comes back under
+  /// `user.role` (see the confirmed response shape in SupervisorAuthApi);
+  /// a missing role is treated as not-a-supervisor rather than let through.
+  bool _isSupervisor(Map<String, dynamic> response) {
+    final user = response['user'];
+    final role = user is Map ? user['role'] : response['role'];
+    return role is String && role.trim().toLowerCase() == 'supervisor';
   }
 
   /// The confirmed field is `AccessTokenss` (typo included, that's what the

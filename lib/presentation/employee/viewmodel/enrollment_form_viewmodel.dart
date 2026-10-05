@@ -3,10 +3,13 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/base/base_view_model.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../data/models/department_model.dart';
+import '../../../data/models/employee_model.dart';
 import '../../../data/models/enrollment_draft_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/employee_repository.dart';
+import '../../../data/repositories/worker_edit_queue.dart';
 import '../../../data/repositories/lookup_repository.dart';
 import '../../../data/repositories/task_repository.dart';
 
@@ -22,16 +25,19 @@ class EnrollmentFormViewModel extends BaseViewModel {
   final LookupRepository _lookupRepository;
   final EmployeeRepository _employeeRepository;
   final TaskRepository _taskRepository;
+  final WorkerEditQueue _editQueue;
   final int? initialDepartmentId;
 
   EnrollmentFormViewModel({
     LookupRepository? lookupRepository,
     EmployeeRepository? employeeRepository,
     TaskRepository? taskRepository,
+    WorkerEditQueue? editQueue,
     this.initialDepartmentId,
   }) : _lookupRepository = lookupRepository ?? LookupRepository(),
        _employeeRepository = employeeRepository ?? EmployeeRepository(),
-       _taskRepository = taskRepository ?? TaskRepository();
+       _taskRepository = taskRepository ?? TaskRepository(),
+       _editQueue = editQueue ?? WorkerEditQueue();
 
   Gender _gender = Gender.male;
   PayType _enrollmentType = PayType.daily;
@@ -219,18 +225,55 @@ class EnrollmentFormViewModel extends BaseViewModel {
     );
   }
 
-  /// Edit mode only: updates just [workerId]'s department — the only field
-  /// editing a worker is allowed to change. Returns an error message on
-  /// failure, or null on success.
-  Future<String?> saveDepartmentOnly(int workerId) async {
+  /// Edit mode only: saves the fields the supervisor changed on [original] —
+  /// department, enrollment type, and shift (for Shift Based only). Unchanged
+  /// fields are neither written locally nor queued for the next sync; the
+  /// changed ones are queued (see WorkerEditQueue) so the sync sends only
+  /// them. Returns an error message on failure, or null on success.
+  Future<String?> saveEdits(int workerId, Employee original) async {
     final department = _department;
     if (department == null) return 'Select the department';
+    if (_enrollmentType == PayType.shiftBased && _shiftType == null) {
+      return 'Select the shift';
+    }
     if (_isSavingDepartment) return null;
+
+    final isShiftBased = _enrollmentType == PayType.shiftBased;
+    final newShift = isShiftBased ? _shiftType?.name : null;
+    final departmentChanged = department.id != original.departmentId;
+    final typeChanged = _enrollmentType != original.payType;
+    final shiftChanged = newShift != original.shiftBasedType;
+
+    if (!departmentChanged && !typeChanged && !shiftChanged) return null;
+    // Only modified_date moves on an edit — created_date is never rewritten.
+    final editedAt = AppTime.nowInUserZone().toIso8601String();
+
+    final localColumns = <String, Object?>{
+      if (departmentChanged) 'department_id': department.id,
+      if (typeChanged) 'enrollment_type': _enrollmentType.name,
+      // Local copy always mirrors the type: null whenever it isn't Shift Based.
+      if (typeChanged || shiftChanged) 'shift_based_type': newShift,
+      'modified_date': editedAt,
+    };
+    // Shift is only sent when Shift Based is selected or its shift changed —
+    // switching away from Shift Based clears it locally but sends nothing.
+    final remoteChanges = <String, String>{
+      if (departmentChanged) 'department_id': department.id.toString(),
+      if (typeChanged) 'enrollment_type': _enrollmentType.name,
+      if (isShiftBased && (typeChanged || shiftChanged))
+        'shift_based_type': newShift!,
+      'modified_date': editedAt,
+    };
 
     _isSavingDepartment = true;
     safeNotify();
     try {
-      await _employeeRepository.updateDepartment(workerId, department.id);
+      await _employeeRepository.updateEnrollment(
+        workerId: workerId,
+        columns: localColumns,
+        departmentChanged: departmentChanged,
+      );
+      await _editQueue.record(workerId, remoteChanges);
       return null;
     } catch (e) {
       return e.toString();

@@ -87,7 +87,30 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
   /// ever reached from there — see WorkerListScreen._openAssignTask, which
   /// reloads the list on a truthy pop so a department change shows). On
   /// failure, stays put with an error so the supervisor can retry.
+  /// Asks before any save runs. "No" closes only the dialog, so nothing is
+  /// written and the entered data stays on screen.
+  Future<bool> _confirmSave() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        content: const Text('Do you want to save the information?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   Future<void> _save() async {
+    if (!await _confirmSave() || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final error = await _viewModel.save();
@@ -130,6 +153,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
   /// MarkAttendanceScreen now does that redirect itself, after this pop
   /// has already resolved cleanly (see its _openFollowUpScreen).
   Future<void> _saveWorkerEntry() async {
+    if (!await _confirmSave() || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final error = await _viewModel.saveWorkerEntry();
@@ -142,6 +166,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
   }
 
   Future<void> _saveSupervisorReview() async {
+    if (!await _confirmSave() || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final error = await _viewModel.saveSupervisorReview();
@@ -499,7 +524,8 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: SizedBox(height: 50,
+                child: SizedBox(
+                  height: 50,
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<Task>(
                       // DropdownButton is uncontrolled (it only reads `value`
@@ -522,7 +548,10 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
                         style: TextStyle(fontSize: 15, color: AppColors.muted),
                       ),
                       dropdownColor: Colors.white,
-                      style: const TextStyle(fontSize: 15, color: AppColors.ink),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        color: AppColors.ink,
+                      ),
                       // Always null: picking a task shows it in the pending
                       // card below and the dropdown resets, rather than
                       // retaining the pick as its value.
@@ -859,7 +888,7 @@ class _SupervisorReviewReadOnlyCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           _ReadOnlyValueField(
-            label: 'Work Task Status',
+            label: 'Employee Task Status',
             icon: Icons.task_alt,
             value: _taskStatusLabel(task.taskStatus),
           ),
@@ -1105,7 +1134,7 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppFormField(
-            label: 'Target',
+            label: 'Completion count/hours',
             hint: 'Enter a numeric value',
             icon: Icons.numbers,
             controller: _numericController,
@@ -1115,7 +1144,7 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
           ),
           const SizedBox(height: 14),
           AppOptionSelector<String>(
-            label: 'Work Task Status',
+            label: 'Employee Task Status',
             options: _taskStatusOptions,
             selected: widget.taskStatus,
             onSelected: widget.onTaskStatusChanged,

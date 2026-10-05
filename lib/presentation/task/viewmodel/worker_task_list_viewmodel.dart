@@ -8,8 +8,10 @@ class WorkerTaskListViewModel extends BaseViewModel {
   final int workerId;
   final TaskRepository _taskRepository;
 
-  WorkerTaskListViewModel({required this.workerId, TaskRepository? taskRepository})
-    : _taskRepository = taskRepository ?? TaskRepository();
+  WorkerTaskListViewModel({
+    required this.workerId,
+    TaskRepository? taskRepository,
+  }) : _taskRepository = taskRepository ?? TaskRepository();
 
   bool _isLoading = true;
   List<WorkerTask> _tasks = const [];

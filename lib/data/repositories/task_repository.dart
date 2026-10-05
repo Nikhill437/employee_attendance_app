@@ -40,6 +40,11 @@ class TaskRepository {
     note: note,
   );
 
+  /// The worker's task records that belong to [date] (yyyy-MM-dd), any
+  /// status — see DatabaseHelper.getWorkerTasksForDate.
+  Future<List<WorkerTask>> getWorkerTasksForDate(int workerId, String date) =>
+      _dbHelper.getWorkerTasksForDate(workerId, date);
+
   /// Every worker_id's current active assignment's task_status — see
   /// DatabaseHelper.getWorkerTaskStatusByWorker.
   Future<Map<int, String>> getWorkerTaskStatusByWorker() =>

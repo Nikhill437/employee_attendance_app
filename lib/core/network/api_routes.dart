@@ -11,14 +11,13 @@ class ApiRoutes {
   static const String deptTasks = '/attendance/dept_task';
   static const String serverTimeTasks = '/attendance/task_data';
   static const String syncWorker = '/attendance/sync-worker';
-  static const String workerList = '/attendance/list';
+  static const String workerList = '/attendance/departmentwise_worker';
   static const String serverTimeWorkers = '/attendance/worker_data';
-  static const String workerTaskList = '/attendance/worker_task_list';
+  static const String workerTaskList = '/attendance/department_assigned_tasks';
   static const String serverWorkerTaskList =
       '/attendance/server_time_worker_task_list';
   static const String count = '/attendance/updated-counts';
   static const String assignTask = '/attendance/assigntask';
   static const String checkIn = '/attendance/check-in';
   static const String submitAttendance = '/attendance/submit-attendance';
-  static const String syncData = '/attendance/sync-data';
 }

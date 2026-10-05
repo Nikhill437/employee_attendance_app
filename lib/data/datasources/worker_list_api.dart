@@ -47,26 +47,26 @@ class WorkerListApi {
   /// WorkerImportRepository.importFromServerTime, which reads it back from
   /// `workers.server_time` (stamped there by [fetchAll]'s own caller)
   /// rather than this method picking "now" itself.
+  ///
+  /// Errors propagate (not swallowed) so the caller can tell a failed fetch
+  /// from an empty one — WorkerImportRepository only advances its stored
+  /// sync time after this succeeds.
   Future<List<RemoteWorkerRecord>> fetchServerWorkers({
     required String date,
   }) async {
     final results = <RemoteWorkerRecord>[];
-    try {
-      final data = await _client.post(
-        ApiRoutes.serverTimeWorkers,
-        data: {'date': date},
-      );
-      if (data is! Map || data['data'] is! List) return results;
-      log(data.toString(), name: 'WorkerListApi.fetchServerWorkers');
-      final rows = data['data'] as List;
-      results.addAll(
-        rows.map(
-          (row) => RemoteWorkerRecord.fromJson(row as Map<String, dynamic>),
-        ),
-      );
-    } catch (e) {
-      log('Error fetching server-time workers: $e', name: 'WorkerListApi.fetchServerWorkers');
-    }
+    final data = await _client.post(
+      ApiRoutes.serverTimeWorkers,
+      data: {'date': date},
+    );
+    if (data is! Map || data['data'] is! List) return results;
+    log(data.toString(), name: 'WorkerListApi.fetchServerWorkers');
+    final rows = data['data'] as List;
+    results.addAll(
+      rows.map(
+        (row) => RemoteWorkerRecord.fromJson(row as Map<String, dynamic>),
+      ),
+    );
     return results;
   }
 }

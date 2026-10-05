@@ -76,9 +76,7 @@ class _AttendanceSummaryScreenState extends State<AttendanceSummaryScreen> {
           ),
         ),
         title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(
-          'ID: $employeeId  •  Total logins: ${logs.length}',
-        ),
+        subtitle: Text('ID: $employeeId  •  Total logins: ${logs.length}'),
         children: logs.map((log) {
           return ListTile(
             dense: true,

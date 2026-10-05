@@ -107,6 +107,19 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   /// "sync everyone" action.
   Future<void> _syncWorker(Worker worker) async {
     final messenger = ScaffoldMessenger.of(context);
+    // Only approved workers push their task review, so only they are held
+    // back while that review is still pending. Pending/rejected workers
+    // sync as before.
+    if (worker.status == 'approved' && worker.taskStatus == 'pending') {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Work task status is pending. Change status of those task and then sync.',
+          ),
+        ),
+      );
+      return;
+    }
     final error = await _viewModel.syncWorker(
       worker.employeeId,
       worker.workerId,
@@ -239,14 +252,14 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
 
   Widget _buildHeader() {
     return AppScreenHeader(
-      title: 'Worker List',
+      title: 'Employee List',
       subtitle: 'Today, ${DateTimeFormatter.dayLabel(AppTime.nowInUserZone())}',
       titleOverride: _isSearching ? _buildSearchField() : null,
       actions: [
         CircleHeaderAction(
           icon: _isSearching ? Icons.close : Icons.search,
           onPressed: _toggleSearch,
-          tooltip: _isSearching ? 'Clear search' : 'Search workers',
+          tooltip: _isSearching ? 'Clear search' : 'Search employee',
         ),
         CircleHeaderAction(
           icon: Icons.filter_alt_outlined,
@@ -544,7 +557,7 @@ class _WorkerCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _StatusText(prefix: 'Worker Task Status: '),
+              _StatusText(prefix: 'Employee Task Status: '),
               _StatusText(
                 label: _taskStatusLabel,
                 color: _taskStatusColor,
@@ -572,9 +585,7 @@ class _WorkerCard extends StatelessWidget {
   /// DatabaseHelper.recordWorkerScan), so profile-only [Worker.isSynced]
   /// alone would keep showing "Synced" all day even with a fresh,
   /// unsynced checkout sitting in `worker_attendance`.
-  bool get _effectiveSynced =>
-      worker.isSynced &&
-      (!worker.hasCheckedInToday || worker.isAttendanceSynced);
+  bool get _effectiveSynced => worker.isFullySynced;
 
   /// A Verified worker's sync button only unlocks once today's full
   /// check-in/checkout cycle is done, so a partial day's data is never
@@ -793,7 +804,7 @@ class _WorkerCard extends StatelessWidget {
           Icon(Icons.grid_view_outlined, size: 16),
           SizedBox(height: 4),
           Text(
-            'Worker report',
+            'Employee report',
             textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
           ),
@@ -866,9 +877,9 @@ class _WorkerCard extends StatelessWidget {
             const Icon(Icons.access_time, size: 14, color: AppColors.muted),
             const SizedBox(width: 4),
             Text(
-              worker.checkInAt == null
+              worker.displayAttendanceAt == null
                   ? 'N/A'
-                  : DateTimeFormatter.clock(worker.checkInAt!),
+                  : DateTimeFormatter.clock(worker.displayAttendanceAt!),
               style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
             ),
           ],

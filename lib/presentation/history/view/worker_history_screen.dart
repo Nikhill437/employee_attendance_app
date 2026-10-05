@@ -42,7 +42,7 @@ class _WorkerHistoryScreenState extends State<WorkerHistoryScreen> {
       body: Column(
         children: [
           const AppScreenHeader(
-            title: 'Worker History',
+            title: 'Employee History',
             subtitle: 'Attendance & tasks',
           ),
           Expanded(
@@ -235,7 +235,10 @@ class _AttendanceDayRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     date == null ? '' : _weekday(date),
-                    style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.muted,
+                    ),
                   ),
                 ],
               ),
@@ -284,8 +287,18 @@ class _AttendanceDayRow extends StatelessWidget {
     'Sunday',
   ];
   static const _monthAbbreviations = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   String _weekday(DateTime date) => _weekdayNames[date.weekday - 1];

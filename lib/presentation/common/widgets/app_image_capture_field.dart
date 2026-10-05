@@ -109,11 +109,7 @@ class AppImageCaptureField extends StatelessWidget {
           ),
         ),
         if (enabled)
-          Positioned(
-            right: 8,
-            top: 8,
-            child: _RetakeChip(onTap: onCapture),
-          ),
+          Positioned(right: 8, top: 8, child: _RetakeChip(onTap: onCapture)),
       ],
     );
   }

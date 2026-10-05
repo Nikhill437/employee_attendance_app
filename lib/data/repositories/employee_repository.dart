@@ -58,9 +58,15 @@ class EmployeeRepository {
   Future<int?> getRemoteWorkerId(int offlineWorkerId) =>
       _dbHelper.getRemoteWorkerId(offlineWorkerId);
 
-  /// Reassigns [workerId] (their local `offline_worker_id`) to
-  /// [departmentId] — called from the Assign Task screen when the
-  /// supervisor picks a different department than the worker's current one.
-  Future<void> updateDepartment(int workerId, int departmentId) =>
-      _dbHelper.updateWorkerDepartment(workerId, departmentId);
+  /// Writes the enrollment fields an Edit Worker save changed — see
+  /// DatabaseHelper.updateWorkerEnrollment.
+  Future<void> updateEnrollment({
+    required int workerId,
+    required Map<String, Object?> columns,
+    bool departmentChanged = false,
+  }) => _dbHelper.updateWorkerEnrollment(
+    workerId: workerId,
+    columns: columns,
+    departmentChanged: departmentChanged,
+  );
 }

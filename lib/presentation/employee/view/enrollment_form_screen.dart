@@ -20,7 +20,8 @@ import 'enrollment_complete_screen.dart';
 
 /// Step 1 of enrollment: the worker's personal details, before the face
 /// capture on step 2. Also doubles as the (much simpler) edit screen for an
-/// existing worker — see [editingWorker] — where only Department can
+/// existing worker — see [editingWorker] — where only Department and
+/// Enrollment Type can
 /// actually change; every other field is shown for context but disabled.
 class EnrollmentFormScreen extends StatefulWidget {
   /// Overridable so tests can inject a fake (avoids the real
@@ -241,15 +242,14 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
   String _systemIdFor(int? rowId) =>
       'EMP-${(rowId ?? 0).toString().padLeft(3, '0')}';
 
-  /// Edit mode's save: updates only the worker's department (see
-  /// EnrollmentFormViewModel.saveDepartmentOnly) and returns to the caller
-  /// — nothing else on this screen is editable, so there's nothing else to
-  /// persist.
-  Future<void> _saveDepartmentChange() async {
+  /// Edit mode's save: updates the worker's department and enrollment type
+  /// (see EnrollmentFormViewModel.saveEdits) and returns to the caller.
+  Future<void> _saveEdits() async {
     final workerId = widget.editingWorker?.id;
-    if (workerId == null) return;
+    final original = widget.editingWorker;
+    if (workerId == null || original == null) return;
 
-    final error = await _formViewModel.saveDepartmentOnly(workerId);
+    final error = await _formViewModel.saveEdits(workerId, original);
     if (!mounted) return;
     if (error != null) {
       _showSnackBar(error);
@@ -299,9 +299,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
                     isBusy: _isEditing
                         ? _formViewModel.isSavingDepartment
                         : _employeeViewModel.isSaving,
-                    onPressed: _isEditing
-                        ? _saveDepartmentChange
-                        : _proceedToFaceCapture,
+                    onPressed: _isEditing ? _saveEdits : _proceedToFaceCapture,
                   ),
                 ],
               ),
@@ -394,6 +392,17 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               validator: _validatePhoneNumber,
             ),
             const SizedBox(height: 18),
+            AppFormField(
+              label: 'Address',
+              isRequired: false,
+              hint: 'Enter permanent residential address...',
+              controller: _addressController,
+              minLines: 3,
+              maxLines: 4,
+              enabled: !_isEditing,
+              validator: (v) => _requireText(v, 'Enter the address'),
+            ),
+            const SizedBox(height: 18),
             AppDropdownField<Department>(
               label: 'Department',
               isRequired: true,
@@ -448,24 +457,13 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               ),
             ],
             const SizedBox(height: 18),
-            AppFormField(
-              label: 'Address',
-              isRequired: true,
-              hint: 'Enter permanent residential address...',
-              controller: _addressController,
-              minLines: 3,
-              maxLines: 4,
-              enabled: !_isEditing,
-              validator: (v) => _requireText(v, 'Enter the address'),
-            ),
-            const SizedBox(height: 18),
+            
             AppOptionSelector<PayType>(
               label: 'Enrollment Type',
               options: PayType.values,
               selected: _formViewModel.enrollmentType,
               onSelected: _formViewModel.selectEnrollmentType,
               labelBuilder: (type) => type.label,
-              enabled: !_isEditing,
               selectedBackground: const Color(0xFFD6E4FB),
               selectedForeground: const Color(0xFF1565C0),
             ),

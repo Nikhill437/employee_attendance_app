@@ -70,6 +70,14 @@ class Employee {
   /// (see AuthRepository).
   final int? remoteEmployeeId;
 
+  /// The backend's own worker id (`workers.worker_id`) — null until this
+  /// worker has been synced or imported. Drives the worker list's sort order.
+  final int? remoteWorkerId;
+
+  /// When this worker's enrollment details were last edited
+  /// (`workers.modified_date`) — null until the first edit.
+  final String? modifiedDate;
+
   /// The task picked on the enrollment form's Task dropdown, stored in
   /// `workers.task_id` — null if none was picked. Once this worker syncs
   /// back from the server as 'approved', [DatabaseHelper.upsertRemoteWorkers]
@@ -101,6 +109,8 @@ class Employee {
     this.status = 'pending',
     this.rejectionReason,
     this.remoteEmployeeId,
+    this.remoteWorkerId,
+    this.modifiedDate,
     this.taskId,
     this.shiftBasedType,
   });
@@ -125,6 +135,7 @@ class Employee {
     String? status,
     String? rejectionReason,
     int? remoteEmployeeId,
+    int? remoteWorkerId,
     int? taskId,
     String? shiftBasedType,
   }) {
@@ -148,6 +159,7 @@ class Employee {
       status: status ?? this.status,
       rejectionReason: rejectionReason ?? this.rejectionReason,
       remoteEmployeeId: remoteEmployeeId ?? this.remoteEmployeeId,
+      remoteWorkerId: remoteWorkerId ?? this.remoteWorkerId,
       taskId: taskId ?? this.taskId,
       shiftBasedType: shiftBasedType ?? this.shiftBasedType,
     );
@@ -224,6 +236,8 @@ class Employee {
       status: map['status'] as String? ?? 'pending',
       rejectionReason: map['rejection_reason'] as String?,
       remoteEmployeeId: map['employee_id'] as int?,
+      remoteWorkerId: map['worker_id'] as int?,
+      modifiedDate: map['modified_date'] as String?,
       taskId: map['task_id'] as int?,
       shiftBasedType: map['shift_based_type'] as String?,
     );

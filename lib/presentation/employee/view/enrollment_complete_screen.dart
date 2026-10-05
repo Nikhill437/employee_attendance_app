@@ -62,7 +62,7 @@ class EnrollmentCompleteScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   const Text(
-                    'The worker face profile has been registered.',
+                    'The employee face profile has been registered.',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 14.5, color: AppColors.muted),
                   ),
@@ -70,14 +70,14 @@ class EnrollmentCompleteScreen extends StatelessWidget {
                   _buildIdentityCard(),
                   const SizedBox(height: 10),
                   AppPrimaryButton(
-                    label: 'Back to Worker List',
+                    label: 'Back to Employee List',
                     background: AppColors.deepGreen,
                     foreground: Colors.white,
                     onPressed: () => _openWorkerList(context),
                   ),
                   const SizedBox(height: 10),
                   AppSecondaryButton(
-                    label: 'Enroll Another Worker',
+                    label: 'Enroll Another Employee',
                     onPressed: () => _startAnotherEnrollment(context),
                   ),
                 ],
@@ -128,16 +128,15 @@ class EnrollmentCompleteScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Worker Identity Details',
+            'Employee Identity Details',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w700,
               color: AppColors.ink,
             ),
           ),
-          const SizedBox(height: 6),
           _DetailRow(
-            label: 'Worker Name',
+            label: 'Employee Name',
             value: Text(workerName, style: _valueStyle),
           ),
           _DetailRow(
@@ -194,7 +193,7 @@ class _DetailRow extends StatelessWidget {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           child: Row(
             children: [
               Expanded(

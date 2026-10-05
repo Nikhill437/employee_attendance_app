@@ -31,13 +31,15 @@ class RemoteWorkerRecord {
   final int? approvedBy;
   final String? approvedAt;
   final String? createdDate;
+
+  /// The backend's own id for the task assignment this worker has (sent
+  /// as a string or int) — null when the response doesn't include one.
+  /// Only applied for approved workers (see DatabaseHelper.upsertRemoteWorkers).
+  final int? workerTaskId;
   final String? modifiedDate;
 
-  /// Task ids (the backend's own `tasks.task_id`) already assigned to this
-  /// worker server-side — empty if the response row didn't include any.
-  /// [DatabaseHelper.upsertRemoteWorkers] assigns whichever of these match
-  /// a locally-known task.
-  final List<int> taskIds;
+  /// The backend's `task_id` for this worker — stored in `workers.task_id`.
+  final int? taskId;
 
   const RemoteWorkerRecord({
     required this.workerId,
@@ -59,7 +61,8 @@ class RemoteWorkerRecord {
     required this.approvedAt,
     required this.createdDate,
     required this.modifiedDate,
-    this.taskIds = const [],
+    this.taskId,
+    this.workerTaskId,
   });
 
   factory RemoteWorkerRecord.fromJson(Map<String, dynamic> json) {
@@ -93,18 +96,19 @@ class RemoteWorkerRecord {
       approvedBy: json['approved_by'] as int?,
       approvedAt: json['approved_at'] as String?,
       createdDate: json['created_date'] as String?,
-      modifiedDate: json['modified_date'] as String?,
-      taskIds: switch (json['task_ids']) {
-        final List v => v
-            .map((e) => switch (e) {
-                  final int i => i,
-                  final String s => int.tryParse(s),
-                  _ => null,
-                })
-            .whereType<int>()
-            .toList(),
-        _ => const [],
+      workerTaskId: switch (json['worker_task_id']) {
+        final int v => v,
+        final String v => int.tryParse(v),
+        _ => null,
       },
+      modifiedDate: json['modified_date'] as String?,
+      taskId: _asIntOrNull(json['task_id']),
     );
   }
+}
+
+int? _asIntOrNull(dynamic value) {
+  if (value is int) return value;
+  if (value is String) return int.tryParse(value);
+  return null;
 }

@@ -13,6 +13,9 @@ class AppTextField extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final bool obscureText;
 
+  /// Trailing action inside the field, e.g. a show/hide password toggle.
+  final Widget? suffixIcon;
+
   /// Restricts what can be typed — e.g. alphanumeric-only for an ID field.
   final List<TextInputFormatter>? inputFormatters;
 
@@ -28,6 +31,7 @@ class AppTextField extends StatelessWidget {
     this.onSubmitted,
     this.obscureText = false,
     this.inputFormatters,
+    this.suffixIcon,
   });
 
   @override
@@ -35,10 +39,7 @@ class AppTextField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white, fontSize: 14),
-        ),
+        Text(label, style: const TextStyle(color: Colors.white, fontSize: 14)),
         const SizedBox(height: 5),
         TextFormField(
           controller: controller,
@@ -55,6 +56,7 @@ class AppTextField extends StatelessWidget {
             hintText: hint,
             hintStyle: const TextStyle(color: Colors.grey),
             prefixIcon: Icon(icon, color: Colors.grey),
+            suffixIcon: suffixIcon,
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(

@@ -5,7 +5,7 @@ import '../../../core/theme/app_colors.dart';
 /// One entry in [AppBottomNavBar].
 enum AppSection {
   dashboard(Icons.grid_view_rounded, 'Dashboard'),
-  workers(Icons.people_outline, 'Workers'),
+  workers(Icons.people_outline, 'Employee'),
   reports(Icons.bar_chart, 'Reports'),
   settings(Icons.settings_outlined, 'Settings');
 

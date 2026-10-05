@@ -7,6 +7,7 @@ import '../models/employee_model.dart';
 import '../models/remote_worker_model.dart';
 import '../models/remote_worker_task_model.dart';
 import '../models/worker_attendance_model.dart';
+import '../models/worker_model.dart';
 import '../models/worker_task_model.dart';
 
 class DatabaseHelper {
@@ -332,7 +333,7 @@ class DatabaseHelper {
         -- locally since nothing here depends on it being enforced.
         task_id INTEGER,
         created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        modified_date TEXT,
+        modified_date TEXT DEFAULT CURRENT_TIMESTAMP,
         server_time TEXT DEFAULT CURRENT_TIMESTAMP,
         -- Local-only bookkeeping, not part of the backend's schema: whether
         -- POST attendance/sync-worker has succeeded for this row yet (see
@@ -628,21 +629,40 @@ class DatabaseHelper {
     );
   }
 
-  /// Reassigns [workerId] to [departmentId] — called from the Assign Task
-  /// screen when the supervisor picks a different department than the
-  /// worker's current one, and from the Edit Worker flow
-  /// (EnrollmentFormViewModel.saveDepartmentOnly), so the `workers` table
-  /// stays in sync with whichever department their tasks/profile actually
-  /// came from. Also flags the worker as needing a re-sync (see
-  /// markWorkerUnsynced) — the backend needs to hear about this change too.
-  Future<void> updateWorkerDepartment(int workerId, int departmentId) async {
+  /// Writes the enrollment fields the Edit Worker flow actually changed
+  /// (`columns`, keyed by `workers` column name) for [workerId]. When
+  /// [departmentChanged], also deactivates that worker's currently-active
+  /// task assignments (see the transaction below). Flags the worker for a
+  /// re-sync via markWorkerUnsynced, since the backend needs the change too.
+  Future<void> updateWorkerEnrollment({
+    required int workerId,
+    required Map<String, Object?> columns,
+    bool departmentChanged = false,
+  }) async {
+    if (columns.isEmpty) return;
     final db = await database;
-    await db.update(
-      'workers',
-      {'department_id': departmentId},
-      where: 'offline_worker_id = ?',
-      whereArgs: [workerId],
-    );
+    await db.transaction((txn) async {
+      await txn.update(
+        'workers',
+        columns,
+        where: 'offline_worker_id = ?',
+        whereArgs: [workerId],
+      );
+      // A department change strands the worker's current task assignments
+      // (they belonged to the old department) — deactivate, don't delete,
+      // so the history stays intact.
+      if (departmentChanged) {
+        await txn.update(
+          'worker_tasks',
+          {
+            'status': 'inactive',
+            'updated_at': AppTime.nowInUserZone().toIso8601String(),
+          },
+          where: "worker_id = ? AND status = 'active'",
+          whereArgs: [workerId],
+        );
+      }
+    });
     await markWorkerUnsynced(workerId);
   }
 
@@ -761,6 +781,32 @@ class DatabaseHelper {
     return List.generate(maps.length, (i) => WorkerTask.fromMap(maps[i]));
   }
 
+  /// Every `worker_tasks` row for [workerId] on [date] (yyyy-MM-dd), any
+  /// status — the task records that belong to that one day, for the worker
+  /// report's Day Details screen.
+  Future<List<WorkerTask>> getWorkerTasksForDate(
+    int workerId,
+    String date,
+  ) async {
+    final db = await database;
+    final maps = await db.rawQuery(
+      '''
+      SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
+             tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
+             worker_tasks.assignment_type, worker_tasks.employee_target,
+             worker_tasks.work_photo, worker_tasks.completed_target, worker_tasks.note,
+             worker_tasks.task_status, worker_tasks.task_date,
+             worker_tasks.worker_task_id AS real_worker_task_id
+      FROM worker_tasks
+      JOIN tasks ON tasks.task_id = worker_tasks.task_id
+      WHERE worker_tasks.worker_id = ? AND worker_tasks.task_date = ?
+      ORDER BY tasks.task_name COLLATE NOCASE
+    ''',
+      [workerId, date],
+    );
+    return List.generate(maps.length, (i) => WorkerTask.fromMap(maps[i]));
+  }
+
   /// Creates today's `worker_tasks` row for [workerId]'s current standing
   /// assignment (the most recent active row, any day) if one doesn't exist
   /// yet — carrying the task_id/assignment_type forward but leaving every
@@ -820,7 +866,8 @@ class DatabaseHelper {
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
              worker_tasks.assignment_type, worker_tasks.completed_target,
              worker_tasks.work_photo, worker_tasks.note, worker_tasks.task_status,
-             worker_tasks.overtime, worker_tasks.created_at, worker_tasks.task_date
+             worker_tasks.overtime, worker_tasks.created_at, worker_tasks.task_date,
+             worker_tasks.worker_task_id AS real_worker_task_id
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
@@ -953,7 +1000,8 @@ class DatabaseHelper {
         );
       }
     });
-    await markWorkerUnsynced(workerId);
+    // Task assignment deliberately does not flag the worker unsynced —
+    // the existing sync flow picks new assignments up on its own.
   }
 
   /// The worker's own checkout-time entry for [workerTaskId] (the
@@ -1278,6 +1326,7 @@ class DatabaseHelper {
           // is purely bookkeeping (see the class doc comment above
           // _createWorkerTables); nothing local keys off it.
           'worker_id': worker.workerId,
+          'task_id': ?worker.taskId,
           // Distinct from worker_id and national_id — this is what the
           // attendance login flow matches on instead of national_id (see
           // AuthRepository/DatabaseHelper.getWorkerByEmployeeId).
@@ -1348,7 +1397,7 @@ class DatabaseHelper {
           // assigned server-side, plus whichever task was picked locally
           // at enrollment time (`workers.task_id`, untouched by `row`
           // above, so still whatever it was — see Employee.taskId).
-          final taskIdsToAssign = <int>{...worker.taskIds, ?localTaskId};
+          final taskIdsToAssign = <int>{?worker.taskId, ?localTaskId};
           if (taskIdsToAssign.isNotEmpty) {
             await _assignMatchingTasks(
               txn,
@@ -1450,7 +1499,9 @@ class DatabaseHelper {
         if (knownTask.isEmpty) continue;
 
         final row = {
-          'worker_task_id': record.workerTaskId,
+          // Only set when the server sent one, so a record without it never
+          // wipes an id already stored locally.
+          'worker_task_id': ?record.workerTaskId,
           'target': record.target,
           'status': record.status,
           'assignment_type': record.assignmentType,
@@ -1463,21 +1514,16 @@ class DatabaseHelper {
           'updated_at': now,
         };
 
-        // Matched against the most recent local row for this (worker,
-        // task) regardless of its own task_date — the backend doesn't
-        // give this endpoint per-day granularity to match more precisely
-        // against, so the latest day's row is the best stand-in for "the
-        // current one" when updating an already-known assignment.
-        final existing = await txn.query(
-          'worker_tasks',
-          columns: ['offline_worker_id'],
-          where: 'worker_id = ? AND task_id = ?',
-          whereArgs: [offlineWorkerId, record.taskId],
-          orderBy: 'task_date DESC',
-          limit: 1,
+        final assignedAt = record.assignedAt ?? now;
+        final existingId = await _findExistingWorkerTaskRow(
+          txn,
+          offlineWorkerId: offlineWorkerId,
+          taskId: record.taskId,
+          serverWorkerTaskId: record.workerTaskId,
+          taskDate: assignedAt.substring(0, 10),
         );
-        if (existing.isEmpty) {
-          final assignedAt = record.assignedAt ?? now;
+
+        if (existingId == null) {
           await txn.insert('worker_tasks', {
             ...row,
             'worker_id': offlineWorkerId,
@@ -1491,10 +1537,60 @@ class DatabaseHelper {
             'worker_tasks',
             row,
             where: 'offline_worker_id = ?',
-            whereArgs: [existing.first['offline_worker_id']],
+            whereArgs: [existingId],
           );
         }
       }
     });
+  }
+
+  /// The local `worker_tasks` row a fetched assignment should update, or null
+  /// when it's new and must be inserted. Tried in order, so one assignment
+  /// never gets two rows:
+  /// 1. the row already holding the server's `worker_task_id`;
+  /// 2. the worker's row for this task on the same task_date;
+  /// 3. the worker's most recent row for this task that has no server id yet
+  ///    (a locally assigned task the server has now confirmed).
+  Future<int?> _findExistingWorkerTaskRow(
+    DatabaseExecutor txn, {
+    required int offlineWorkerId,
+    required int taskId,
+    required int? serverWorkerTaskId,
+    required String taskDate,
+  }) async {
+    if (serverWorkerTaskId != null) {
+      final byServerId = await txn.query(
+        'worker_tasks',
+        columns: ['offline_worker_id'],
+        where: 'worker_task_id = ?',
+        whereArgs: [serverWorkerTaskId],
+        limit: 1,
+      );
+      if (byServerId.isNotEmpty) {
+        return byServerId.first['offline_worker_id'] as int;
+      }
+    }
+
+    final byDay = await txn.query(
+      'worker_tasks',
+      columns: ['offline_worker_id'],
+      where: 'worker_id = ? AND task_id = ? AND task_date = ?',
+      whereArgs: [offlineWorkerId, taskId, taskDate],
+      limit: 1,
+    );
+    if (byDay.isNotEmpty) return byDay.first['offline_worker_id'] as int;
+
+    final unsynced = await txn.query(
+      'worker_tasks',
+      columns: ['offline_worker_id'],
+      where: 'worker_id = ? AND task_id = ? AND worker_task_id IS NULL',
+      whereArgs: [offlineWorkerId, taskId],
+      orderBy: 'task_date DESC',
+      limit: 1,
+    );
+    if (unsynced.isNotEmpty) {
+      return unsynced.first['offline_worker_id'] as int;
+    }
+    return null;
   }
 }

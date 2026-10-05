@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
+import '../../../data/models/worker_task_model.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../employee/view/enrollment_form_screen.dart';
@@ -144,7 +145,7 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
                 ),
                 const Expanded(
                   child: Text(
-                    'Worker Profile',
+                    'Employee Profile',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 18,
@@ -788,7 +789,114 @@ class _DayDetailScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                const SizedBox(height: 14),
+                const SectionLabel('TASKS'),
+                const SizedBox(height: 10),
+                if (day.tasks.isEmpty)
+                  const AppCard(
+                    child: Text(
+                      'No tasks recorded for this day.',
+                      style: TextStyle(fontSize: 13.5, color: AppColors.muted),
+                    ),
+                  )
+                else
+                  for (final task in day.tasks) ...[
+                    _DayTaskCard(task: task),
+                    const SizedBox(height: 10),
+                  ],
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One task the worker had on the day: its name, the worker's own quantity,
+/// the supervisor's quantity/status/note, and whether it's still active.
+class _DayTaskCard extends StatelessWidget {
+  final WorkerTask task;
+
+  const _DayTaskCard({required this.task});
+
+  String get _taskStatusLabel => switch (task.taskStatus) {
+    'approved' => 'Approve',
+    'rejected' => 'Reject',
+    _ => 'Pending',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final note = task.note?.trim();
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  task.taskName,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                ),
+              ),
+              _StatusPill(
+                label: task.status == 'active' ? _taskStatusLabel : 'Inactive',
+                color: task.status == 'active'
+                    ? AppColors.deepGreen
+                    : AppColors.muted,
+                background: const Color(0xFFF2F3F2),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _TaskDetailLine(
+            label: 'Employee quantity',
+            value: task.employeeTarget?.toString() ?? 'Not provided',
+          ),
+          _TaskDetailLine(
+            label: 'Supervisor quantity',
+            value: task.completedTarget?.toString() ?? 'Not reviewed',
+          ),
+          _TaskDetailLine(label: 'Review', value: _taskStatusLabel),
+          if (note != null && note.isNotEmpty)
+            _TaskDetailLine(label: 'Note', value: note),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskDetailLine extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _TaskDetailLine({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 13, color: AppColors.muted),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 13, color: AppColors.ink),
             ),
           ),
         ],

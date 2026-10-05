@@ -10,7 +10,8 @@ import '../models/attendance_submission_model.dart';
 class AttendanceSubmissionApi {
   final ApiClient _client;
 
-  AttendanceSubmissionApi({ApiClient? client}) : _client = client ?? ApiClient();
+  AttendanceSubmissionApi({ApiClient? client})
+    : _client = client ?? ApiClient();
 
   /// POST attendance/submit-attendance. Request body:
   /// `{"attendance": {...}, "task": [...], "worker_task": [...]}` — see

@@ -14,12 +14,12 @@ class WorkerTaskListApi {
 
   WorkerTaskListApi({ApiClient? client}) : _client = client ?? ApiClient();
 
-  /// POST attendance/worker_task_list — the dashboard's "Fetch Worker
+  /// GET attendance/department_assigned_tasks — the dashboard's "Fetch Worker
   /// Tasks" button. A single call, no pagination: confirmed response
   /// envelope is `{"data": [...]}`.
   Future<List<RemoteWorkerTaskRecord>> workerTaskList() async {
     final results = <RemoteWorkerTaskRecord>[];
-    final data = await _client.post(ApiRoutes.workerTaskList);
+    final data = await _client.get(ApiRoutes.workerTaskList);
     if (data is! Map || data['data'] is! List) return results;
     log(data.toString(), name: 'WorkerTaskListApi.workerTaskList');
     final rows = data['data'] as List;
@@ -48,8 +48,7 @@ class WorkerTaskListApi {
       final rows = data['data'] as List;
       results.addAll(
         rows.map(
-          (row) =>
-              RemoteWorkerTaskRecord.fromJson(row as Map<String, dynamic>),
+          (row) => RemoteWorkerTaskRecord.fromJson(row as Map<String, dynamic>),
         ),
       );
     } catch (e) {

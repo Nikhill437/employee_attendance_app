@@ -1,6 +1,8 @@
 import '../../../core/base/base_view_model.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/models/worker_attendance_model.dart';
+import '../../../data/models/worker_task_model.dart';
+import '../../../data/repositories/task_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 
 /// One day's attendance row — what one card in the Daily Activity list, or
@@ -8,7 +10,11 @@ import '../../../data/repositories/worker_attendance_repository.dart';
 class WorkerReportDay {
   final WorkerAttendanceRecord attendance;
 
-  const WorkerReportDay({required this.attendance});
+  /// The worker's task records for this same day (see
+  /// TaskRepository.getWorkerTasksForDate) — empty if none were recorded.
+  final List<WorkerTask> tasks;
+
+  const WorkerReportDay({required this.attendance, this.tasks = const []});
 }
 
 /// Drives the Worker Report screen: a date-range picker over one worker's
@@ -16,11 +22,14 @@ class WorkerReportDay {
 class WorkerReportViewModel extends BaseViewModel {
   final int workerId;
   final WorkerAttendanceRepository _workerAttendance;
+  final TaskRepository _tasks;
 
   WorkerReportViewModel({
     required this.workerId,
     WorkerAttendanceRepository? workerAttendance,
-  }) : _workerAttendance = workerAttendance ?? WorkerAttendanceRepository() {
+    TaskRepository? tasks,
+  }) : _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
+       _tasks = tasks ?? TaskRepository() {
     final today = _dateOnly(AppTime.nowInUserZone());
     _rangeStart = today.subtract(const Duration(days: 4));
     _rangeEnd = today;
@@ -54,11 +63,19 @@ class WorkerReportViewModel extends BaseViewModel {
     }).toList();
 
     final days = [
-      for (final record in inRange) WorkerReportDay(attendance: record),
+      for (final record in inRange)
+        WorkerReportDay(
+          attendance: record,
+          tasks: await _tasks.getWorkerTasksForDate(
+            workerId,
+            record.attendanceDate,
+          ),
+        ),
     ];
-    days.sort((a, b) => b.attendance.attendanceDate.compareTo(
-      a.attendance.attendanceDate,
-    ));
+    days.sort(
+      (a, b) =>
+          b.attendance.attendanceDate.compareTo(a.attendance.attendanceDate),
+    );
 
     _days = days;
     _isLoading = false;

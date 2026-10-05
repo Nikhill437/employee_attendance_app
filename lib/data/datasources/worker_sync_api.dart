@@ -32,6 +32,22 @@ class WorkerSyncApi {
     return _extractId(response, 'worker_id');
   }
 
+  /// POST attendance/sync-worker for a worker the backend already knows —
+  /// sends only `worker_id` plus the fields the supervisor actually changed
+  /// (see WorkerEditQueue), never the whole profile. Request shape not
+  /// confirmed against the real backend yet; same endpoint as [syncWorker].
+  Future<void> updateWorker({
+    required int realWorkerId,
+    required Map<String, String> changes,
+  }) async {
+    final formData = FormData.fromMap({
+      'worker_id': realWorkerId.toString(),
+      ...changes,
+    });
+    log('Updating worker $realWorkerId: ${changes.keys.join(', ')}');
+    await _client.post(ApiRoutes.syncWorker, data: formData);
+  }
+
   int? _extractId(dynamic response, String key) {
     if (response is! Map) return null;
     final value = response[key];
@@ -52,6 +68,12 @@ class WorkerSyncApi {
       fields['department_id'] = worker.departmentId.toString();
     }
     if (worker.address != null) fields['address'] = worker.address!;
+    // The creation timestamp (see Employee.attendanceTime) — sent on create
+    // and never changed by an edit.
+    fields['created_date'] = worker.attendanceTime;
+    if (worker.modifiedDate != null) {
+      fields['modified_date'] = worker.modifiedDate!;
+    }
     // The task picked on the enrollment form's Task dropdown (see
     // Employee.taskId) — the assigned task being synced along with this
     // worker's own profile.

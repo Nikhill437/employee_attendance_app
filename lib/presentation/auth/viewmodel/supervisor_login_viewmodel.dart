@@ -34,7 +34,10 @@ class SupervisorLoginViewModel extends BaseViewModel {
   /// in across app restarts until they explicitly log out; otherwise sets
   /// [errorMessage] (the backend's own reason, e.g. wrong credentials or a
   /// network error) and returns false.
-  Future<bool> login({required String username, required String password}) async {
+  Future<bool> login({
+    required String username,
+    required String password,
+  }) async {
     final error = await _authRepository.authenticate(
       username: username,
       password: password,

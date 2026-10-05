@@ -89,6 +89,11 @@ class Worker {
   /// Time of the first attendance log today, or null when absent.
   final DateTime? checkInAt;
 
+  /// The time the card shows: today's check-in until the worker checks out,
+  /// then the latest check-out (today's `worker_attendance` row keeps only
+  /// the most recent check-out). Null if nothing's recorded today.
+  final DateTime? displayAttendanceAt;
+
   final WorkStatus workStatus;
   final VerificationStatus verification;
 
@@ -139,6 +144,10 @@ class Worker {
   /// imported/synced from the server.
   final int? remoteEmployeeId;
 
+  /// The backend's own worker id (`workers.worker_id`) — null until this
+  /// worker has been synced or imported.
+  final int? remoteWorkerId;
+
   /// The worker's current active task assignment's own approve/reject/
   /// pending verdict (`worker_tasks.task_status`) — null if they have no
   /// active assignment at all. Drives the worker list card's Task Status
@@ -154,6 +163,7 @@ class Worker {
     this.attendance = AttendanceStatus.absent,
     this.department,
     this.checkInAt,
+    this.displayAttendanceAt,
     this.workStatus = WorkStatus.notStarted,
     this.verification = VerificationStatus.notVerified,
     this.isSynced = false,
@@ -167,10 +177,17 @@ class Worker {
     this.hasRealAttendanceIdToday = false,
     this.hasAssignedTasks = false,
     this.remoteEmployeeId,
+    this.remoteWorkerId,
     this.taskStatus,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;
+
+  /// Whether the worker is truly all-caught-up: their profile is synced and,
+  /// if they've checked in today, today's attendance is too. This is what the
+  /// card's "Synced"/"Not synced" badge shows, so the list order uses it too.
+  bool get isFullySynced =>
+      isSynced && (!hasCheckedInToday || isAttendanceSynced);
 
   /// Up to two letters for the avatar, taken from the worker's name.
   String get initials {

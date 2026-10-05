@@ -9,11 +9,9 @@ class WorkerTaskImportRepository {
   final WorkerTaskListApi _api;
   final DatabaseHelper _dbHelper;
 
-  WorkerTaskImportRepository({
-    WorkerTaskListApi? api,
-    DatabaseHelper? dbHelper,
-  }) : _api = api ?? WorkerTaskListApi(),
-       _dbHelper = dbHelper ?? DatabaseHelper();
+  WorkerTaskImportRepository({WorkerTaskListApi? api, DatabaseHelper? dbHelper})
+    : _api = api ?? WorkerTaskListApi(),
+      _dbHelper = dbHelper ?? DatabaseHelper();
 
   /// Fetches every worker-task assignment from the backend
   /// (`POST attendance/worker_task_list`) and upserts them locally.

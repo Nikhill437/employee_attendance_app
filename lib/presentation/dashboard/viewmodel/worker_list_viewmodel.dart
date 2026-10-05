@@ -4,6 +4,7 @@ import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../core/utils/network_status.dart';
 import '../../../data/models/attendance_log_model.dart';
+import '../../../data/models/worker_attendance_model.dart';
 import '../../../data/models/employee_model.dart';
 import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
@@ -91,10 +92,9 @@ class WorkerListViewModel extends BaseViewModel {
   bool isSyncingAttendance(String employeeId) =>
       _syncingAttendanceIds.contains(employeeId);
 
-  /// The list after the current search term and attendance filter, with
-  /// not-yet-synced workers surfaced above synced ones (stable within each
-  /// group) — a worker needing a push to the backend shouldn't get buried
-  /// under ones that don't. Shows every worker regardless of department
+  /// The list after the current search term and attendance filter, ordered:
+  /// pending workers with no backend worker_id, then approved-but-unsynced
+  /// workers, then everyone else — each group by worker_id descending. Shows every worker regardless of department
   /// for now — see [canManageTasks] for where a department check still
   /// applies, to task-action gating rather than list visibility.
   List<Worker> get workers {
@@ -109,12 +109,40 @@ class WorkerListViewModel extends BaseViewModel {
       return matchesFilter && matchesTerm;
     });
 
-    final notSynced = <Worker>[];
-    final synced = <Worker>[];
+    // Priority 1: no backend worker_id yet and still pending approval.
+    // Priority 2: approved but not synced. Everything else follows, all
+    // ordered by backend worker_id descending (unknown ids last).
+    final pending = <Worker>[];
+    final approvedUnsynced = <Worker>[];
+    final rest = <Worker>[];
     for (final worker in filtered) {
-      (worker.isSynced ? synced : notSynced).add(worker);
+      final status = worker.status.toLowerCase();
+      if (worker.remoteWorkerId == null && status == 'pending') {
+        pending.add(worker);
+      } else if (status == 'approved' && !worker.isSynced) {
+        approvedUnsynced.add(worker);
+      } else {
+        rest.add(worker);
+      }
     }
-    return [...notSynced, ...synced];
+    return [
+      ..._byRemoteWorkerIdDesc(pending),
+      ..._byRemoteWorkerIdDesc(approvedUnsynced),
+      ..._byRemoteWorkerIdDesc(rest),
+    ];
+  }
+
+  List<Worker> _byRemoteWorkerIdDesc(List<Worker> workers) {
+    final sorted = [...workers];
+    sorted.sort((a, b) {
+      final ai = a.remoteWorkerId;
+      final bi = b.remoteWorkerId;
+      if (ai == null && bi == null) return 0;
+      if (ai == null) return 1;
+      if (bi == null) return -1;
+      return bi.compareTo(ai);
+    });
+    return sorted;
   }
 
   int get total => workers.length;
@@ -300,6 +328,9 @@ class WorkerListViewModel extends BaseViewModel {
           payType: employee.payType,
           department: employee.department,
           checkInAt: checkIns[employee.employeeId],
+          displayAttendanceAt: _displayAttendanceAt(
+            todayAttendance[employee.id],
+          ),
           attendance: checkIns.containsKey(employee.employeeId)
               ? AttendanceStatus.present
               : AttendanceStatus.absent,
@@ -318,6 +349,7 @@ class WorkerListViewModel extends BaseViewModel {
               todayAttendance[employee.id]?.realAttendanceId != null,
           hasAssignedTasks: assignedTaskWorkerIds.contains(employee.id),
           remoteEmployeeId: employee.remoteEmployeeId,
+          remoteWorkerId: employee.remoteWorkerId,
           taskStatus: taskStatusByWorker[employee.id],
         ),
     ];
@@ -341,6 +373,13 @@ class WorkerListViewModel extends BaseViewModel {
     return employee.isSynced
         ? VerificationStatus.verified
         : VerificationStatus.notVerified;
+  }
+
+  /// Check-out time once checked out today, otherwise check-in time.
+  DateTime? _displayAttendanceAt(WorkerAttendanceRecord? today) {
+    if (today == null) return null;
+    final raw = today.hasCheckedOut ? today.checkOutTime : today.checkInTime;
+    return raw == null ? null : DateTime.tryParse(raw);
   }
 
   /// Earliest log per employee for today, keyed by employee ID.

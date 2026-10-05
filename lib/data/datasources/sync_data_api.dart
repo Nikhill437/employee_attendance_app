@@ -50,11 +50,6 @@ class SyncDataApi {
         'overtime': task.overtime ?? 0,
         'note': task.note,
         'created_at': task.createdAt,
-        // Each day now gets its own worker_tasks row (see the task_date
-        // column doc comment in DatabaseHelper), so a backlog of several
-        // unsynced days can include more than one entry for the same
-        // task_id — this is what AttendanceSubmissionRepository actually
-        // matches the response's worker_tasks entries back against.
         'task_date': task.taskDate,
       };
 
@@ -71,6 +66,11 @@ class SyncDataApi {
             ),
           ),
         );
+      }
+
+      final realWorkerTaskId = task.realWorkerTaskId;
+      if (realWorkerTaskId != null) {
+        payload['worker_task_id'] = realWorkerTaskId;
       }
       workerTaskPayloads.add(payload);
     }

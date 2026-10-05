@@ -65,12 +65,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final count = await _viewModel.importWorkersFromServer();
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Fetched $count workers from server')),
+        SnackBar(content: Text('Fetched $count employee from server')),
       );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Could not fetch workers: $e')),
+        SnackBar(content: Text('Could not fetch Employee: $e')),
       );
     }
   }
@@ -113,12 +113,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final count = await _viewModel.fetchWorkerTasks();
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Fetched $count worker tasks from server')),
+        SnackBar(content: Text('Fetched $count Employee tasks from server')),
       );
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Could not fetch worker tasks: $e')),
+        SnackBar(content: Text('Could not fetch Employee tasks: $e')),
       );
     }
   }
@@ -160,7 +160,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   isFetchingTasks: _viewModel.isFetchingTasks,
                   onFetchDepartments: _fetchDepartments,
                   onFetchTasks: _fetchTasks,
-                  updatedDepartmentCount: _viewModel.updatedCounts.departmentCount,
+                  updatedDepartmentCount:
+                      _viewModel.updatedCounts.departmentCount,
                   updatedTaskCount: _viewModel.updatedCounts.taskCount,
                 ),
                 const SizedBox(height: 14),
@@ -230,7 +231,11 @@ class _DashboardHeader extends StatelessWidget {
             ],
           ),
         ),
-        GestureDetector( onTap: ()=> Navigator.push(context, MaterialPageRoute(builder: (context)=> SettingsScreen())),
+        GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => SettingsScreen()),
+          ),
           child: Container(
             width: 44,
             height: 44,
@@ -410,7 +415,7 @@ class _UpdatedCountBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        '+$count new',
+        'New data available',
         style: const TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w700,
@@ -447,42 +452,49 @@ class _ImportWorkersCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const SectionLabel('WORKER LIST DATA'),
-                    const SizedBox(width: 8),
-                    _UpdatedCountBadge(count: updatedCount),
-                  ],
-                ),
+                const SectionLabel('EMPLOYEE LIST DATA'),
                 const SizedBox(height: 6),
                 const Text(
-                  'Fetch the latest worker list from the server',
+                  'Fetch the latest employee list from the server',
                   style: TextStyle(fontSize: 13, color: AppColors.muted),
                 ),
               ],
             ),
           ),
           const SizedBox(width: 12),
-          ElevatedButton.icon(
-            onPressed: isImporting ? null : onPressed,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.deepGreen,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              shape: const StadiumBorder(),
-            ),
-            icon: isImporting
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.cloud_download_outlined, size: 16),
-            label: Text(isImporting ? 'Fetching...' : 'Fetch Workers List'),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (updatedCount > 0) ...[
+                _UpdatedCountBadge(count: updatedCount),
+                const SizedBox(height: 6),
+              ],
+              ElevatedButton.icon(
+                onPressed: isImporting ? null : onPressed,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.deepGreen,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  shape: const StadiumBorder(),
+                ),
+                icon: isImporting
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.cloud_download_outlined, size: 16),
+                label: Text(isImporting ? 'Fetching...' : 'Download'),
+              ),
+            ],
           ),
         ],
       ),
@@ -509,10 +521,10 @@ class _FetchWorkerTasksCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionLabel('WORKER TASKS LIST'),
+                const SectionLabel('EMPLOYEE TASKS LIST'),
                 const SizedBox(height: 6),
                 const Text(
-                  'Fetch the latest worker task assignments from the server',
+                  'Fetch the latest employee task assignments from the server',
                   style: TextStyle(fontSize: 13, color: AppColors.muted),
                 ),
               ],
@@ -538,7 +550,7 @@ class _FetchWorkerTasksCard extends StatelessWidget {
                     ),
                   )
                 : const Icon(Icons.cloud_download_outlined, size: 16),
-            label: Text(isFetching ? 'Fetching...' : 'Fetch Worker Tasks List'),
+            label: Text(isFetching ? 'Fetching...' : 'Download'),
           ),
         ],
       ),
@@ -723,7 +735,7 @@ class _HeadlineStats extends StatelessWidget {
       children: [
         Expanded(
           child: _StatTile(
-            label: 'TOTAL WORKERS',
+            label: 'TOTAL EMPLOYEES',
             value: '${summary.totalEmployees}',
           ),
         ),
@@ -1033,7 +1045,7 @@ class _QuickActions extends StatelessWidget {
         Expanded(
           child: _QuickAction(
             icon: Icons.person_add_alt_1,
-            label: 'Enroll Worker',
+            label: 'Enroll Employee',
             background: AppColors.deepGreen,
             foreground: Colors.white,
             onTap: onEnroll,
@@ -1043,7 +1055,7 @@ class _QuickActions extends StatelessWidget {
         Expanded(
           child: _QuickAction(
             icon: Icons.groups_outlined,
-            label: 'Worker List',
+            label: 'Employee List',
             background: Colors.white,
             foreground: AppColors.deepGreen,
             onTap: onViewWorkers,
