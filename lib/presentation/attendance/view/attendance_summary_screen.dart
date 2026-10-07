@@ -39,22 +39,27 @@ class _AttendanceSummaryScreenState extends State<AttendanceSummaryScreen> {
           ),
         ],
       ),
-      body: ListenableBuilder(
-        listenable: _viewModel,
-        builder: (context, _) {
-          if (_viewModel.isLoading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (_viewModel.isEmpty) {
-            return const Center(child: Text('No attendance records yet'));
-          }
-          return ListView(
-            padding: const EdgeInsets.all(12),
-            children: _viewModel.groupedLogs.entries
-                .map((entry) => _buildEmployeeCard(entry.key, entry.value))
-                .toList(),
-          );
-        },
+      // AppBar already handles the top inset; this adds the bottom one, since
+      // there's no bottomNavigationBar here to absorb it.
+      body: SafeArea(
+        top: false,
+        child: ListenableBuilder(
+          listenable: _viewModel,
+          builder: (context, _) {
+            if (_viewModel.isLoading) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (_viewModel.isEmpty) {
+              return const Center(child: Text('No attendance records yet'));
+            }
+            return ListView(
+              padding: const EdgeInsets.all(12),
+              children: _viewModel.groupedLogs.entries
+                  .map((entry) => _buildEmployeeCard(entry.key, entry.value))
+                  .toList(),
+            );
+          },
+        ),
       ),
     );
   }

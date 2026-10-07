@@ -47,7 +47,9 @@ class SplashScreen extends StatelessWidget {
               left: 0,
               right: 0,
               bottom: 15,
-              child: _buildActions(context),
+              // Adds the system navigation bar/gesture inset on top of the
+              // 15px design gap, so the buttons never sit under it.
+              child: SafeArea(top: false, child: _buildActions(context)),
             ),
           ],
         ),

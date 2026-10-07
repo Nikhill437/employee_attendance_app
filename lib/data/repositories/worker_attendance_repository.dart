@@ -1,6 +1,7 @@
 import '../datasources/database_helper.dart';
 import '../datasources/worker_attendance_sync_api.dart';
 import '../models/worker_attendance_model.dart';
+import 'server_sync_time_store.dart';
 
 /// Check-in/check-out tracking (`worker_attendance`) — separate from, and
 /// additive to, the existing `attendance_logs`-based mark-attendance flow.
@@ -14,14 +15,28 @@ class WorkerAttendanceRepository {
   }) : _dbHelper = dbHelper ?? DatabaseHelper(),
        _syncApi = syncApi ?? WorkerAttendanceSyncApi();
 
-  /// The dashboard's "Attendance" button: pulls the supervisor's department's
-  /// check-ins and check-outs from the server and stores them in
-  /// `worker_attendance` (see DatabaseHelper.upsertRemoteWorkerAttendance).
-  /// Errors propagate. Returns how many rows were stored.
+  /// The dashboard's "Employee Attendance" button. The first call uses
+  /// `GET attendance/departmentwise_attendance`. Later calls send the stored
+  /// call time to `attendance/departmentwise_attendance_data`. The rows are
+  /// stored via DatabaseHelper.upsertRemoteWorkerAttendance, which updates
+  /// matching rows and never duplicates them. The call time is saved only
+  /// after that succeeds. Errors propagate. Returns how many rows were stored.
   Future<int> importDepartmentAttendance() async {
-    final records = await _syncApi.fetchDepartmentAttendance();
-    return _dbHelper.upsertRemoteWorkerAttendance(records);
+    final callTime = DateTime.now().toUtc();
+    final storedTime = await lastDepartmentAttendanceCallTime.read();
+    final records = storedTime == null
+        ? await _syncApi.fetchDepartmentAttendance()
+        : await _syncApi.fetchDepartmentAttendanceData(
+            DateTime.parse(storedTime),
+          );
+    final stored = await _dbHelper.upsertRemoteWorkerAttendance(records);
+    await lastDepartmentAttendanceCallTime.save(callTime.toIso8601String());
+    return stored;
   }
+
+  /// Whether any local record is still waiting to sync — see
+  /// DatabaseHelper.hasUnsyncedLocalData. Read-only.
+  Future<bool> hasUnsyncedData() => _dbHelper.hasUnsyncedLocalData();
 
   /// Records a face-scan event for [workerId] — checks them in on the
   /// day's first scan, checks them out on the next.

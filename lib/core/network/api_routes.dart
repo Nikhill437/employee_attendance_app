@@ -21,6 +21,8 @@ class ApiRoutes {
   static const String departmentCount = '/attendance/updated-counts-dept';
   static const String departmentwiseAttendance =
       '/attendance/departmentwise_attendance';
+  static const String departmentwiseAttendanceData =
+      '/attendance/departmentwise_attendance_data';
   static const String assignTask = '/attendance/assigntask';
   static const String checkIn = '/attendance/check-in';
   static const String submitAttendance = '/attendance/submit-attendance';

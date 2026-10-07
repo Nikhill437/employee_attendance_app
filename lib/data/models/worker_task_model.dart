@@ -38,8 +38,11 @@ class WorkerTask {
   /// Null until the supervisor saves one.
   final int? completedTarget;
 
-  /// The supervisor's note on this assignment (`worker_tasks.note`).
-  final String? note;
+  /// The assignment's note, copied in at check-in (`worker_tasks.task_note`).
+  final String? taskNote;
+
+  /// The supervisor's review note (`worker_tasks.supervisor_note`).
+  final String? supervisorNote;
 
   /// The supervisor's approve/reject/pending verdict on this assignment
   /// (`worker_tasks.task_status`) — distinct from [status] (whether the
@@ -90,7 +93,8 @@ class WorkerTask {
     this.employeeTarget,
     this.workPhoto,
     this.completedTarget,
-    this.note,
+    this.taskNote,
+    this.supervisorNote,
     this.taskStatus = 'pending',
     this.overtime,
     this.createdAt,
@@ -112,7 +116,8 @@ class WorkerTask {
       employeeTarget: map['employee_target'] as int?,
       workPhoto: map['work_photo'] as String?,
       completedTarget: map['completed_target'] as int?,
-      note: map['note'] as String?,
+      taskNote: map['task_note'] as String?,
+      supervisorNote: map['supervisor_note'] as String?,
       taskStatus: map['task_status'] as String? ?? 'pending',
       overtime: map['overtime'] as int?,
       createdAt: map['created_at'] as String?,

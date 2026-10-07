@@ -25,18 +25,25 @@ class LookupRepository {
 
   /// Refreshes just the local `departments` cache — used right after
   /// supervisor login (see SupervisorLoginViewModel via [syncFromRemote]),
-  /// a full unpaginated fetch of every department.
+  /// a full unpaginated fetch of every department. Saves the Department
+  /// server time once the local write succeeds, so later department
+  /// refreshes ask only for changes since this login.
   Future<int> syncDepartmentsFromRemote() async {
+    final syncStartedAt = DateTime.now().toUtc().toIso8601String();
     final departments = await _api.fetchDepartments();
     await _dbHelper.replaceDepartments(departments);
+    await lastDepartmentServerTime.save(syncStartedAt);
     return departments.length;
   }
 
   /// Refreshes just the local `tasks` cache the same way, paginated (see
-  /// AttendanceLookupApi.fetchTasks).
+  /// AttendanceLookupApi.fetchTasks). Saves the Task server time once the
+  /// local write succeeds.
   Future<int> syncTasksFromRemote() async {
+    final syncStartedAt = DateTime.now().toUtc().toIso8601String();
     final tasks = await _api.fetchTasks();
     await _dbHelper.replaceTasks(tasks);
+    await lastTaskServerTime.save(syncStartedAt);
     return tasks.length;
   }
 

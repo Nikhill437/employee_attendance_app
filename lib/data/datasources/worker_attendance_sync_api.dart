@@ -14,11 +14,30 @@ class WorkerAttendanceSyncApi {
     : _client = client ?? ApiClient();
 
   /// GET attendance/departmentwise_attendance — the check-ins and check-outs
-  /// the server holds for the supervisor's department. Response:
-  /// `{"success", "message", "department_id", "total", "data": [...]}`, with
-  /// each row shaped like [RemoteWorkerAttendance.fromJson]. Errors propagate.
+  /// the server holds for the supervisor's department. Used for the first
+  /// Employee Attendance fetch. Response:
+  /// `{"success", "message", "department_id", "total", "data": [...]}`.
+  /// Errors propagate.
   Future<List<RemoteWorkerAttendance>> fetchDepartmentAttendance() async {
     final data = await _client.get(ApiRoutes.departmentwiseAttendance);
+    return _parseDepartmentAttendance(data);
+  }
+
+  /// POST attendance/departmentwise_attendance_data with `{"date": ...}` (UTC
+  /// ISO), the time of the last successful Employee Attendance call. Returns
+  /// the same response structure as [fetchDepartmentAttendance]. Errors
+  /// propagate, so a failed call never moves the stored time.
+  Future<List<RemoteWorkerAttendance>> fetchDepartmentAttendanceData(
+    DateTime date,
+  ) async {
+    final data = await _client.post(
+      ApiRoutes.departmentwiseAttendanceData,
+      data: {'date': date.toUtc().toIso8601String()},
+    );
+    return _parseDepartmentAttendance(data);
+  }
+
+  List<RemoteWorkerAttendance> _parseDepartmentAttendance(dynamic data) {
     if (data is! Map || data['data'] is! List) {
       throw ApiException('Unexpected attendance response from the server.');
     }

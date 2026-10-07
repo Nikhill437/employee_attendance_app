@@ -103,28 +103,29 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     }
   }
 
+  /// Whether this tap should send only the worker's profile change. That
+  /// applies to a non-Pending worker with a pending department or type change
+  /// whose attendance can't go yet (not checked out, or the task isn't
+  /// Approved/Rejected).
+  bool _isProfileOnlySync(Worker worker) {
+    if (worker.status == 'pending') return false;
+    if (!worker.hasPendingDepartmentOrTypeChange) return false;
+    final attendanceReady =
+        worker.hasCheckedOutToday &&
+        (worker.taskStatus == 'approved' || worker.taskStatus == 'rejected');
+    return !attendanceReady;
+  }
+
   /// Pushes a single worker to the backend — the sync endpoint only takes
   /// one worker per call, so this runs per-card rather than as a bulk
   /// "sync everyone" action.
   Future<void> _syncWorker(Worker worker) async {
     final messenger = ScaffoldMessenger.of(context);
-    // Only approved workers push their task review, so only they are held
-    // back while that review is still pending. Pending/rejected workers
-    // sync as before.
-    if (worker.status == 'approved' && worker.taskStatus == 'pending') {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Work task status is pending. Change status of those task and then sync.',
-          ),
-        ),
-      );
-      return;
-    }
     final error = await _viewModel.syncWorker(
       worker.employeeId,
       worker.workerId,
       status: worker.status,
+      profileOnly: _isProfileOnlySync(worker),
     );
     if (!mounted) return;
     messenger.showSnackBar(
@@ -223,6 +224,8 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
           workerName: worker.name,
           employeeId: worker.employeeId,
           department: worker.department,
+          remoteWorkerId: worker.remoteWorkerId,
+          remoteEmployeeId: worker.remoteEmployeeId,
           status: worker.status,
         ),
       ),
@@ -448,14 +451,14 @@ class _SummaryCard extends StatelessWidget {
               ),
             ),
             const VerticalDivider(width: 1, color: AppColors.cardBorder),
-            Expanded(
-              child: _SummaryTile(
-                label: 'CHECKED IN',
-                value: checkedIn,
-                color: AppColors.success,
-              ),
-            ),
-            const VerticalDivider(width: 1, color: AppColors.cardBorder),
+            // Expanded(
+            //   child: _SummaryTile(
+            //     label: 'CHECKED IN',
+            //     value: checkedIn,
+            //     color: AppColors.success,
+            //   ),
+            // ),
+            // const VerticalDivider(width: 1, color: AppColors.cardBorder),
             Expanded(
               child: _SummaryTile(
                 label: 'SYNCED',
@@ -571,7 +574,8 @@ class _WorkerCard extends StatelessWidget {
               // Edit is offered only while the worker is Pending and not yet
               // synced (s_sync 0). Approved and Rejected workers' details are
               // locked, and a synced Pending worker can't be edited.
-              if (worker.status == 'pending' && !worker.isSynced)
+              if ((worker.status == 'pending' && !worker.isSynced) ||
+                  worker.status == 'rejected')
                 IconButton(
                   tooltip: 'Edit worker',
                   visualDensity: VisualDensity.compact,
@@ -617,38 +621,32 @@ class _WorkerCard extends StatelessWidget {
   /// unsynced checkout sitting in `worker_attendance`.
   bool get _effectiveSynced => worker.isFullySynced;
 
-  /// A Verified worker's sync button only unlocks once today's full
-  /// check-in/checkout cycle is done, so a partial day's data is never
-  /// pushed early. A not-yet-verified worker (new or locally edited) is
-  /// unaffected by this and stays tappable as soon as there's anything to
-  /// push.
-  ///
-  /// Status decides which rule applies:
-  /// - Not Approved and not Rejected (Pending): always tappable, with no
-  ///   check-in/checkout requirement.
-  /// - Approved and checked in today but not checked out: blocked until
-  ///   checkout is recorded.
-  /// - Approved, not checked in today, with a department or enrollment type
-  ///   change not yet synced: tappable.
-  /// - Everything else (Approved without a check-in today, or Rejected):
-  ///   the rule above applies unchanged.
+  /// The NOT SYNCED / SYNCED button is tappable only when the worker isn't
+  /// synced yet, today's checkout is recorded, and today's task status is
+  /// Approved or Rejected. A Pending task status (or no task row today)
+  /// keeps it disabled.
   bool get _canTapSync {
     if (_effectiveSynced) return false;
-    final isApproved = worker.status == 'approved';
-    final isRejected = worker.status == 'rejected';
-    if (!isApproved && !isRejected) return true;
-    if (isApproved && worker.hasCheckedInToday && !worker.hasCheckedOutToday) {
+    // A Pending worker can sync without a checkout or task status.
+    if (worker.status == 'pending') return true;
+    // Checked in but not out yet: nothing to sync until checkout.
+    if (worker.status == 'approved' &&
+        worker.hasCheckedInToday &&
+        !worker.hasCheckedOutToday) {
       return false;
     }
-    // An Approved worker who hasn't checked in today can sync a department
-    // or enrollment type change.
-    if (isApproved &&
-        !worker.hasCheckedInToday &&
-        worker.hasPendingDepartmentOrTypeChange) {
-      return true;
-    }
-    if (worker.verification != VerificationStatus.verified) return true;
-    return worker.hasCheckedInToday && worker.hasCheckedOutToday;
+    // An unsynced department or enrollment-type change can always sync. If
+    // the attendance can't go yet, only the profile change is sent.
+    if (worker.hasPendingDepartmentOrTypeChange) return true;
+    // Approved, no check-in today: the checkout/task-status rule below only
+    // protects *today's* cycle, which doesn't exist yet here. Having reached
+    // this line unsynced with nothing happening today means a previous day's
+    // record is still pending, and the Approved sync path below already
+    // pushes every unsynced day, not just today's.
+    if (worker.status == 'approved' && !worker.hasCheckedInToday) return true;
+    final taskStatus = worker.taskStatus;
+    return worker.hasCheckedOutToday &&
+        (taskStatus == 'approved' || taskStatus == 'rejected');
   }
 
   /// Once today's attendance has both a check-in and a check-out, there's
@@ -1111,7 +1109,7 @@ class _StatusText extends StatelessWidget {
 /// One option in the attendance filter sheet.
 class _FilterChoice {
   final String label;
-  final AttendanceStatus? status;
+  final AttendanceFilter? status;
 
   const _FilterChoice(this.label, this.status);
 }
@@ -1121,8 +1119,8 @@ class _AttendanceFilterSheet extends StatelessWidget {
 
   static const List<_FilterChoice> _choices = [
     _FilterChoice('All workers', null),
-    _FilterChoice('Present only', AttendanceStatus.present),
-    _FilterChoice('Absent only', AttendanceStatus.absent),
+    _FilterChoice('Check In', AttendanceFilter.checkIn),
+    _FilterChoice('Check Out', AttendanceFilter.checkOut),
   ];
 
   @override

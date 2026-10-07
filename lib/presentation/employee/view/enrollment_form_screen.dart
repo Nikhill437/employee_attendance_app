@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/network/api_config.dart';
-import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../core/utils/input_formatters.dart';
@@ -51,6 +50,9 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
   static const List<String> _steps = ['Details', 'Face Capture', 'Complete'];
 
   static const int _fullNameMaxLength = 100;
+  static const int _nationalIdMaxLength = 20;
+  static const int _addressMaxLength = 500;
+  static const int _noteMaxLength = 500;
 
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
@@ -87,7 +89,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
   bool get _detailsLocked {
     if (!_isEditing) return false;
     final status = _formViewModel.workerStatus ?? widget.editingWorker?.status;
-    return status == 'approved' || status == 'rejected';
+    return status == 'approved';
   }
 
   @override
@@ -96,7 +98,10 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     final editing = widget.editingWorker;
     _formViewModel =
         widget.formViewModel ??
-        EnrollmentFormViewModel(initialDepartmentId: editing?.departmentId);
+        EnrollmentFormViewModel(
+          initialDepartmentId: editing?.departmentId,
+          initialTaskId: editing?.taskId,
+        );
     _taskNoteController.addListener(
       () => _formViewModel.setTaskNote(_taskNoteController.text),
     );
@@ -121,6 +126,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       );
       final workerId = editing.id;
       if (workerId != null) _formViewModel.loadWorkerStatus(workerId);
+      if (workerId != null) _formViewModel.loadDepartmentLock(workerId);
       if (_formViewModel.remoteNationalIdImage != null) _loadAuthToken();
     }
 
@@ -308,51 +314,52 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
         children: [
           AppScreenHeader(
             title: _isEditing ? 'Edit Employee' : 'New Enrollment',
-            subtitle: _isEditing
-                ? widget.editingWorker!.name
-                : 'Supervisor Panel',
+            subtitle: _isEditing ? "Edit employee details" : 'Supervisor Panel',
             showBack: true,
           ),
+          // No bottomNavigationBar on this screen, so the Save button at the
+          // bottom of the list needs its own clearance from the system
+          // navigation bar/gesture area.
           Expanded(
-            child: ListenableBuilder(
-              listenable: Listenable.merge([
-                _formViewModel,
-                _employeeViewModel,
-              ]),
-              builder: (context, _) => ListView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                children: [
-                  if (!_isEditing) ...[
-                    const AppCard(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 14,
+            child: SafeArea(
+              top: false,
+              child: ListenableBuilder(
+                listenable: Listenable.merge([
+                  _formViewModel,
+                  _employeeViewModel,
+                ]),
+                builder: (context, _) => ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  children: [
+                    if (!_isEditing) ...[
+                      const AppCard(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
+                        child: AppStepIndicator(steps: _steps, currentStep: 0),
                       ),
-                      child: AppStepIndicator(steps: _steps, currentStep: 0),
+                      const SizedBox(height: 16),
+                    ],
+                    _buildDetailsCard(),
+                    const SizedBox(height: 20),
+                    AppPrimaryButton(
+                      label: _isEditing
+                          ? 'Save Changes'
+                          : 'Proceed to Face Capture',
+                      isBusy: _isEditing
+                          ? _formViewModel.isSavingDepartment
+                          : _employeeViewModel.isSaving,
+                      onPressed: _isEditing
+                          ? _saveEdits
+                          : _proceedToFaceCapture,
                     ),
-                    const SizedBox(height: 16),
                   ],
-                  _buildDetailsCard(),
-                  const SizedBox(height: 20),
-                  AppPrimaryButton(
-                    label: _isEditing
-                        ? 'Save Changes'
-                        : 'Proceed to Face Capture',
-                    isBusy: _isEditing
-                        ? _formViewModel.isSavingDepartment
-                        : _employeeViewModel.isSaving,
-                    onPressed: _isEditing ? _saveEdits : _proceedToFaceCapture,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
         ],
-      ),
-      bottomNavigationBar: AppBottomNavBar(
-        current: AppSection.workers,
-        onSectionSelected: (target) =>
-            switchToSection(context, AppSection.workers, target),
       ),
     );
   }
@@ -406,6 +413,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               icon: Icons.badge_outlined,
               controller: _nationalIdController,
               enabled: !_detailsLocked,
+              maxLength: _nationalIdMaxLength,
               inputFormatters: AppInputFormatters.alphanumericUppercase,
               validator: (v) => _requireText(v, 'Enter the National ID'),
             ),
@@ -445,6 +453,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               controller: _addressController,
               minLines: 3,
               maxLines: 4,
+              maxLength: _addressMaxLength,
               enabled: !_detailsLocked,
               validator: (v) => _requireText(v, 'Enter the address'),
             ),
@@ -452,6 +461,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             AppDropdownField<Department>(
               label: 'Department',
               isRequired: true,
+              enabled: !_formViewModel.departmentLocked,
               hint: _formViewModel.isLoadingDepartments
                   ? 'Loading departments...'
                   : 'Select department',
@@ -463,6 +473,13 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               validator: (department) =>
                   department == null ? 'Select the department' : null,
             ),
+            if (_formViewModel.departmentLocked) ...[
+              const SizedBox(height: 6),
+              const Text(
+                'Check out for today before changing the department.',
+                style: TextStyle(fontSize: 12.5, color: AppColors.muted),
+              ),
+            ],
             const SizedBox(height: 18),
             AppDropdownField<Task>(
               label: 'Task',
@@ -505,6 +522,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
                 controller: _taskNoteController,
                 minLines: 2,
                 maxLines: 3,
+                maxLength: _noteMaxLength,
               ),
             ],
             const SizedBox(height: 18),

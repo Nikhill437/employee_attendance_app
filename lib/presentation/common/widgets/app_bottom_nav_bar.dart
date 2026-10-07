@@ -46,18 +46,25 @@ class AppBottomNavBar extends StatelessWidget {
           (states) => IconThemeData(size: 24, color: _colorFor(states)),
         ),
       ),
-      child: NavigationBar(
-        height: 68,
-        selectedIndex: current.index,
-        onDestinationSelected: (index) =>
-            onSectionSelected(AppSection.values[index]),
-        destinations: [
-          for (final section in AppSection.values)
-            NavigationDestination(
-              icon: Icon(section.icon),
-              label: section.label,
-            ),
-        ],
+      // Scaffold hands its bottomNavigationBar the full system bottom inset
+      // (unlike body, which it already strips that inset from when this bar
+      // is present) — so this bar, not any screen that hosts it, is what
+      // needs to stay clear of the system navigation bar/gesture area.
+      child: SafeArea(
+        top: false,
+        child: NavigationBar(
+          height: 68,
+          selectedIndex: current.index,
+          onDestinationSelected: (index) =>
+              onSectionSelected(AppSection.values[index]),
+          destinations: [
+            for (final section in AppSection.values)
+              NavigationDestination(
+                icon: Icon(section.icon),
+                label: section.label,
+              ),
+          ],
+        ),
       ),
     );
   }

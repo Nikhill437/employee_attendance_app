@@ -1,3 +1,4 @@
+import '../../dashboard/viewmodel/dashboard_viewmodel.dart';
 import '../../../core/base/base_view_model.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
@@ -20,6 +21,7 @@ class SettingsViewModel extends BaseViewModel {
     safeNotify();
 
     await _sessionRepository.logout();
+    DashboardViewModel.resetSessionNotices();
     await AppTime.clear();
 
     _isLoggingOut = false;

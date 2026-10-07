@@ -31,3 +31,14 @@ const ServerSyncTimeStore lastTaskServerTime = ServerSyncTimeStore(
 const ServerSyncTimeStore lastDepartmentServerTime = ServerSyncTimeStore(
   'last_department_server_time',
 );
+
+/// The Employee Attendance button's last successful call time, sent as
+/// `date` on the next incremental call. Saved only after the rows are stored.
+const ServerSyncTimeStore lastDepartmentAttendanceCallTime =
+    ServerSyncTimeStore('last_department_attendance_call_time');
+
+/// The Worker Tasks download's stored server time. Kept separate from the
+/// Worker List time. Saved only after tasks are stored locally.
+const ServerSyncTimeStore lastWorkerTaskServerTime = ServerSyncTimeStore(
+  'last_worker_task_server_time',
+);

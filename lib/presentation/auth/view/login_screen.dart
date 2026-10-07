@@ -142,6 +142,8 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 28),
             AppPrimaryButton(label: 'Login', onPressed: _login),
+            SizedBox(height: 8),
+            TextButton(onPressed: ()=> Navigator.pop(context), child: Text('Go Back', style: TextStyle(color: Colors.white),)),
           ],
         ),
       ),

@@ -78,64 +78,69 @@ class _CreateAttendanceScreenState extends State<CreateAttendanceScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create Attendance')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Employee Name',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person),
+      // AppBar already handles the top inset; this adds the bottom one,
+      // since there's no bottomNavigationBar here to absorb it.
+      body: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20.0),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextFormField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Employee Name',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.person),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Enter employee name'
+                      : null,
                 ),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Enter employee name'
-                    : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _numberController,
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _numberController,
 
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: 'Phone Number',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.phone),
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: 'Phone Number',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.phone),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Enter phone number'
+                      : null,
                 ),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Enter phone number'
-                    : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _employeeIdController,
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _employeeIdController,
 
-                decoration: const InputDecoration(
-                  labelText: 'Employee ID',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.badge),
+                  decoration: const InputDecoration(
+                    labelText: 'Employee ID',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.badge),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Enter employee ID'
+                      : null,
                 ),
-                validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'Enter employee ID'
-                    : null,
-              ),
-              const SizedBox(height: 24),
-              ListenableBuilder(
-                listenable: _viewModel,
-                builder: (context, _) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildFaceCaptureCard(),
-                    const SizedBox(height: 24),
-                    _buildSubmitButton(),
-                  ],
+                const SizedBox(height: 24),
+                ListenableBuilder(
+                  listenable: _viewModel,
+                  builder: (context, _) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildFaceCaptureCard(),
+                      const SizedBox(height: 24),
+                      _buildSubmitButton(),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

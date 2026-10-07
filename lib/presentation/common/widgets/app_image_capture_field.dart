@@ -188,17 +188,20 @@ class _RetakeChip extends StatelessWidget {
       borderRadius: BorderRadius.circular(6),
       onTap: onTap,
       child: Container(
+        height: 40,
+        width: 100,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(6),
         ),
         child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.refresh, size: 14, color: Colors.white),
+            Icon(Icons.refresh, size: 16, color: Colors.white),
             SizedBox(width: 4),
-            Text('Retake', style: TextStyle(fontSize: 12, color: Colors.white)),
+            Text('Retake', style: TextStyle(fontSize: 14, color: Colors.white)),
           ],
         ),
       ),

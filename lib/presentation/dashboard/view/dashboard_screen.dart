@@ -30,26 +30,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     _ownsViewModel = widget.viewModel == null;
     _viewModel = widget.viewModel ?? DashboardViewModel();
-    _viewModel.load();
-    _syncLookupsOnOpen();
-  }
-
-  /// Refreshes the local departments/tasks caches whenever the supervisor
-  /// lands on the dashboard — in practice, right after login, since that's
-  /// where login_screen.dart sends them. Silent: a background refresh
-  /// failing shouldn't pop an error over the dashboard the supervisor just
-  /// opened, unlike the same calls through the manual "Refresh" buttons.
-  Future<void> _syncLookupsOnOpen() async {
-    try {
-      await _viewModel.fetchDepartments();
-    } catch (_) {
-      // Ignored — the manual "Refresh" button surfaces failures instead.
-    }
-    try {
-      await _viewModel.fetchTasks();
-    } catch (_) {
-      // Ignored — see above.
-    }
+    _viewModel.load().then((_) {
+      if (!mounted || !_viewModel.takePendingSyncNotice()) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Data is remaining to be synced to server.'),
+        ),
+      );
+    });
   }
 
   @override
@@ -171,28 +159,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 14),
                 _ImportWorkersCard(
                   isImporting: _viewModel.isImportingWorkers,
-                  onPressed: _importWorkers,
+                  onPressed: _viewModel.canRunSetupStep(1)
+                      ? _importWorkers
+                      : null,
                   updatedCount: _viewModel.updatedCounts.workerCount,
                 ),
                 const SizedBox(height: 14),
                 _FetchWorkerTasksCard(
                   isFetching: _viewModel.isFetchingWorkerTasks,
-                  onPressed: _fetchWorkerTasks,
+                  onPressed: _viewModel.canRunSetupStep(2)
+                      ? _fetchWorkerTasks
+                      : null,
                 ),
                 const SizedBox(height: 14),
                 _FetchAttendanceCard(
                   isFetching: _viewModel.isFetchingAttendance,
-                  onPressed: _fetchAttendance,
+                  onPressed: _viewModel.canRunSetupStep(3)
+                      ? _fetchAttendance
+                      : null,
                 ),
                 const SizedBox(height: 14),
-                _RefreshLookupsCard(
-                  isFetchingDepartments: _viewModel.isFetchingDepartments,
-                  isFetchingTasks: _viewModel.isFetchingTasks,
-                  onFetchDepartments: _fetchDepartments,
-                  onFetchTasks: _fetchTasks,
-                  updatedDepartmentCount:
-                      _viewModel.updatedCounts.departmentCount,
-                  updatedTaskCount: _viewModel.updatedCounts.taskCount,
+                _FetchCard(
+                  label: 'DEPARTMENTS',
+                  description: 'Fetch the latest departments from the server',
+                  isFetching: _viewModel.isFetchingDepartments,
+                  onPressed: _fetchDepartments,
+                  updatedCount: _viewModel.updatedCounts.departmentCount,
+                ),
+                const SizedBox(height: 14),
+                _FetchCard(
+                  label: 'TASKS',
+                  description: 'Fetch the latest tasks from the server',
+                  isFetching: _viewModel.isFetchingTasks,
+                  onPressed: _fetchTasks,
+                  updatedCount: _viewModel.updatedCounts.taskCount,
                 ),
                 const SizedBox(height: 14),
                 // _EmployeesPreviewCard(
@@ -463,7 +463,7 @@ class _UpdatedCountBadge extends StatelessWidget {
 /// fetch, not a cap on what actually comes back.
 class _ImportWorkersCard extends StatelessWidget {
   final bool isImporting;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final int updatedCount;
 
   const _ImportWorkersCard({
@@ -482,6 +482,13 @@ class _ImportWorkersCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Step 1:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                ),
                 const SectionLabel('EMPLOYEE LIST DATA'),
                 const SizedBox(height: 6),
                 const Text(
@@ -532,11 +539,89 @@ class _ImportWorkersCard extends StatelessWidget {
   }
 }
 
+/// A download action in the same style as the Worker List card: a section
+/// label, a one-line description, the "New data available" badge when
+/// [updatedCount] is above zero, and the Download button.
+class _FetchCard extends StatelessWidget {
+  final String label;
+  final String description;
+  final bool isFetching;
+  final VoidCallback onPressed;
+  final int updatedCount;
+
+  const _FetchCard({
+    required this.label,
+    required this.description,
+    required this.isFetching,
+    required this.onPressed,
+    this.updatedCount = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionLabel(label),
+                const SizedBox(height: 6),
+                Text(
+                  description,
+                  style: const TextStyle(fontSize: 13, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              if (updatedCount > 0) ...[
+                _UpdatedCountBadge(count: updatedCount),
+                const SizedBox(height: 6),
+              ],
+              ElevatedButton.icon(
+                onPressed: isFetching ? null : onPressed,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.deepGreen,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  shape: const StadiumBorder(),
+                ),
+                icon: isFetching
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.cloud_download_outlined, size: 16),
+                label: Text(isFetching ? 'Fetching...' : 'Download'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Downloads the department's check-ins and check-outs into the local
 /// `worker_attendance` table.
 class _FetchAttendanceCard extends StatelessWidget {
   final bool isFetching;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _FetchAttendanceCard({
     required this.isFetching,
@@ -553,6 +638,13 @@ class _FetchAttendanceCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Step 3:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                ),
                 const SectionLabel('EMPLOYEE ATTENDANCE'),
                 const SizedBox(height: 6),
                 const Text(
@@ -592,7 +684,7 @@ class _FetchAttendanceCard extends StatelessWidget {
 
 class _FetchWorkerTasksCard extends StatelessWidget {
   final bool isFetching;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _FetchWorkerTasksCard({
     required this.isFetching,
@@ -609,6 +701,13 @@ class _FetchWorkerTasksCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'Step 2:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.ink,
+                  ),
+                ),
                 const SectionLabel('EMPLOYEE TASKS LIST'),
                 const SizedBox(height: 6),
                 const Text(
@@ -642,107 +741,6 @@ class _FetchWorkerTasksCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Two independent refresh actions for the local `departments`/`tasks`
-/// caches — each hits its own endpoint
-/// (`attendance/searchDept`/`attendance/list_task`) and can be refreshed
-/// on its own.
-class _RefreshLookupsCard extends StatelessWidget {
-  final bool isFetchingDepartments;
-  final bool isFetchingTasks;
-  final VoidCallback onFetchDepartments;
-  final VoidCallback onFetchTasks;
-  final int updatedDepartmentCount;
-  final int updatedTaskCount;
-
-  const _RefreshLookupsCard({
-    required this.isFetchingDepartments,
-    required this.isFetchingTasks,
-    required this.onFetchDepartments,
-    required this.onFetchTasks,
-    required this.updatedDepartmentCount,
-    required this.updatedTaskCount,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionLabel('REFERENCE DATA'),
-          const SizedBox(height: 12),
-          _RefreshRow(
-            label: 'Departments',
-            isFetching: isFetchingDepartments,
-            onPressed: onFetchDepartments,
-            updatedCount: updatedDepartmentCount,
-          ),
-          const Divider(height: 20, color: AppColors.cardBorder),
-          _RefreshRow(
-            label: 'Tasks',
-            isFetching: isFetchingTasks,
-            onPressed: onFetchTasks,
-            updatedCount: updatedTaskCount,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RefreshRow extends StatelessWidget {
-  final String label;
-  final bool isFetching;
-  final VoidCallback onPressed;
-  final int updatedCount;
-
-  const _RefreshRow({
-    required this.label,
-    required this.isFetching,
-    required this.onPressed,
-    required this.updatedCount,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Row(
-            children: [
-              Text(
-                label,
-                style: const TextStyle(fontSize: 14.5, color: AppColors.ink),
-              ),
-              const SizedBox(width: 8),
-              _UpdatedCountBadge(count: updatedCount),
-            ],
-          ),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: AppColors.cardBorder),
-          ),
-          child: IconButton(
-            onPressed: isFetching ? null : onPressed,
-            iconSize: 18,
-            color: AppColors.deepGreen,
-            icon: isFetching
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh),
-            tooltip: 'Refresh $label',
-          ),
-        ),
-      ],
     );
   }
 }
@@ -924,7 +922,7 @@ class _AttendanceCard extends StatelessWidget {
             children: [
               Expanded(
                 child: _MiniStat(
-                  label: 'In',
+                  label: 'Check In',
                   value: summary.checkedIn,
                   color: AppColors.success,
                 ),
@@ -932,19 +930,19 @@ class _AttendanceCard extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: _MiniStat(
-                  label: 'Out',
+                  label: 'Check Out',
                   value: summary.checkedOut,
                   color: AppColors.warning,
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _MiniStat(
-                  label: 'Pending',
-                  value: summary.pendingEntries,
-                  color: AppColors.danger,
-                ),
-              ),
+              // const SizedBox(width: 10),
+              // Expanded(
+              //   child: _MiniStat(
+              //     label: 'Pending',
+              //     value: summary.pendingEntries,
+              //     color: AppColors.danger,
+              //   ),
+              // ),
             ],
           ),
           const SizedBox(height: 14),

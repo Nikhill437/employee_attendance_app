@@ -81,6 +81,9 @@ class AttendanceSubmissionRepository {
         'check_out_time': _formatTimestamp(attendance.checkOutTime),
         'check_in_face_verified': attendance.checkInFaceVerified ? 1 : 0,
         'check_out_face_verified': attendance.checkOutFaceVerified ? 1 : 0,
+        // The server's id, once a first sync has returned it. Absent before
+        // then, so the server creates the record.
+        'attendance_id': ?attendance.realAttendanceId,
       },
       tasks: taskPayloads,
       workerTasks: workerTaskPayloads,
@@ -151,6 +154,8 @@ class AttendanceSubmissionRepository {
               'check_out_face_verified': attendance.checkOutFaceVerified
                   ? 1
                   : 0,
+              // The server's id, once a first sync has returned it.
+              'attendance_id': ?attendance.realAttendanceId,
             },
           )
           .toList(),
@@ -176,7 +181,9 @@ class AttendanceSubmissionRepository {
     }
 
     for (final match in _matchWorkerTasks(
+      realWorkerId,
       pendingAssignments,
+      result.attendances,
       result.workerTasks,
     )) {
       await _dbHelper.markWorkerTaskSynced(
@@ -189,43 +196,71 @@ class AttendanceSubmissionRepository {
     await _dbHelper.markWorkerSyncedById(workerId);
   }
 
-  /// Matches [SyncDataApi.submit]'s response `worker_tasks` entries back
-  /// to the local rows that were actually submitted in [pending] — not by
-  /// task_id alone, since each day now gets its own `worker_tasks` row, so
-  /// a backlog sync can legitimately include several entries sharing the
-  /// same task_id (one per unsynced day). Primarily matched by (task_id,
-  /// task_date); falls back to matching by task_id alone — against
-  /// whichever local row (oldest first, since [pending] already comes back
-  /// in that order) hasn't been matched yet — for a response that doesn't
-  /// echo task_date back, since that's not confirmed either way against a
-  /// real backend yet.
+  /// Matches [SyncDataApi.submit]'s response `worker_tasks` entries back to
+  /// the local rows that were submitted. An entry matches a row only when
+  /// every key the response sent agrees: the backend `worker_id`, the
+  /// `task_id`, the `attendance_id` of that row's day (from the response's
+  /// attendances), and `created_at` to the second (the server's format may
+  /// differ from ours). A key the response leaves out isn't checked. An
+  /// entry that matches no row is skipped, so it's sent again on the next
+  /// sync rather than attached to the wrong row.
   List<MapEntry<WorkerTask, SyncedWorkerTask>> _matchWorkerTasks(
+    int realWorkerId,
     List<WorkerTask> pending,
+    List<SyncedAttendance> attendances,
     List<SyncedWorkerTask> synced,
   ) {
+    final attendanceIdByDate = {
+      for (final attendance in attendances)
+        attendance.attendanceDate: attendance.attendanceId,
+    };
     final remaining = List<WorkerTask>.from(pending);
     final matches = <MapEntry<WorkerTask, SyncedWorkerTask>>[];
 
     for (final entry in synced) {
       WorkerTask? match;
-      if (entry.taskDate != null) {
-        for (final candidate in remaining) {
-          if (candidate.taskId == entry.taskId &&
-              candidate.taskDate == entry.taskDate) {
-            match = candidate;
-            break;
-          }
+      for (final candidate in remaining) {
+        if (_matchesEntry(candidate, entry, realWorkerId, attendanceIdByDate)) {
+          match = candidate;
+          break;
         }
       }
-      match ??= remaining.cast<WorkerTask?>().firstWhere(
-        (candidate) => candidate!.taskId == entry.taskId,
-        orElse: () => null,
-      );
       if (match == null) continue;
       matches.add(MapEntry(match, entry));
       remaining.remove(match);
     }
     return matches;
+  }
+
+  bool _matchesEntry(
+    WorkerTask candidate,
+    SyncedWorkerTask entry,
+    int realWorkerId,
+    Map<String, int?> attendanceIdByDate,
+  ) {
+    if (candidate.taskId != entry.taskId) return false;
+    if (entry.workerId != null && entry.workerId != realWorkerId) return false;
+    if (entry.attendanceId != null &&
+        attendanceIdByDate[candidate.taskDate] != entry.attendanceId) {
+      return false;
+    }
+    if (entry.createdAt != null &&
+        !_sameSecond(candidate.createdAt, entry.createdAt!)) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Compares `yyyy-MM-ddTHH:mm:ss` only, ignoring fractional seconds, a
+  /// time zone suffix, or a space in place of the T.
+  bool _sameSecond(String? local, String remote) {
+    if (local == null) return false;
+    String secondOf(String value) {
+      final normalised = value.replaceFirst(' ', 'T');
+      return normalised.length >= 19 ? normalised.substring(0, 19) : normalised;
+    }
+
+    return secondOf(local) == secondOf(remote);
   }
 
   /// Same UTC conversion `WorkerAttendanceSyncApi` already uses — see its

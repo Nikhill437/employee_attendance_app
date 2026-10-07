@@ -41,13 +41,19 @@ class SyncedAttendance {
 class SyncedWorkerTask {
   final int workerTaskId;
   final int taskId;
+
+  /// The backend worker this entry belongs to.
+  final int? workerId;
   final String? taskDate;
   final int? attendanceId;
+
+  /// The `created_at` value the row was submitted with, echoed back.
   final String? createdAt;
 
   const SyncedWorkerTask({
     required this.workerTaskId,
     required this.taskId,
+    this.workerId,
     this.taskDate,
     this.attendanceId,
     this.createdAt,
@@ -60,6 +66,7 @@ class SyncedWorkerTask {
     return SyncedWorkerTask(
       workerTaskId: workerTaskId,
       taskId: taskId,
+      workerId: _asInt(json['worker_id']),
       taskDate: json['task_date'] as String?,
       attendanceId: _asInt(json['attendance_id']),
       createdAt: json['created_at'] as String?,

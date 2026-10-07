@@ -59,6 +59,20 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
               builder: (context, _) => _buildBody(),
             ),
           ),
+          // Same as the header's back arrow: pops this screen if it can. No
+          // bottomNavigationBar here, so this button — unlike one that sits
+          // above AppBottomNavBar — needs its own clearance from the system
+          // navigation bar/gesture area.
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: AppSecondaryButton(
+                label: 'Go Back',
+                onPressed: () => Navigator.maybePop(context),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -91,12 +105,7 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
                     color: AppColors.deepGreen,
                   ),
                   title: Text(task.taskName),
-                  subtitle: _targetRateText(task) == null
-                      ? null
-                      : Text(
-                          _targetRateText(task)!,
-                          style: const TextStyle(color: AppColors.slate),
-                        ),
+                  subtitle: _taskSubtitle(task),
                 ),
                 if (task != _viewModel.tasks.last)
                   const Divider(height: 1, color: AppColors.cardBorder),
@@ -109,12 +118,30 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
   }
 }
 
+/// The target/rate line, then the saved note if there is one.
+Widget? _taskSubtitle(WorkerTask task) {
+  final targetRate = _targetRateText(task);
+  final note = task.taskNote?.trim();
+  final hasNote = note != null && note.isNotEmpty;
+  if (targetRate == null && !hasNote) return null;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (targetRate != null)
+        Text(targetRate, style: const TextStyle(color: AppColors.slate)),
+      if (hasNote)
+        Text('Note: $note', style: const TextStyle(color: AppColors.slate)),
+    ],
+  );
+}
+
 /// "Target: X · Rate: Y" for [task], or null when neither is set. Matches
 /// the format the Assign Task screen uses.
 String? _targetRateText(WorkerTask task) {
   final parts = [
     if (task.taskTarget != null) 'Target: ${task.taskTarget}',
-    if (task.taskRate != null) 'Rate: ${task.taskRate}',
+    // if (task.taskRate != null) 'Rate: ${task.taskRate}',
   ];
   return parts.isEmpty ? null : parts.join(' · ');
 }

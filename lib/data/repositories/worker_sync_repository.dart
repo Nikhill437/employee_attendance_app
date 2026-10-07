@@ -1,5 +1,6 @@
 import '../datasources/worker_sync_api.dart';
 import 'employee_repository.dart';
+import 'hidden_worker_store.dart';
 import 'worker_edit_queue.dart';
 
 /// Pushes one locally enrolled worker to the backend
@@ -10,14 +11,17 @@ class WorkerSyncRepository {
   final WorkerSyncApi _api;
   final EmployeeRepository _employees;
   final WorkerEditQueue _editQueue;
+  final HiddenWorkerStore _hiddenWorkers;
 
   WorkerSyncRepository({
     WorkerSyncApi? api,
     EmployeeRepository? employees,
     WorkerEditQueue? editQueue,
+    HiddenWorkerStore? hiddenWorkers,
   }) : _api = api ?? WorkerSyncApi(),
        _employees = employees ?? EmployeeRepository(),
-       _editQueue = editQueue ?? WorkerEditQueue();
+       _editQueue = editQueue ?? WorkerEditQueue(),
+       _hiddenWorkers = hiddenWorkers ?? HiddenWorkerStore();
 
   /// Syncs the worker enrolled under [employeeId] (their National ID), then
   /// marks them synced locally so the worker list can show it. Throws if
@@ -36,6 +40,9 @@ class WorkerSyncRepository {
       // The backend already has this worker — send just the changed fields.
       final changes = await _editQueue.pendingFor(offlineId);
       await _api.updateWorker(realWorkerId: realId, changes: changes);
+      if (changes.containsKey('department_id')) {
+        await _hiddenWorkers.add(offlineId);
+      }
       await _editQueue.clear(offlineId);
       await _employees.markSynced(employeeId, realWorkerId: realId);
       return;
@@ -47,7 +54,13 @@ class WorkerSyncRepository {
     // edit queue stay as they were, so the sync can be retried. The caller
     // shows the server's message.
     final realWorkerId = await _api.syncWorker(worker);
-    if (offlineId != null) await _editQueue.clear(offlineId);
+    if (offlineId != null) {
+      final pending = await _editQueue.pendingFor(offlineId);
+      if (pending.containsKey('department_id')) {
+        await _hiddenWorkers.add(offlineId);
+      }
+      await _editQueue.clear(offlineId);
+    }
     await _employees.markSynced(employeeId, realWorkerId: realWorkerId);
   }
 }

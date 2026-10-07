@@ -44,105 +44,114 @@ class AttendanceDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Attendance Details')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Column(
-                children: [
-                  CircleAvatar(
-                    radius: 44,
-                    backgroundColor: Colors.green.shade50,
-                    child: Icon(
-                      employee.faceVerified
-                          ? Icons.verified_user
-                          : Icons.person,
-                      size: 46,
-                      color: Colors.green,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    employee.name,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
+      // AppBar already handles the top inset; this adds the bottom one,
+      // since there's no bottomNavigationBar here to absorb it.
+      body: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Column(
+                  children: [
+                    CircleAvatar(
+                      radius: 44,
+                      backgroundColor: Colors.green.shade50,
+                      child: Icon(
                         employee.faceVerified
-                            ? Icons.check_circle
-                            : Icons.cancel,
-                        size: 16,
-                        color: employee.faceVerified
-                            ? Colors.green
-                            : Colors.red,
+                            ? Icons.verified_user
+                            : Icons.person,
+                        size: 46,
+                        color: Colors.green,
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        employee.faceVerified
-                            ? 'Face Verified'
-                            : 'Not Verified',
-                        style: TextStyle(
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      employee.name,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          employee.faceVerified
+                              ? Icons.check_circle
+                              : Icons.cancel,
+                          size: 16,
                           color: employee.faceVerified
                               ? Colors.green
                               : Colors.red,
-                          fontSize: 13,
                         ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 28),
-            Card(
-              elevation: 1,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 6,
-                ),
-                child: Column(
-                  children: [
-                    _infoRow(Icons.badge, 'Employee ID', employee.employeeId),
-                    const Divider(height: 1),
-                    _infoRow(Icons.phone, 'Phone Number', employee.number),
-                    const Divider(height: 1),
-                    _infoRow(
-                      Icons.access_time,
-                      'Attendance Time',
-                      DateTimeFormatter.format(employee.attendanceTime),
+                        const SizedBox(width: 6),
+                        Text(
+                          employee.faceVerified
+                              ? 'Face Verified'
+                              : 'Not Verified',
+                          style: TextStyle(
+                            color: employee.faceVerified
+                                ? Colors.green
+                                : Colors.red,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
                     ),
-                    if (employee.id != null) ...[
-                      const Divider(height: 1),
-                      _infoRow(Icons.tag, 'Record ID', employee.id.toString()),
-                    ],
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 28),
-            SizedBox(
-              height: 50,
-              child: ElevatedButton(
-                onPressed: () =>
-                    Navigator.of(context).popUntil((route) => route.isFirst),
-                child: const Text(
-                  'Back to Home',
-                  style: TextStyle(fontSize: 16),
+              const SizedBox(height: 28),
+              Card(
+                elevation: 1,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 6,
+                  ),
+                  child: Column(
+                    children: [
+                      _infoRow(Icons.badge, 'Employee ID', employee.employeeId),
+                      const Divider(height: 1),
+                      _infoRow(Icons.phone, 'Phone Number', employee.number),
+                      const Divider(height: 1),
+                      _infoRow(
+                        Icons.access_time,
+                        'Attendance Time',
+                        DateTimeFormatter.format(employee.attendanceTime),
+                      ),
+                      if (employee.id != null) ...[
+                        const Divider(height: 1),
+                        _infoRow(
+                          Icons.tag,
+                          'Record ID',
+                          employee.id.toString(),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 28),
+              SizedBox(
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () =>
+                      Navigator.of(context).popUntil((route) => route.isFirst),
+                  child: const Text(
+                    'Back to Home',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

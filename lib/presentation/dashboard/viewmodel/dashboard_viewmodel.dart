@@ -7,6 +7,7 @@ import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/lookup_repository.dart';
 import '../../../data/repositories/updated_counts_repository.dart';
+import '../../../data/repositories/dashboard_setup_store.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 import '../../../data/repositories/worker_import_repository.dart';
 import '../../../data/repositories/worker_task_import_repository.dart';
@@ -38,6 +39,23 @@ class DashboardViewModel extends BaseViewModel {
        _updatedCountsRepository =
            updatedCountsRepository ?? UpdatedCountsRepository();
 
+  final DashboardSetupStore _setupStore = DashboardSetupStore();
+  int _setupCompleted = 0;
+
+  /// Whether the first-time setup button for [step] (1 Worker List, 2 Worker
+  /// Tasks, 3 Employee Attendance) can be pressed. Until all three have
+  /// succeeded, a step unlocks only once the one before it is done. After
+  /// that, every button stays enabled.
+  bool canRunSetupStep(int step) {
+    if (_setupCompleted >= DashboardSetupStore.stepCount) return true;
+    return _setupCompleted >= step - 1;
+  }
+
+  Future<void> _completeSetupStep(int step) async {
+    await _setupStore.markCompleted(step);
+    _setupCompleted = await _setupStore.completedSteps();
+  }
+
   bool _isLoading = true;
   bool _isImportingWorkers = false;
   bool _isFetchingDepartments = false;
@@ -64,24 +82,50 @@ class DashboardViewModel extends BaseViewModel {
   /// Every enrolled employee, for the dashboard's employee list section.
   List<Employee> get roster => _roster;
 
+  /// Whether the "pending sync" notice has been checked yet in this session
+  /// (static, so it survives the dashboard being rebuilt on navigation).
+  static bool _pendingSyncChecked = false;
+
+  /// Set by the first [load] of a session when local data is waiting to
+  /// sync. [takePendingSyncNotice] hands it out once.
+  bool _pendingNoticeDue = false;
+
+  /// Clears the once-per-session notice. Call on logout, so the next login
+  /// gets the notice again.
+  static void resetSessionNotices() => _pendingSyncChecked = false;
+
+  /// True once, if the first load of this session found unsynced local data.
+  bool takePendingSyncNotice() {
+    final due = _pendingNoticeDue;
+    _pendingNoticeDue = false;
+    return due;
+  }
+
   Future<void> load() async {
     _isLoading = true;
     safeNotify();
+    _setupCompleted = await _setupStore.completedSteps();
 
     final enrolled = await _employees.getUnique();
     final presentToday = await _attendance.countPresentOn(
       AppTime.nowInUserZone(),
     );
+    // Today's check-ins and check-outs, from the local worker_attendance rows.
+    final todayAttendance = await _workerAttendance
+        .getTodayAttendanceByWorker();
     _updatedCounts = await _updatedCountsRepository.fetchUpdatedCounts();
 
+    if (!_pendingSyncChecked) {
+      _pendingSyncChecked = true;
+      _pendingNoticeDue = await _workerAttendance.hasUnsyncedData();
+    }
+
     _roster = enrolled;
-    // Every stored log is a check-in — there is no check-out or offline sync
-    // queue in the data layer yet, so those counters stay at their defaults
-    // instead of being filled with placeholder numbers.
     _summary = DashboardSummary(
       totalEmployees: enrolled.length,
       presentToday: presentToday,
-      checkedIn: presentToday,
+      checkedIn: todayAttendance.values.where((a) => a.hasCheckedIn).length,
+      checkedOut: todayAttendance.values.where((a) => a.hasCheckedOut).length,
     );
 
     _isLoading = false;
@@ -103,6 +147,7 @@ class DashboardViewModel extends BaseViewModel {
     safeNotify();
     try {
       final count = await _workerImport.importWorkers();
+      await _completeSetupStep(1);
       await load();
       return count;
     } finally {
@@ -153,23 +198,26 @@ class DashboardViewModel extends BaseViewModel {
     _isFetchingAttendance = true;
     safeNotify();
     try {
-      return await _workerAttendance.importDepartmentAttendance();
+      final count = await _workerAttendance.importDepartmentAttendance();
+      await _completeSetupStep(3);
+      return count;
     } finally {
       _isFetchingAttendance = false;
       safeNotify();
     }
   }
 
-  /// The dashboard's "Fetch Worker Tasks" button: always the full roster
-  /// (`POST attendance/worker_task_list`, no pagination) — see
-  /// WorkerTaskImportRepository.importFromRemote. Upserts into
-  /// `worker_tasks` by (worker, task). Returns how many were fetched;
-  /// lets any failure propagate for the caller to surface.
+  /// The dashboard's "Worker Tasks" button: the full list on the first tap,
+  /// then only changes since the stored Worker Tasks time — see
+  /// WorkerTaskImportRepository.importWorkerTasks. Returns how many were
+  /// fetched; lets any failure propagate for the caller to surface.
   Future<int> fetchWorkerTasks() async {
     _isFetchingWorkerTasks = true;
     safeNotify();
     try {
-      return await _workerTaskImport.importFromRemote();
+      final count = await _workerTaskImport.importWorkerTasks();
+      await _completeSetupStep(2);
+      return count;
     } finally {
       _isFetchingWorkerTasks = false;
       safeNotify();

@@ -18,6 +18,15 @@ class WorkerReportScreen extends StatefulWidget {
   final String? employeeId;
   final String? department;
 
+  /// The backend's own `worker_id`, shown beside the National ID. Null for a
+  /// worker not yet synced or imported.
+  final int? remoteWorkerId;
+
+  /// The backend's `employee_id` (`workers.employee_id`) — distinct from
+  /// [remoteWorkerId] and from [employeeId] (the National ID). Null until
+  /// this worker's been imported/synced.
+  final int? remoteEmployeeId;
+
   /// The backend's approval status ('approved' / 'pending' / 'rejected') —
   /// shown as the header's status pill.
   final String status;
@@ -31,6 +40,8 @@ class WorkerReportScreen extends StatefulWidget {
     required this.workerName,
     this.employeeId,
     this.department,
+    this.remoteWorkerId,
+    this.remoteEmployeeId,
     this.status = 'pending',
     this.viewModel,
   });
@@ -112,10 +123,15 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
       body: Column(
         children: [
           _buildHeader(),
+          // No bottomNavigationBar on this screen, so its list needs its own
+          // clearance from the system navigation bar/gesture area.
           Expanded(
-            child: ListenableBuilder(
-              listenable: _viewModel,
-              builder: (context, _) => _buildBody(),
+            child: SafeArea(
+              top: false,
+              child: ListenableBuilder(
+                listenable: _viewModel,
+                builder: (context, _) => _buildBody(),
+              ),
             ),
           ),
         ],
@@ -148,7 +164,7 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
                     'Employee Profile',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 24,
                       fontWeight: FontWeight.w700,
                       color: Colors.white,
                     ),
@@ -212,11 +228,19 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
     );
   }
 
+  // Department goes on its own line, so a long name wraps instead of being
+  // cut off alongside the IDs on one line.
   String get _subtitle {
     final department = widget.department ?? 'Unassigned';
-    return widget.employeeId == null
-        ? department
-        : '${widget.employeeId} • $department';
+    final nationalId = widget.employeeId;
+    if (nationalId == null) return department;
+    final ids = [
+      nationalId,
+      if (widget.remoteEmployeeId != null)
+        'Employee ID ${widget.remoteEmployeeId}',
+      // if (widget.remoteWorkerId != null) 'Worker ID ${widget.remoteWorkerId}',
+    ];
+    return '${ids.join(' • ')}\n$department';
   }
 
   String get _statusLabel => switch (widget.status) {
@@ -573,37 +597,52 @@ class _DayCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _recordedAtLabel(),
-                style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
-              ),
-              InkWell(
-                onTap: onViewDetails,
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'View day details',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.deepGreen,
-                      ),
-                    ),
-                    SizedBox(width: 2),
-                    Icon(
-                      Icons.chevron_right,
-                      size: 16,
-                      color: AppColors.deepGreen,
-                    ),
-                  ],
-                ),
-              ),
+          const Divider(height: 1, color: AppColors.cardBorder),
+          const SizedBox(height: 10),
+          const SectionLabel('TASKS'),
+          const SizedBox(height: 10),
+          if (day.tasks.isEmpty)
+            const Text(
+              'No tasks recorded for this day.',
+              style: TextStyle(fontSize: 13.5, color: AppColors.muted),
+            )
+          else
+            for (final task in day.tasks) ...[
+              _DayTaskCard(task: task),
+              const SizedBox(height: 10),
             ],
-          ),
+          // const SizedBox(height: 10),
+          // Row(
+          //   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          //   children: [
+          //     Text(
+          //       _recordedAtLabel(),
+          //       style: const TextStyle(fontSize: 11.5, color: AppColors.muted),
+          //     ),
+          //     InkWell(
+          //       onTap: onViewDetails,
+          //       child: const Row(
+          //         mainAxisSize: MainAxisSize.min,
+          //         children: [
+          //           Text(
+          //             'View day details',
+          //             style: TextStyle(
+          //               fontSize: 12.5,
+          //               fontWeight: FontWeight.w700,
+          //               color: AppColors.deepGreen,
+          //             ),
+          //           ),
+          //           SizedBox(width: 2),
+          //           Icon(
+          //             Icons.chevron_right,
+          //             size: 16,
+          //             color: AppColors.deepGreen,
+          //           ),
+          //         ],
+          //       ),
+          //     ),
+          //   ],
+          // ),
         ],
       ),
     );
@@ -742,69 +781,77 @@ class _DayDetailScreen extends StatelessWidget {
                 : '$workerName — ${DateTimeFormatter.dayLabel(date)}',
             showBack: true,
           ),
+          // No bottomNavigationBar on this screen, so its list needs its own
+          // clearance from the system navigation bar/gesture area.
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const SectionLabel('ATTENDANCE'),
-                          _StatusPill(
-                            label: attendance.isSynced
-                                ? 'Synced'
-                                : 'Not synced',
-                            color: attendance.isSynced
-                                ? AppColors.success
-                                : AppColors.warning,
-                            background: attendance.isSynced
-                                ? const Color(0xFFE7F6EC)
-                                : const Color(0xFFFDF3E3),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _TimeColumn(
-                              icon: Icons.login,
-                              label: 'Check in',
-                              time: attendance.checkInTime,
+            child: SafeArea(
+              top: false,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  AppCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const SectionLabel('ATTENDANCE'),
+                            _StatusPill(
+                              label: attendance.isSynced
+                                  ? 'Synced'
+                                  : 'Not synced',
+                              color: attendance.isSynced
+                                  ? AppColors.success
+                                  : AppColors.warning,
+                              background: attendance.isSynced
+                                  ? const Color(0xFFE7F6EC)
+                                  : const Color(0xFFFDF3E3),
                             ),
-                          ),
-                          Expanded(
-                            child: _TimeColumn(
-                              icon: Icons.logout,
-                              label: 'Check out',
-                              time: attendance.checkOutTime,
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _TimeColumn(
+                                icon: Icons.login,
+                                label: 'Check in',
+                                time: attendance.checkInTime,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const SectionLabel('TASKS'),
-                const SizedBox(height: 10),
-                if (day.tasks.isEmpty)
-                  const AppCard(
-                    child: Text(
-                      'No tasks recorded for this day.',
-                      style: TextStyle(fontSize: 13.5, color: AppColors.muted),
+                            Expanded(
+                              child: _TimeColumn(
+                                icon: Icons.logout,
+                                label: 'Check out',
+                                time: attendance.checkOutTime,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                  )
-                else
-                  for (final task in day.tasks) ...[
-                    _DayTaskCard(task: task),
-                    const SizedBox(height: 10),
-                  ],
-              ],
+                  ),
+                  const SizedBox(height: 14),
+                  const SectionLabel('TASKS'),
+                  const SizedBox(height: 10),
+                  if (day.tasks.isEmpty)
+                    const AppCard(
+                      child: Text(
+                        'No tasks recorded for this day.',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          color: AppColors.muted,
+                        ),
+                      ),
+                    )
+                  else
+                    for (final task in day.tasks) ...[
+                      _DayTaskCard(task: task),
+                      const SizedBox(height: 10),
+                    ],
+                ],
+              ),
             ),
           ),
         ],
@@ -821,14 +868,20 @@ class _DayTaskCard extends StatelessWidget {
   const _DayTaskCard({required this.task});
 
   String get _taskStatusLabel => switch (task.taskStatus) {
-    'approved' => 'Approve',
-    'rejected' => 'Reject',
+    'approved' => 'Approved',
+    'rejected' => 'Rejected',
     _ => 'Pending',
+  };
+
+  Color get _taskStatusColor => switch (task.taskStatus) {
+    'approved' => AppColors.deepGreen,
+    'rejected' => AppColors.danger,
+    _ => AppColors.ink,
   };
 
   @override
   Widget build(BuildContext context) {
-    final note = task.note?.trim();
+    final note = task.supervisorNote?.trim();
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -846,16 +899,15 @@ class _DayTaskCard extends StatelessWidget {
                   ),
                 ),
               ),
-              _StatusPill(
-                label: task.status == 'active' ? _taskStatusLabel : 'Inactive',
-                color: task.status == 'active'
-                    ? AppColors.deepGreen
-                    : AppColors.muted,
-                background: const Color(0xFFF2F3F2),
-              ),
             ],
           ),
-          const SizedBox(height: 10),
+
+          _TaskDetailLine(
+            label: 'Task Status',
+            value: _taskStatusLabel,
+            valueColor: _taskStatusColor,
+          ),
+          // const SizedBox(height: 10),
           _TaskDetailLine(
             label: 'Employee quantity',
             value: task.employeeTarget?.toString() ?? 'Not provided',
@@ -864,7 +916,11 @@ class _DayTaskCard extends StatelessWidget {
             label: 'Supervisor quantity',
             value: task.completedTarget?.toString() ?? 'Not reviewed',
           ),
-          _TaskDetailLine(label: 'Review', value: _taskStatusLabel),
+          // _TaskDetailLine(
+          //   label: 'Review',
+          //   value: _taskStatusLabel,
+          //   valueColor: _taskStatusColor,
+          // ),
           if (note != null && note.isNotEmpty)
             _TaskDetailLine(label: 'Note', value: note),
         ],
@@ -877,7 +933,15 @@ class _TaskDetailLine extends StatelessWidget {
   final String label;
   final String value;
 
-  const _TaskDetailLine({required this.label, required this.value});
+  /// Overrides the value's usual muted-ink color — used for the Review
+  /// line, colored by its Approved/Rejected/Pending status.
+  final Color? valueColor;
+
+  const _TaskDetailLine({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -896,7 +960,13 @@ class _TaskDetailLine extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(fontSize: 13, color: AppColors.ink),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: valueColor == null
+                    ? FontWeight.w400
+                    : FontWeight.w700,
+                color: valueColor ?? AppColors.ink,
+              ),
             ),
           ),
         ],

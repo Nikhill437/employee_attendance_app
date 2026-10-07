@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../core/base/base_view_model.dart';
+import '../../../core/utils/app_time.dart';
 import '../../../data/models/department_model.dart';
 import '../../../data/models/worker_task_model.dart';
 import '../../../data/repositories/task_repository.dart';
@@ -44,6 +45,7 @@ class AssignTaskViewModel extends BaseViewModel {
   int? _reviewNumericValue;
   File? _reviewPhoto;
   String _reviewNote = '';
+  bool _workerSynced = false;
   String _reviewTaskStatus = 'pending';
 
   bool get isLoadingTasks => _isLoadingTasks;
@@ -87,7 +89,24 @@ class AssignTaskViewModel extends BaseViewModel {
   /// back to false on its own the moment a new day's row is created (see
   /// DatabaseHelper.getWorkerTasks), since that fresh row always starts
   /// with no real id yet.
-  bool get isReviewLocked => _assignedTask?.realWorkerTaskId != null;
+  /// The review is locked once it's been saved and synced: it has a
+  /// quantity and the worker's record is synced. After a save (or a check-in)
+  /// the worker is NOT SYNCED, so the review stays editable until the next
+  /// sync.
+  /// Whether the shown assignment is today's record. An earlier day's
+  /// persistent assignment is displayed, but nothing can be saved on it until
+  /// the worker checks in and today's record is created.
+  bool get isAssignmentToday => _assignedTask?.taskDate == _todayKey();
+
+  String _todayKey() {
+    final now = AppTime.nowInUserZone();
+    return '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+  }
+
+  bool get isReviewLocked =>
+      _workerSynced && _assignedTask?.completedTarget != null;
 
   File? get _persistedPhoto {
     final path = _assignedTask?.workPhoto;
@@ -107,17 +126,25 @@ class AssignTaskViewModel extends BaseViewModel {
         ? const []
         : await _taskRepository.getTasksByDepartment(departmentId);
 
-    final assignedWorkerTasks = await _taskRepository.getWorkerTasks(workerId);
-    _assignedTask = assignedWorkerTasks.isEmpty
-        ? null
-        : assignedWorkerTasks.first;
+    _assignedTask = await _taskRepository.getCurrentAssignment(workerId);
+    _workerSynced = await _taskRepository.isWorkerSynced(workerId);
 
     _entryNumericValue = _assignedTask?.employeeTarget;
     _entryPhoto = null;
-    _reviewNumericValue = _assignedTask?.completedTarget;
+    // The review is prefilled from today's record, so values saved before
+    // sync are still there. A persistent assignment from an earlier day, or a
+    // new day's record, has no review, so the fields start empty. Last day's
+    // review stays on that day's record.
+    if (isAssignmentToday) {
+      _reviewNumericValue = _assignedTask?.completedTarget;
+      _reviewTaskStatus = _assignedTask?.taskStatus ?? 'pending';
+      _reviewNote = _assignedTask?.supervisorNote ?? '';
+    } else {
+      _reviewNumericValue = null;
+      _reviewTaskStatus = 'pending';
+      _reviewNote = '';
+    }
     _reviewPhoto = null;
-    _reviewNote = _assignedTask?.note ?? '';
-    _reviewTaskStatus = _assignedTask?.taskStatus ?? 'pending';
 
     _isLoadingTasks = false;
     safeNotify();
@@ -134,6 +161,17 @@ class AssignTaskViewModel extends BaseViewModel {
   /// Clears the pending pick, re-opening the dropdown.
   void removePendingTask() {
     _pendingTask = null;
+    _pendingNote = '';
+    safeNotify();
+  }
+
+  String _pendingNote = '';
+
+  /// The optional note for the task picked above, saved with the assignment.
+  String get pendingNote => _pendingNote;
+
+  void setPendingNote(String note) {
+    _pendingNote = note;
     safeNotify();
   }
 
@@ -149,8 +187,14 @@ class AssignTaskViewModel extends BaseViewModel {
     _isSaving = true;
     safeNotify();
 
-    await _taskRepository.assignTask(workerId: workerId, taskId: task.id);
+    final trimmedNote = _pendingNote.trim();
+    await _taskRepository.assignTask(
+      workerId: workerId,
+      taskId: task.id,
+      note: trimmedNote.isEmpty ? null : trimmedNote,
+    );
     _pendingTask = null;
+    _pendingNote = '';
     await loadTasks();
 
     _isSaving = false;
@@ -182,6 +226,7 @@ class AssignTaskViewModel extends BaseViewModel {
   Future<String?> saveWorkerEntry() async {
     final task = _assignedTask;
     if (task == null) return 'No task assigned yet';
+    if (!isAssignmentToday) return 'Check in today first';
     if (_entryNumericValue == null) return 'Quantity is required';
     if (_isSubmittingEntry) return null;
 
@@ -230,6 +275,7 @@ class AssignTaskViewModel extends BaseViewModel {
   Future<String?> saveSupervisorReview() async {
     final task = _assignedTask;
     if (task == null) return 'No task assigned yet';
+    if (!isAssignmentToday) return 'Check in today first';
     if (isReviewLocked) return 'Already synced for today';
     if (_reviewNumericValue == null) return 'Quantity is required';
     if (_isSavingReview) return null;

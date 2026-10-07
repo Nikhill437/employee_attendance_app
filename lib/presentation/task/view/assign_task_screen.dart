@@ -64,6 +64,7 @@ class AssignTaskScreen extends StatefulWidget {
 
 class _AssignTaskScreenState extends State<AssignTaskScreen> {
   late final AssignTaskViewModel _viewModel;
+  final _pendingNoteController = TextEditingController();
 
   @override
   void initState() {
@@ -74,11 +75,15 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
           workerId: widget.workerId,
           initialDepartmentId: widget.initialDepartmentId,
         );
+    _pendingNoteController.addListener(
+      () => _viewModel.setPendingNote(_pendingNoteController.text),
+    );
     _viewModel.loadTasks();
   }
 
   @override
   void dispose() {
+    _pendingNoteController.dispose();
     _viewModel.dispose();
     super.dispose();
   }
@@ -174,9 +179,15 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
         children: [
           _buildHeader(),
           Expanded(
-            child: ListenableBuilder(
-              listenable: _viewModel,
-              builder: (context, _) => _buildBody(),
+            // No bottomNavigationBar on this screen, so (unlike a body that
+            // sits above AppBottomNavBar) its own Save/Assign buttons need
+            // their own clearance from the system navigation bar/gesture area.
+            child: SafeArea(
+              top: false,
+              child: ListenableBuilder(
+                listenable: _viewModel,
+                builder: (context, _) => _buildBody(),
+              ),
             ),
           ),
         ],
@@ -340,10 +351,10 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
             ),
           )
         else ...[
+          // The worker's view doesn't show the rate. The supervisor's view does.
           _CurrentAssignmentBanner(
             taskName: assignedTask.taskName,
             target: assignedTask.taskTarget,
-            rate: assignedTask.taskRate,
           ),
           const SizedBox(height: 18),
           const SectionLabel('WORKER SUBMISSION'),
@@ -480,85 +491,18 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       return _buildDisabledTaskField('No tasks available for this department');
     }
 
-    // Styled to match the Department field and the disabled states above
-    // (same grey fill/border/icon chrome) rather than AppDropdownField's
-    // plain white look, so the three Task-field states on this screen read
-    // as one consistent field instead of visually swapping components.
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text(
-          'Task',
-          style: TextStyle(
-            fontSize: 13.5,
-            fontWeight: FontWeight.w600,
-            color: AppColors.slate,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF2F3F2),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppColors.cardBorder),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.task_alt_outlined,
-                size: 20,
-                color: AppColors.muted,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: SizedBox(
-                  height: 50,
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<Task>(
-                      // DropdownButton is uncontrolled (it only reads `value`
-                      // once) — without a key tied to the selection count, it
-                      // keeps its last pick internally even after that task
-                      // drops out of `items` below, and then crashes ("exactly
-                      // one item with value...") on the next rebuild since
-                      // nothing in `items` matches it anymore. Changing the
-                      // key on every add/remove forces a fresh widget instance
-                      // instead, which really does reset to null.
-                      key: ValueKey(_viewModel.availableTasks.length),
-                      isExpanded: true,
-                      isDense: true,
-                      icon: const Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        color: AppColors.muted,
-                      ),
-                      hint: const Text(
-                        'Select a task to assign',
-                        style: TextStyle(fontSize: 15, color: AppColors.muted),
-                      ),
-                      dropdownColor: Colors.white,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        color: AppColors.ink,
-                      ),
-                      // Always null: picking a task shows it in the pending
-                      // card below and the dropdown resets, rather than
-                      // retaining the pick as its value.
-                      value: null,
-                      items: [
-                        for (final task in _viewModel.availableTasks)
-                          DropdownMenuItem(value: task, child: Text(task.name)),
-                      ],
-                      onChanged: (task) {
-                        if (task != null) _viewModel.addTask(task);
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+    // Shared dropdown (bottom sheet). Always shown with no value: picking a
+    // task puts it in the pending card below, and the field resets.
+    return AppDropdownField<Task>(
+      label: 'Task',
+      hint: 'Select a task to assign',
+      icon: Icons.task_alt_outlined,
+      value: null,
+      items: _viewModel.availableTasks,
+      labelBuilder: (task) => task.name,
+      onChanged: (task) {
+        if (task != null) _viewModel.addTask(task);
+      },
     );
   }
 
@@ -571,7 +515,26 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
 
     return Column(
       children: [
-        _PendingTaskCard(task: pending, onRemove: _viewModel.removePendingTask),
+        _PendingTaskCard(
+          task: pending,
+          onRemove: () {
+            _viewModel.removePendingTask();
+            _pendingNoteController.clear();
+          },
+        ),
+        const SizedBox(height: 15),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: AppFormField(
+            label: 'Note',
+            hint: 'Add an optional note for this task',
+            icon: Icons.notes_outlined,
+            controller: _pendingNoteController,
+            minLines: 2,
+            maxLines: 3,
+            maxLength: 500,
+          ),
+        ),
         const SizedBox(height: 15),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
@@ -892,9 +855,11 @@ class _SupervisorReviewReadOnlyCard extends StatelessWidget {
           _ReadOnlyValueField(
             label: 'Note',
             icon: Icons.notes_outlined,
-            value: (task.note == null || task.note!.trim().isEmpty)
+            value:
+                (task.supervisorNote == null ||
+                    task.supervisorNote!.trim().isEmpty)
                 ? 'No note added'
-                : task.note!,
+                : task.supervisorNote!,
           ),
         ],
       ),

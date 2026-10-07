@@ -13,6 +13,7 @@ import '../../../data/repositories/worker_edit_queue.dart';
 import '../../../data/repositories/lookup_repository.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_repository.dart';
+import '../../../data/repositories/worker_attendance_repository.dart';
 
 /// Holds the selections on the enrollment form that aren't text fields.
 ///
@@ -28,7 +29,12 @@ class EnrollmentFormViewModel extends BaseViewModel {
   final TaskRepository _taskRepository;
   final WorkerEditQueue _editQueue;
   final SupervisorSessionRepository _session;
+  final WorkerAttendanceRepository _workerAttendance;
   final int? initialDepartmentId;
+
+  /// Edit mode only: the task saved on the worker (`workers.task_id`), selected
+  /// once the department's tasks have loaded.
+  final int? initialTaskId;
 
   EnrollmentFormViewModel({
     LookupRepository? lookupRepository,
@@ -36,12 +42,15 @@ class EnrollmentFormViewModel extends BaseViewModel {
     TaskRepository? taskRepository,
     WorkerEditQueue? editQueue,
     SupervisorSessionRepository? session,
+    WorkerAttendanceRepository? workerAttendance,
     this.initialDepartmentId,
+    this.initialTaskId,
   }) : _lookupRepository = lookupRepository ?? LookupRepository(),
        _employeeRepository = employeeRepository ?? EmployeeRepository(),
        _taskRepository = taskRepository ?? TaskRepository(),
        _editQueue = editQueue ?? WorkerEditQueue(),
-       _session = session ?? SupervisorSessionRepository();
+       _session = session ?? SupervisorSessionRepository(),
+       _workerAttendance = workerAttendance ?? WorkerAttendanceRepository();
 
   Gender _gender = Gender.male;
   PayType _enrollmentType = PayType.daily;
@@ -108,6 +117,16 @@ class EnrollmentFormViewModel extends BaseViewModel {
     final selectedDepartment = _department;
     if (selectedDepartment != null) {
       await loadTasksForDepartment(selectedDepartment.id);
+      final savedTaskId = initialTaskId;
+      if (savedTaskId != null) {
+        for (final task in _tasks) {
+          if (task.id == savedTaskId) {
+            _task = task;
+            break;
+          }
+        }
+        safeNotify();
+      }
     }
   }
 
@@ -137,6 +156,22 @@ class EnrollmentFormViewModel extends BaseViewModel {
 
   void selectShiftType(ShiftType? type) {
     _shiftType = type;
+    safeNotify();
+  }
+
+  bool _departmentLocked = false;
+
+  /// True while today's attendance has a check-in but no check-out. The
+  /// department can't change until that day is checked out. Yesterday's
+  /// attendance never counts here.
+  bool get departmentLocked => _departmentLocked;
+
+  /// Reads today's `worker_attendance` for [offlineWorkerId] and sets
+  /// [departmentLocked]. Only today's date is checked.
+  Future<void> loadDepartmentLock(int offlineWorkerId) async {
+    final today = await _workerAttendance.getTodayAttendance(offlineWorkerId);
+    _departmentLocked =
+        today != null && today.hasCheckedIn && !today.hasCheckedOut;
     safeNotify();
   }
 
@@ -308,6 +343,9 @@ class EnrollmentFormViewModel extends BaseViewModel {
     final newImage = _nationalIdImage?.path ?? original.nationalIdImage;
 
     final departmentChanged = department.id != original.departmentId;
+    if (departmentChanged && _departmentLocked) {
+      return 'Check out for today before changing the department';
+    }
     final typeChanged = _enrollmentType != original.payType;
     final shiftChanged = newShift != original.shiftBasedType;
     final nameChanged = trimmedName != original.name;
@@ -332,10 +370,14 @@ class EnrollmentFormViewModel extends BaseViewModel {
         genderChanged ||
         imageChanged;
     if (!anyChange) return null;
+    // A Rejected worker that's edited goes back to Pending, so it can be
+    // reviewed and synced again. The row is updated, not duplicated.
+    final resubmitting = original.status == 'rejected';
     // Only modified_date moves on an edit — created_date is never rewritten.
     final editedAt = AppTime.nowInUserZone().toIso8601String();
 
     final localColumns = <String, Object?>{
+      if (resubmitting) 'status': 'pending',
       if (nameChanged) 'full_name': trimmedName,
       if (nationalIdChanged) 'national_id': trimmedNationalId,
       if (phoneChanged) 'phone_number': trimmedPhone,
@@ -352,6 +394,7 @@ class EnrollmentFormViewModel extends BaseViewModel {
     // Shift is only sent when Shift Based is selected or its shift changed —
     // switching away from Shift Based clears it locally but sends nothing.
     final remoteChanges = <String, String>{
+      if (resubmitting) 'status': 'pending',
       if (nameChanged) 'full_name': trimmedName,
       if (nationalIdChanged) 'national_id': trimmedNationalId,
       if (phoneChanged) 'phone_number': trimmedPhone,
@@ -362,7 +405,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
       if (typeChanged) 'enrollment_type': _enrollmentType.name,
       if (isShiftBased && (typeChanged || shiftChanged))
         'shift_based_type': newShift!,
-      'modified_date': editedAt,
     };
 
     _isSavingDepartment = true;

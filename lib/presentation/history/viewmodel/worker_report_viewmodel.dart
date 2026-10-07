@@ -31,7 +31,7 @@ class WorkerReportViewModel extends BaseViewModel {
   }) : _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
        _tasks = tasks ?? TaskRepository() {
     final today = _dateOnly(AppTime.nowInUserZone());
-    _rangeStart = today.subtract(const Duration(days: 4));
+    _rangeStart = today.subtract(const Duration(days: 29));
     _rangeEnd = today;
   }
 

@@ -48,7 +48,8 @@ class SyncDataApi {
         'completed_target': task.completedTarget,
         'task_status': task.taskStatus,
         'overtime': task.overtime ?? 0,
-        'note': task.note,
+        'task_note': task.taskNote,
+        'supervisor_note': task.supervisorNote,
         'created_at': task.createdAt,
         'task_date': task.taskDate,
       };

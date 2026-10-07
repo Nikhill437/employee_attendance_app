@@ -15,9 +15,19 @@ class TaskRepository {
   Future<List<Task>> getTasksByDepartment(int departmentId) =>
       _dbHelper.getTasksByDepartment(departmentId);
 
+  /// Whether [workerId]'s local record has been synced — see
+  /// DatabaseHelper.isWorkerSynced.
+  Future<bool> isWorkerSynced(int workerId) =>
+      _dbHelper.isWorkerSynced(workerId);
+
   /// Every task currently assigned to [workerId].
   Future<List<WorkerTask>> getWorkerTasks(int workerId) =>
       _dbHelper.getWorkerTasks(workerId);
+
+  /// The persistent assignment the assign screen shows — see
+  /// DatabaseHelper.getCurrentAssignment.
+  Future<WorkerTask?> getCurrentAssignment(int workerId) =>
+      _dbHelper.getCurrentAssignment(workerId);
 
   /// Assigns [taskIds] to [workerId]; already-assigned tasks are silently
   /// skipped (see DatabaseHelper.assignWorkerTasks).

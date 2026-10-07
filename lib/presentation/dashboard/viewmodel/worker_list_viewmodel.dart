@@ -10,6 +10,7 @@ import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/attendance_submission_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
+import '../../../data/repositories/hidden_worker_store.dart';
 import '../../../data/repositories/worker_edit_queue.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_repository.dart';
@@ -20,6 +21,15 @@ import '../../../data/repositories/worker_sync_repository.dart';
 
 /// Builds today's worker list by pairing every enrolled employee with their
 /// first attendance log of the day.
+/// The worker list's attendance filter: today's check-in or check-out.
+enum AttendanceFilter {
+  checkIn('Check In'),
+  checkOut('Check Out');
+
+  const AttendanceFilter(this.label);
+  final String label;
+}
+
 class WorkerListViewModel extends BaseViewModel {
   final EmployeeRepository _employees;
   final AttendanceRepository _attendance;
@@ -31,6 +41,8 @@ class WorkerListViewModel extends BaseViewModel {
   final AttendanceSubmissionRepository _attendanceSubmission;
   final TaskRepository _tasks;
   final WorkerEditQueue _editQueue;
+  final HiddenWorkerStore _hiddenWorkers;
+  Set<int> _hiddenWorkerIds = const {};
 
   WorkerListViewModel({
     EmployeeRepository? employees,
@@ -43,6 +55,7 @@ class WorkerListViewModel extends BaseViewModel {
     AttendanceSubmissionRepository? attendanceSubmission,
     TaskRepository? tasks,
     WorkerEditQueue? editQueue,
+    HiddenWorkerStore? hiddenWorkers,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _sync = sync ?? WorkerSyncRepository(),
@@ -53,7 +66,8 @@ class WorkerListViewModel extends BaseViewModel {
        _attendanceSubmission =
            attendanceSubmission ?? AttendanceSubmissionRepository(),
        _tasks = tasks ?? TaskRepository(),
-       _editQueue = editQueue ?? WorkerEditQueue();
+       _editQueue = editQueue ?? WorkerEditQueue(),
+       _hiddenWorkers = hiddenWorkers ?? HiddenWorkerStore();
 
   bool _isLoading = true;
   bool _isFetchingFromServer = false;
@@ -62,12 +76,12 @@ class WorkerListViewModel extends BaseViewModel {
   final Set<String> _syncingAttendanceIds = {};
   List<Worker> _workers = const [];
   String _query = '';
-  AttendanceStatus? _attendanceFilter;
+  AttendanceFilter? _attendanceFilter;
   int? _supervisorDepartmentId;
 
   bool get isLoading => _isLoading;
   bool get isFetchingFromServer => _isFetchingFromServer;
-  AttendanceStatus? get attendanceFilter => _attendanceFilter;
+  AttendanceFilter? get attendanceFilter => _attendanceFilter;
 
   /// A worker's task actions (Assign/View/Sync Task) only show when
   /// they're approved *and* in the supervisor's own department — both
@@ -104,8 +118,16 @@ class WorkerListViewModel extends BaseViewModel {
   List<Worker> get workers {
     final term = _query.toLowerCase();
     final filtered = _workers.where((worker) {
+      // Workers whose department change has synced are left off the list.
+      if (worker.workerId != null &&
+          _hiddenWorkerIds.contains(worker.workerId)) {
+        return false;
+      }
       final matchesFilter =
-          _attendanceFilter == null || worker.attendance == _attendanceFilter;
+          _attendanceFilter == null ||
+          (_attendanceFilter == AttendanceFilter.checkIn
+              ? worker.hasCheckedInToday
+              : worker.hasCheckedOutToday);
       final matchesTerm =
           term.isEmpty ||
           worker.name.toLowerCase().contains(term) ||
@@ -162,7 +184,7 @@ class WorkerListViewModel extends BaseViewModel {
   }
 
   /// Null shows everyone; otherwise only workers with that attendance.
-  void filterByAttendance(AttendanceStatus? status) {
+  void filterByAttendance(AttendanceFilter? status) {
     _attendanceFilter = status;
     safeNotify();
   }
@@ -204,10 +226,13 @@ class WorkerListViewModel extends BaseViewModel {
   /// fall back to the plain worker-profile sync
   /// (`POST attendance/sync-worker`). Either path syncs the worker's own
   /// profile first if it doesn't have a real backend id yet.
+  /// [profileOnly] sends just the worker's profile changes (department or
+  /// enrollment type) and leaves attendance and tasks for a later sync.
   Future<String?> syncWorker(
     String employeeId,
     int? workerId, {
     required String status,
+    bool profileOnly = false,
   }) async {
     if (_syncingIds.contains(employeeId)) return null;
     _syncingIds.add(employeeId);
@@ -219,7 +244,9 @@ class WorkerListViewModel extends BaseViewModel {
           'No internet connection. Please check your network and try again.';
     } else {
       try {
-        if (status == 'approved' && workerId != null) {
+        if (profileOnly) {
+          await _sync.syncWorker(employeeId);
+        } else if (status == 'approved' && workerId != null) {
           final hasUnsyncedAttendance = await _workerAttendance
               .hasUnsyncedAttendance(workerId);
           if (hasUnsyncedAttendance) {
@@ -347,6 +374,7 @@ class WorkerListViewModel extends BaseViewModel {
       }
     }
 
+    _hiddenWorkerIds = await _hiddenWorkers.read();
     _workers = [
       for (final employee in employees)
         Worker(
