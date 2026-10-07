@@ -75,11 +75,11 @@ class EnrollmentCompleteScreen extends StatelessWidget {
                     foreground: Colors.white,
                     onPressed: () => _openWorkerList(context),
                   ),
-                  const SizedBox(height: 10),
-                  AppSecondaryButton(
-                    label: 'Enroll Another Employee',
-                    onPressed: () => _startAnotherEnrollment(context),
-                  ),
+                  // const SizedBox(height: 10),
+                  // AppSecondaryButton(
+                  //   label: 'Enroll Another Employee',
+                  //   onPressed: () => _startAnotherEnrollment(context),
+                  // ),
                 ],
               ),
             ),
