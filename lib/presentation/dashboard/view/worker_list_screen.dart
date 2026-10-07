@@ -706,11 +706,11 @@ class _WorkerCard extends StatelessWidget {
               backgroundColor: effectiveSynced
                   ? AppColors.deepGreen
                   : AppColors.warning,
-              disabledBackgroundColor: effectiveSynced
-                  ? AppColors.deepGreen
-                  : AppColors.warning,
+              // Disabled gets its own grey, same chrome used elsewhere for a
+              // disabled action — distinct from the enabled green/amber above.
+              disabledBackgroundColor: const Color(0xFFF2F3F2),
               foregroundColor: Colors.white,
-              disabledForegroundColor: Colors.white,
+              disabledForegroundColor: AppColors.muted,
               elevation: 0,
               minimumSize: const Size(0, 34),
               padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -887,7 +887,11 @@ class _WorkerCard extends StatelessWidget {
           // department field existed.
           '${worker.remoteEmployeeId?.toString() ?? '—'} • ${worker.department?.isNotEmpty == true ? worker.department : worker.role}',
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13, color: AppColors.muted),
+          style: const TextStyle(
+            fontSize: 13,
+            color: AppColors.muted,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         const SizedBox(height: 6),
         PayTypeChip(payType: worker.payType),

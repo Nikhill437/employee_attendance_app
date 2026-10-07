@@ -68,7 +68,7 @@ class EnrollmentCompleteScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   _buildIdentityCard(),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 25),
                   AppPrimaryButton(
                     label: 'Back to Employee List',
                     background: AppColors.deepGreen,

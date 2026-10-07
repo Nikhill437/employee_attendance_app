@@ -518,6 +518,19 @@ class _DayCard extends StatelessWidget {
     AppTime.nowInUserZone(),
   );
 
+  /// For today, once the worker has checked out: only the task that was
+  /// still active at that point — the last one assigned, since reassigning
+  /// deactivates every other row for the day (see
+  /// DatabaseHelper.assignWorkerTask/_ensureTodaysWorkerTaskRow). Before
+  /// checkout, and for every other day, every row for the day is shown,
+  /// exactly as before.
+  List<WorkerTask> get _visibleTasks {
+    if (_isToday && day.attendance.hasCheckedOut) {
+      return day.tasks.where((task) => task.status == 'active').toList();
+    }
+    return day.tasks;
+  }
+
   @override
   Widget build(BuildContext context) {
     final date = DateTime.tryParse(day.attendance.attendanceDate);
@@ -601,13 +614,13 @@ class _DayCard extends StatelessWidget {
           const SizedBox(height: 10),
           const SectionLabel('TASKS'),
           const SizedBox(height: 10),
-          if (day.tasks.isEmpty)
+          if (_visibleTasks.isEmpty)
             const Text(
               'No tasks recorded for this day.',
               style: TextStyle(fontSize: 13.5, color: AppColors.muted),
             )
           else
-            for (final task in day.tasks) ...[
+            for (final task in _visibleTasks) ...[
               _DayTaskCard(task: task),
               const SizedBox(height: 10),
             ],
