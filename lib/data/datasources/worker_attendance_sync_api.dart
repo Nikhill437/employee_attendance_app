@@ -17,24 +17,64 @@ class WorkerAttendanceSyncApi {
   /// the server holds for the supervisor's department. Used for the first
   /// Employee Attendance fetch. Response:
   /// `{"success", "message", "department_id", "total", "data": [...]}`.
+  /// Walks `page`/`totalPages` until exhausted, same pattern as
+  /// `WorkerListApi.fetchAll` — a response with no `totalPages` is treated
+  /// as a single page. [onProgress], when given, is called after each
+  /// page with how many rows have been fetched so far and the
+  /// current/total page numbers — the dashboard's sync bottom sheet's
+  /// source of real download progress for the Employee Attendance card.
   /// Errors propagate.
-  Future<List<RemoteWorkerAttendance>> fetchDepartmentAttendance() async {
-    final data = await _client.get(ApiRoutes.departmentwiseAttendance);
-    return _parseDepartmentAttendance(data);
+  Future<List<RemoteWorkerAttendance>> fetchDepartmentAttendance({
+    int limit = 100,
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
+    final results = <RemoteWorkerAttendance>[];
+    var page = 1;
+
+    while (true) {
+      final data = await _client.get(
+        '${ApiRoutes.departmentwiseAttendance}?page=$page&limit=$limit',
+      );
+      results.addAll(_parseDepartmentAttendance(data));
+
+      final totalPages = data is Map ? (data['totalPages'] as int? ?? 1) : 1;
+      onProgress?.call(results.length, page, totalPages);
+      if (page >= totalPages) break;
+      page++;
+    }
+
+    return results;
   }
 
   /// POST attendance/departmentwise_attendance_data with `{"date": ...}` (UTC
   /// ISO), the time of the last successful Employee Attendance call. Returns
-  /// the same response structure as [fetchDepartmentAttendance]. Errors
-  /// propagate, so a failed call never moves the stored time.
+  /// the same response structure (and walks pages/reports [onProgress] the
+  /// same way) as [fetchDepartmentAttendance]. Errors propagate, so a
+  /// failed call never moves the stored time.
   Future<List<RemoteWorkerAttendance>> fetchDepartmentAttendanceData(
-    DateTime date,
-  ) async {
-    final data = await _client.post(
-      ApiRoutes.departmentwiseAttendanceData,
-      data: {'date': date.toUtc().toIso8601String()},
-    );
-    return _parseDepartmentAttendance(data);
+    DateTime date, {
+    int limit = 100,
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
+    final results = <RemoteWorkerAttendance>[];
+    var page = 1;
+
+    while (true) {
+      final data = await _client.post(
+        '${ApiRoutes.departmentwiseAttendanceData}?page=$page&limit=$limit',
+        data: {'date': date.toUtc().toIso8601String()},
+      );
+      results.addAll(_parseDepartmentAttendance(data));
+
+      final totalPages = data is Map ? (data['totalPages'] as int? ?? 1) : 1;
+      onProgress?.call(results.length, page, totalPages);
+      if (page >= totalPages) break;
+      page++;
+    }
+
+    return results;
   }
 
   List<RemoteWorkerAttendance> _parseDepartmentAttendance(dynamic data) {

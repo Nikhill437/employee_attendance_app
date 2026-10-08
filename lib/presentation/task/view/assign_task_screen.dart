@@ -102,11 +102,27 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     return confirmed == true;
   }
 
+  /// Asks whether the task being assigned becomes the worker's standing
+  /// default (updates `workers.task_id`, used every day from now on) or
+  /// applies to today only (left out of `workers.task_id`, expires on its
+  /// own after today — see DatabaseHelper.assignWorkerTask). This replaces
+  /// the generic [_confirmSave] dialog for this one save action: picking
+  /// either button already confirms the save, so there's no need to also
+  /// stack the Yes/No dialog on top. Returns null if dismissed without
+  /// choosing, which cancels the save the same way "No" used to.
+  Future<bool?> _confirmTaskAssignment() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => const _TaskAssignmentChoiceDialog(),
+    );
+  }
+
   Future<void> _save() async {
-    if (!await _confirmSave() || !mounted) return;
+    final isDefault = await _confirmTaskAssignment();
+    if (isDefault == null || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    final error = await _viewModel.save();
+    final error = await _viewModel.save(isDefault: isDefault);
     if (!mounted) return;
     if (error == null) {
       navigator.pop(true);
@@ -1218,6 +1234,106 @@ class _SaveConfirmDialog extends StatelessWidget {
                     ),
                     child: const Text(
                       'Yes',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Asks the supervisor whether a task assignment should become the
+/// worker's standing default or apply to today only — see
+/// _AssignTaskScreenState._confirmTaskAssignment. Pops true for Default,
+/// false for Today, or nothing (null) if dismissed.
+class _TaskAssignmentChoiceDialog extends StatelessWidget {
+  const _TaskAssignmentChoiceDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: AppColors.deepGreen.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.assignment_outlined,
+                size: 28,
+                color: AppColors.deepGreen,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Assign task',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.ink,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Do you want to assign this task for today or keep it as '
+              'the default task?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: AppColors.muted,
+              ),
+            ),
+            const SizedBox(height: 22),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.deepGreen,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      minimumSize: const Size(0, 46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Default',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.slate,
+                      side: const BorderSide(color: AppColors.cardBorder),
+                      minimumSize: const Size(0, 46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Today',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),

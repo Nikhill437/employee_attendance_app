@@ -21,6 +21,12 @@ class WorkerTask {
   /// `worker_tasks.assignment_type` column doc comment in DatabaseHelper.
   final String assignmentType;
 
+  /// Whether this row reflects the worker's standing assignment (true) or
+  /// is a one-day-only "Today" override that never touched
+  /// `workers.task_id` and expires on its own after today (false) — see
+  /// the `worker_tasks.isDefault` column doc comment in DatabaseHelper.
+  final bool isDefault;
+
   /// The worker's own checkout-time numeric reading for this task
   /// (`worker_tasks.employee_target`) — see assign_task_screen.dart's
   /// Worker Submission card. Null until they save one.
@@ -90,6 +96,7 @@ class WorkerTask {
     required this.departmentId,
     required this.status,
     required this.assignmentType,
+    this.isDefault = true,
     this.employeeTarget,
     this.workPhoto,
     this.completedTarget,
@@ -113,6 +120,7 @@ class WorkerTask {
       departmentId: map['department_id'] as int,
       status: map['status'] as String? ?? 'active',
       assignmentType: map['assignment_type'] as String? ?? 'default',
+      isDefault: (map['isDefault'] as int? ?? 1) == 1,
       employeeTarget: map['employee_target'] as int?,
       workPhoto: map['work_photo'] as String?,
       completedTarget: map['completed_target'] as int?,

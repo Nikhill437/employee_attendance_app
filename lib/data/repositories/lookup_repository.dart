@@ -1,3 +1,4 @@
+import '../../core/utils/app_time.dart';
 import '../datasources/attendance_lookup_api.dart';
 import '../datasources/database_helper.dart';
 import '../models/department_model.dart';
@@ -25,9 +26,10 @@ class LookupRepository {
 
   /// Refreshes just the local `departments` cache — used right after
   /// supervisor login (see SupervisorLoginViewModel via [syncFromRemote]),
-  /// a full unpaginated fetch of every department. Saves the Department
-  /// server time once the local write succeeds, so later department
-  /// refreshes ask only for changes since this login.
+  /// a full fetch of every department (paginated, see
+  /// AttendanceLookupApi.fetchDepartments). Saves the Department server
+  /// time once the local write succeeds, so later department refreshes
+  /// ask only for changes since this login.
   Future<int> syncDepartmentsFromRemote() async {
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
     final departments = await _api.fetchDepartments();
@@ -48,31 +50,44 @@ class LookupRepository {
   }
 
   /// The dashboard's "Refresh Departments" button
-  /// (`POST attendance/department_data`) — upserts just the single
-  /// department the server reports (see
-  /// AttendanceLookupApi.fetch_servertime_department) into the existing
-  /// cache rather than replacing it wholesale, so every other cached
-  /// department is left untouched. Returns 1 if a department came back, 0
-  /// if the server had nothing to report.
-  Future<int> refreshDepartmentFromServerTime() async {
+  /// (`POST attendance/department_data`) — upserts whichever departments
+  /// the server reports changed (see
+  /// AttendanceLookupApi.fetchServertimeDepartment, paginated and
+  /// list-shaped the same way [fetchDepartments]/[syncDepartmentsFromRemote]
+  /// is) into the existing cache rather than replacing it wholesale, so
+  /// every other cached department is left untouched. Returns how many
+  /// came back.
+  Future<int> refreshDepartmentFromServerTime({
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
     final serverTime = await lastDepartmentServerTime.read() ?? syncStartedAt;
-    final department = await _api.fetchServertimeDepartment(date: serverTime);
-    if (department != null) {
-      await _dbHelper.replaceDepartments([department]);
+    final departments = await _api.fetchServertimeDepartment(
+      date: serverTime,
+      onProgress: onProgress,
+    );
+    if (departments.isNotEmpty) {
+      await _dbHelper.replaceDepartments(departments);
     }
     // Saved only after the local write succeeded.
     await lastDepartmentServerTime.save(syncStartedAt);
-    return department == null ? 0 : 1;
+    return departments.length;
   }
 
   /// The dashboard's "Refresh Tasks" button
   /// (`POST attendance/task_data`) — same upsert-in-place approach as
   /// [refreshDepartmentFromServerTime].
-  Future<int> refreshTasksFromServerTime() async {
+  Future<int> refreshTasksFromServerTime({
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
     final serverTime = await lastTaskServerTime.read() ?? syncStartedAt;
-    final tasks = await _api.fetchServertimeTask(date: serverTime);
+    final tasks = await _api.fetchServertimeTask(
+      date: serverTime,
+      onProgress: onProgress,
+    );
     await _dbHelper.replaceTasks(tasks);
     // Saved only after the local write succeeded.
     await lastTaskServerTime.save(syncStartedAt);
@@ -81,4 +96,37 @@ class LookupRepository {
 
   /// The locally cached departments, for the enrollment form's dropdown.
   Future<List<Department>> getDepartments() => _dbHelper.getDepartments();
+
+  /// How many departments/tasks are cached locally — the dashboard
+  /// overview cards' total stat.
+  Future<int> getDepartmentCount() => _dbHelper.getDepartmentCount();
+  Future<int> getTaskCatalogCount() => _dbHelper.getTaskCatalogCount();
+
+  /// The last successful department/task sync's start time, in the
+  /// supervisor's own timezone (see AppTime) — null if none has run yet.
+  Future<DateTime?> departmentsLastSyncedAt() async {
+    final stored = await lastDepartmentServerTime.read();
+    final parsed = stored == null ? null : DateTime.tryParse(stored);
+    return parsed == null ? null : AppTime.toUserTime(parsed);
+  }
+
+  Future<DateTime?> tasksLastSyncedAt() async {
+    final stored = await lastTaskServerTime.read();
+    final parsed = stored == null ? null : DateTime.tryParse(stored);
+    return parsed == null ? null : AppTime.toUserTime(parsed);
+  }
+
+  /// The Departments card's Clear action: wipes the local cache and resets
+  /// its sync checkpoint, so the next fetch pulls the full list again.
+  Future<void> clearDepartments() async {
+    await _dbHelper.clearDepartments();
+    await lastDepartmentServerTime.clear();
+  }
+
+  /// The Tasks card's Clear action — same as [clearDepartments], for the
+  /// local `tasks` catalog cache.
+  Future<void> clearTaskCatalog() async {
+    await _dbHelper.clearTaskCatalog();
+    await lastTaskServerTime.clear();
+  }
 }

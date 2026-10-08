@@ -15,8 +15,18 @@ class DateTimeFormatter {
   }
 
   static const List<String> _monthAbbreviations = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
   ];
 
   /// `Oct 24, 2026` — the date line under the dashboard greeting.
@@ -35,6 +45,16 @@ class DateTimeFormatter {
     final minute = time.minute.toString().padLeft(2, '0');
     return '$hour:$minute ${time.hour < 12 ? 'AM' : 'PM'}';
   }
+
+  /// `Oct 7 • 2:11 PM` — short date plus the 12-hour clock, used by the
+  /// dashboard overview cards' "Last synced" row, each card's own
+  /// checkpoint. Without the date, two cards synced around the same
+  /// time of day on different days render identically (just [clock]
+  /// gives no way to tell them apart), which is what made every card
+  /// look like it shared one "last synced" time even though each is
+  /// tracked independently.
+  static String shortDateAndClock(DateTime time) =>
+      '${_monthAbbreviations[time.month - 1]} ${time.day} • ${clock(time)}';
 
   /// True when [date] falls on the same calendar day as [other].
   static bool isSameDay(DateTime date, DateTime other) =>

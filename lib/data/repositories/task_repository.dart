@@ -40,14 +40,18 @@ class TaskRepository {
 
   /// Assigns [taskId] to [workerId] as their one active task, replacing
   /// whatever else was active — an upsert, see DatabaseHelper.assignWorkerTask.
+  /// [isDefault] true makes it the worker's standing assignment; false
+  /// makes it a one-day-only "Today" assignment.
   Future<void> assignTask({
     required int workerId,
     required int taskId,
     String? note,
+    required bool isDefault,
   }) => _dbHelper.assignWorkerTask(
     workerId: workerId,
     taskId: taskId,
     note: note,
+    isDefault: isDefault,
   );
 
   /// The worker's task records that belong to [date] (yyyy-MM-dd), any

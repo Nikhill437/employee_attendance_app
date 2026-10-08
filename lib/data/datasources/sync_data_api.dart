@@ -25,20 +25,24 @@ class SyncDataApi {
 
   /// [attendance] is one map per unsynced day (see
   /// AttendanceSubmissionRepository.submitAllUnsyncedAttendance for how
-  /// each is built). [workerTasks] is the worker's pending assignment(s) —
-  /// [realWorkerId] is sent as each entry's own `worker_id`, and a non-null
-  /// [WorkerTask.workPhoto] is attached as a file, cross-referenced by a
-  /// `photo_index` field on that same entry (the one piece of this shape
-  /// not given directly in the backend's JSON example, since a plain JSON
-  /// value can't carry a file inline).
+  /// each is built). [workerTasks] is the worker's pending assignment(s).
+  /// [realWorkerId] is sent as each entry's own `worker_id`.
+  ///
+  /// `sync_data` has one entry **per day**, each with `attendance` and
+  /// `worker_tasks` as single objects (not arrays) — matched up by
+  /// `task_date`/`attendance_date`. A day with only one side present (an
+  /// attendance day with no task, or vice versa) sends the other as `null`.
+  /// A non-null [WorkerTask.workPhoto] is attached as a file, cross-referenced
+  /// by a `photo_index` field on that day's `worker_tasks` object (the one
+  /// piece of this shape that can't be given directly in JSON).
   Future<SyncDataResult> submit({
     required List<Map<String, dynamic>> attendance,
     required List<WorkerTask> workerTasks,
     required int realWorkerId,
   }) async {
-    final workerTaskPayloads = <Map<String, dynamic>>[];
     final photoFiles = <MapEntry<String, MultipartFile>>[];
 
+    final taskPayloadByDate = <String, Map<String, dynamic>>{};
     for (final task in workerTasks) {
       final payload = <String, dynamic>{
         'worker_id': realWorkerId,
@@ -52,6 +56,7 @@ class SyncDataApi {
         'supervisor_note': task.supervisorNote,
         'created_at': task.createdAt,
         'task_date': task.taskDate,
+        'isDefault': task.isDefault ? 1 : 0,
       };
 
       final photoPath = task.workPhoto;
@@ -73,11 +78,25 @@ class SyncDataApi {
       if (realWorkerTaskId != null) {
         payload['worker_task_id'] = realWorkerTaskId;
       }
-      workerTaskPayloads.add(payload);
+      // One task per day is expected (the worker's one standing assignment);
+      // if more than one somehow exists for the same day, the last one wins.
+      taskPayloadByDate[task.taskDate] = payload;
     }
 
+    final attendanceByDate = <String, Map<String, dynamic>>{
+      for (final day in attendance) day['attendance_date'] as String: day,
+    };
+
+    final dates = <String>{
+      ...attendanceByDate.keys,
+      ...taskPayloadByDate.keys,
+    }.toList()..sort();
     final syncData = [
-      {'attendance': attendance, 'worker_tasks': workerTaskPayloads},
+      for (final date in dates)
+        {
+          'attendance': attendanceByDate[date],
+          'worker_tasks': taskPayloadByDate[date],
+        },
     ];
 
     final formData = FormData.fromMap({'sync_data': jsonEncode(syncData)});
@@ -107,29 +126,38 @@ class SyncDataApi {
     if (batches is List) {
       for (final batch in batches) {
         if (batch is! Map) continue;
-        final rawAttendances = batch['attendances'];
-        if (rawAttendances is List) {
-          for (final entry in rawAttendances) {
-            if (entry is! Map) continue;
-            final parsed = SyncedAttendance.fromJson(
-              Map<String, dynamic>.from(entry),
-            );
-            if (parsed != null) attendances.add(parsed);
-          }
+        // Each day's batch may echo its attendance/worker_tasks back as a
+        // single object (matching what's now sent, one entry per day) or as
+        // a list (the older, one-entry-overall response shape) — accept
+        // either until the real response for the new request is confirmed.
+        for (final entry in _asMapList(
+          batch['attendance'] ?? batch['attendances'],
+        )) {
+          final parsed = SyncedAttendance.fromJson(entry);
+          if (parsed != null) attendances.add(parsed);
         }
-        final rawWorkerTasks = batch['worker_tasks'];
-        if (rawWorkerTasks is List) {
-          for (final entry in rawWorkerTasks) {
-            if (entry is! Map) continue;
-            final parsed = SyncedWorkerTask.fromJson(
-              Map<String, dynamic>.from(entry),
-            );
-            if (parsed != null) workerTasks.add(parsed);
-          }
+        for (final entry in _asMapList(
+          batch['worker_tasks'] ?? batch['worker_task'],
+        )) {
+          final parsed = SyncedWorkerTask.fromJson(entry);
+          if (parsed != null) workerTasks.add(parsed);
         }
       }
     }
 
     return SyncDataResult(attendances: attendances, workerTasks: workerTasks);
+  }
+
+  /// Normalizes a response value that could be a single object, a list of
+  /// them, or absent/null, into a plain list of maps to iterate.
+  List<Map<String, dynamic>> _asMapList(dynamic value) {
+    if (value is Map) return [Map<String, dynamic>.from(value)];
+    if (value is List) {
+      return value
+          .whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList();
+    }
+    return const [];
   }
 }

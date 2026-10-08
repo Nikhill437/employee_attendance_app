@@ -18,6 +18,11 @@ class ServerSyncTimeStore {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, serverTime);
   }
+
+  Future<void> clear() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+  }
 }
 
 /// The Task download's stored server time. Sent as `date` to the task

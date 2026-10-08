@@ -90,6 +90,11 @@ class CreateEmployeeViewModel extends BaseViewModel {
         note: (taskNote == null || taskNote.trim().isEmpty)
             ? null
             : taskNote.trim(),
+        // Enrollment-time assignment is always the worker's standing
+        // task — there's no Today/Default choice at this point (the
+        // worker hasn't even checked in yet), matching the previous
+        // single-path behavior unchanged.
+        isDefault: true,
       );
     }
 

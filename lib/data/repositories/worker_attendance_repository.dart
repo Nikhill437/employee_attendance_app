@@ -1,3 +1,4 @@
+import '../../core/utils/app_time.dart';
 import '../datasources/database_helper.dart';
 import '../datasources/worker_attendance_sync_api.dart';
 import '../models/worker_attendance_model.dart';
@@ -21,13 +22,17 @@ class WorkerAttendanceRepository {
   /// stored via DatabaseHelper.upsertRemoteWorkerAttendance, which updates
   /// matching rows and never duplicates them. The call time is saved only
   /// after that succeeds. Errors propagate. Returns how many rows were stored.
-  Future<int> importDepartmentAttendance() async {
+  Future<int> importDepartmentAttendance({
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     final callTime = DateTime.now().toUtc();
     final storedTime = await lastDepartmentAttendanceCallTime.read();
     final records = storedTime == null
-        ? await _syncApi.fetchDepartmentAttendance()
+        ? await _syncApi.fetchDepartmentAttendance(onProgress: onProgress)
         : await _syncApi.fetchDepartmentAttendanceData(
             DateTime.parse(storedTime),
+            onProgress: onProgress,
           );
     final stored = await _dbHelper.upsertRemoteWorkerAttendance(records);
     await lastDepartmentAttendanceCallTime.save(callTime.toIso8601String());
@@ -37,6 +42,31 @@ class WorkerAttendanceRepository {
   /// Whether any local record is still waiting to sync — see
   /// DatabaseHelper.hasUnsyncedLocalData. Read-only.
   Future<bool> hasUnsyncedData() => _dbHelper.hasUnsyncedLocalData();
+
+  /// How many `worker_attendance` rows are cached locally, and how many of
+  /// those haven't been pushed to the server yet — the Employee Attendance
+  /// card's stat boxes.
+  Future<int> getAttendanceCount() => _dbHelper.getWorkerAttendanceCount();
+  Future<int> getUnsyncedAttendanceCount() =>
+      _dbHelper.getUnsyncedWorkerAttendanceCount();
+
+  /// The last successful [importDepartmentAttendance] call's start time, in
+  /// the supervisor's own timezone (see AppTime) — null if none has run
+  /// yet.
+  Future<DateTime?> lastSyncedAt() async {
+    final stored = await lastDepartmentAttendanceCallTime.read();
+    final parsed = stored == null ? null : DateTime.tryParse(stored);
+    return parsed == null ? null : AppTime.toUserTime(parsed);
+  }
+
+  /// The Employee Attendance card's Clear action: wipes every local
+  /// `worker_attendance` row — including any check-in/check-out scanned on
+  /// this device and not yet synced — and resets the fetch checkpoint, so
+  /// the next fetch pulls the full list again.
+  Future<void> clearLocal() async {
+    await _dbHelper.clearWorkerAttendance();
+    await lastDepartmentAttendanceCallTime.clear();
+  }
 
   /// Records a face-scan event for [workerId] — checks them in on the
   /// day's first scan, checks them out on the next.

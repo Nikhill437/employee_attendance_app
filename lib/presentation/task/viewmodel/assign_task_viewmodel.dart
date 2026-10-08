@@ -177,9 +177,11 @@ class AssignTaskViewModel extends BaseViewModel {
 
   /// Assigns [pendingTask] as the worker's one active task — whatever was
   /// previously active for them is flipped inactive (see
-  /// DatabaseHelper.assignWorkerTask). Returns an error message on failed
-  /// validation, or null on success.
-  Future<String?> save() async {
+  /// DatabaseHelper.assignWorkerTask). [isDefault] true makes it the
+  /// worker's standing assignment; false makes it a one-day-only "Today"
+  /// assignment that never becomes the default. Returns an error message
+  /// on failed validation, or null on success.
+  Future<String?> save({required bool isDefault}) async {
     if (_isSaving) return null;
     final task = _pendingTask;
     if (task == null) return 'Select a task to assign';
@@ -192,6 +194,7 @@ class AssignTaskViewModel extends BaseViewModel {
       workerId: workerId,
       taskId: task.id,
       note: trimmedNote.isEmpty ? null : trimmedNote,
+      isDefault: isDefault,
     );
     _pendingTask = null;
     _pendingNote = '';

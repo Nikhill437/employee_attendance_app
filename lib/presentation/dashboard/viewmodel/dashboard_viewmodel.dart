@@ -58,20 +58,30 @@ class DashboardViewModel extends BaseViewModel {
 
   bool _isLoading = true;
   bool _isImportingWorkers = false;
+  bool _isClearingEmployees = false;
   bool _isFetchingDepartments = false;
+  bool _isClearingDepartments = false;
   bool _isFetchingTasks = false;
+  bool _isClearingTasks = false;
   bool _isFetchingWorkerTasks = false;
+  bool _isClearingWorkerTasks = false;
   bool _isFetchingAttendance = false;
+  bool _isClearingAttendance = false;
   DashboardSummary _summary = const DashboardSummary();
   List<Employee> _roster = const [];
   UpdatedCounts _updatedCounts = UpdatedCounts.zero;
 
   bool get isLoading => _isLoading;
   bool get isImportingWorkers => _isImportingWorkers;
+  bool get isClearingEmployees => _isClearingEmployees;
   bool get isFetchingDepartments => _isFetchingDepartments;
+  bool get isClearingDepartments => _isClearingDepartments;
   bool get isFetchingTasks => _isFetchingTasks;
+  bool get isClearingTasks => _isClearingTasks;
   bool get isFetchingWorkerTasks => _isFetchingWorkerTasks;
+  bool get isClearingWorkerTasks => _isClearingWorkerTasks;
   bool get isFetchingAttendance => _isFetchingAttendance;
+  bool get isClearingAttendance => _isClearingAttendance;
   DashboardSummary get summary => _summary;
 
   /// How many worker/department/task records the server reports as changed
@@ -123,6 +133,18 @@ class DashboardViewModel extends BaseViewModel {
     _roster = enrolled;
     _summary = DashboardSummary(
       totalEmployees: enrolled.length,
+      offlineEmployees: enrolled.where((e) => !e.isSynced).length,
+      employeesLastFetchedAt: await _workerImport.lastSyncedAt(),
+      departmentsTotal: await _lookup.getDepartmentCount(),
+      departmentsLastFetchedAt: await _lookup.departmentsLastSyncedAt(),
+      tasksCatalogTotal: await _lookup.getTaskCatalogCount(),
+      tasksCatalogLastFetchedAt: await _lookup.tasksLastSyncedAt(),
+      workerTasksTotal: await _workerTaskImport.getWorkerTaskCount(),
+      pendingWorkerTasks: await _workerTaskImport.getPendingWorkerTaskCount(),
+      workerTasksLastFetchedAt: await _workerTaskImport.lastSyncedAt(),
+      attendanceTotal: await _workerAttendance.getAttendanceCount(),
+      unsyncedAttendance: await _workerAttendance.getUnsyncedAttendanceCount(),
+      attendanceLastFetchedAt: await _workerAttendance.lastSyncedAt(),
       presentToday: presentToday,
       checkedIn: todayAttendance.values.where((a) => a.hasCheckedIn).length,
       checkedOut: todayAttendance.values.where((a) => a.hasCheckedOut).length,
@@ -142,11 +164,18 @@ class DashboardViewModel extends BaseViewModel {
   /// — see WorkerImportRepository.importWorkers. Upserts by National ID
   /// and reloads so the dashboard reflects it. Returns how many workers
   /// were fetched; lets any failure propagate for the caller to surface.
-  Future<int> importWorkersFromServer() async {
+  Future<int> importWorkersFromServer({
+    WorkerImportCheckpoint? resumeFrom,
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     _isImportingWorkers = true;
     safeNotify();
     try {
-      final count = await _workerImport.importWorkers();
+      final count = await _workerImport.importWorkers(
+        resumeFrom: resumeFrom,
+        onProgress: onProgress,
+      );
       await _completeSetupStep(1);
       await load();
       return count;
@@ -156,19 +185,70 @@ class DashboardViewModel extends BaseViewModel {
     }
   }
 
+  /// Whether a previous full Employee List import was interrupted partway
+  /// through — the dashboard checks this before starting a new one so it
+  /// can offer Resume instead of silently restarting from page 1.
+  Future<WorkerImportCheckpoint?> getInterruptedEmployeeImport() =>
+      _workerImport.getInterruptedImport();
+
+  /// Discards an interrupted import's checkpoint — the dashboard's "Start
+  /// From Beginning" choice.
+  Future<void> discardInterruptedEmployeeImport() =>
+      _workerImport.clearInterruptedImport();
+
+  /// The Employee List Data card's Clear action: wipes every locally
+  /// stored employee and resets the fetch checkpoint, so the next Check
+  /// For New Data tap pulls the full roster again instead of only what's
+  /// changed. Any employee enrolled locally and not yet pushed to the
+  /// server ([Employee.isSynced] false) is lost — the view's confirmation
+  /// dialog warns about this before calling here.
+  Future<void> clearEmployeeData() async {
+    _isClearingEmployees = true;
+    safeNotify();
+    try {
+      await _workerImport.clearLocal();
+      await load();
+    } finally {
+      _isClearingEmployees = false;
+      safeNotify();
+    }
+  }
+
   /// Refreshes the local `departments` cache from the backend
   /// (`POST attendance/department_data`) — the dashboard's "Refresh"
   /// button for departments. Returns how many were fetched; lets any
   /// failure propagate for the caller to surface.
-  Future<int> fetchDepartments() async {
+  Future<int> fetchDepartments({
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     _isFetchingDepartments = true;
     safeNotify();
     try {
-      final count = await _lookup.refreshDepartmentFromServerTime();
+      final count = await _lookup.refreshDepartmentFromServerTime(
+        onProgress: onProgress,
+      );
       await _refreshUpdatedCounts();
+      await load();
       return count;
     } finally {
       _isFetchingDepartments = false;
+      safeNotify();
+    }
+  }
+
+  /// The Departments card's Clear action: wipes the local cache and resets
+  /// its fetch checkpoint, so the next Check For New Data tap pulls the
+  /// full list again. Departments are pure server-reflected reference
+  /// data, so nothing local is lost.
+  Future<void> clearDepartmentsData() async {
+    _isClearingDepartments = true;
+    safeNotify();
+    try {
+      await _lookup.clearDepartments();
+      await load();
+    } finally {
+      _isClearingDepartments = false;
       safeNotify();
     }
   }
@@ -177,15 +257,35 @@ class DashboardViewModel extends BaseViewModel {
   /// (`POST attendance/task_data`) — the dashboard's "Refresh" button for
   /// tasks. Returns how many were fetched; lets any failure propagate for
   /// the caller to surface.
-  Future<int> fetchTasks() async {
+  Future<int> fetchTasks({
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     _isFetchingTasks = true;
     safeNotify();
     try {
-      final count = await _lookup.refreshTasksFromServerTime();
+      final count = await _lookup.refreshTasksFromServerTime(
+        onProgress: onProgress,
+      );
       await _refreshUpdatedCounts();
+      await load();
       return count;
     } finally {
       _isFetchingTasks = false;
+      safeNotify();
+    }
+  }
+
+  /// The Tasks card's Clear action — same as [clearDepartmentsData], for
+  /// the local task-catalog cache.
+  Future<void> clearTasksCatalogData() async {
+    _isClearingTasks = true;
+    safeNotify();
+    try {
+      await _lookup.clearTaskCatalog();
+      await load();
+    } finally {
+      _isClearingTasks = false;
       safeNotify();
     }
   }
@@ -194,15 +294,38 @@ class DashboardViewModel extends BaseViewModel {
   /// and check-outs (`GET attendance/departmentwise_attendance`) into
   /// `worker_attendance`. Returns how many rows were stored; lets any failure
   /// propagate for the caller to surface.
-  Future<int> fetchDepartmentAttendance() async {
+  Future<int> fetchDepartmentAttendance({
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     _isFetchingAttendance = true;
     safeNotify();
     try {
-      final count = await _workerAttendance.importDepartmentAttendance();
+      final count = await _workerAttendance.importDepartmentAttendance(
+        onProgress: onProgress,
+      );
       await _completeSetupStep(3);
+      await load();
       return count;
     } finally {
       _isFetchingAttendance = false;
+      safeNotify();
+    }
+  }
+
+  /// The Employee Attendance card's Clear action: wipes every local
+  /// `worker_attendance` row — including any check-in/check-out scanned on
+  /// this device and not yet synced to the server — and resets the fetch
+  /// checkpoint. The view's confirmation dialog warns about that loss
+  /// before calling here.
+  Future<void> clearAttendanceData() async {
+    _isClearingAttendance = true;
+    safeNotify();
+    try {
+      await _workerAttendance.clearLocal();
+      await load();
+    } finally {
+      _isClearingAttendance = false;
       safeNotify();
     }
   }
@@ -211,15 +334,38 @@ class DashboardViewModel extends BaseViewModel {
   /// then only changes since the stored Worker Tasks time — see
   /// WorkerTaskImportRepository.importWorkerTasks. Returns how many were
   /// fetched; lets any failure propagate for the caller to surface.
-  Future<int> fetchWorkerTasks() async {
+  Future<int> fetchWorkerTasks({
+    void Function(int fetchedSoFar, int currentPage, int totalPages)?
+    onProgress,
+  }) async {
     _isFetchingWorkerTasks = true;
     safeNotify();
     try {
-      final count = await _workerTaskImport.importWorkerTasks();
+      final count = await _workerTaskImport.importWorkerTasks(
+        onProgress: onProgress,
+      );
       await _completeSetupStep(2);
+      await load();
       return count;
     } finally {
       _isFetchingWorkerTasks = false;
+      safeNotify();
+    }
+  }
+
+  /// The Employee Tasks List card's Clear action: wipes every local
+  /// worker-task row — including any reassignment or review made on this
+  /// device and not yet synced to the server — and resets the fetch
+  /// checkpoint. The view's confirmation dialog warns about that loss
+  /// before calling here.
+  Future<void> clearWorkerTasksData() async {
+    _isClearingWorkerTasks = true;
+    safeNotify();
+    try {
+      await _workerTaskImport.clearLocal();
+      await load();
+    } finally {
+      _isClearingWorkerTasks = false;
       safeNotify();
     }
   }

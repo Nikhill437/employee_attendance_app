@@ -326,11 +326,20 @@ class WorkerListViewModel extends BaseViewModel {
     return error;
   }
 
-  /// Fetches the full worker roster from the backend and upserts it
-  /// locally — existing workers matched by National ID are updated, new
-  /// ones are inserted (see DatabaseHelper.upsertRemoteWorkers) — then
-  /// reloads so the list reflects it. Returns how many were fetched; lets
-  /// any failure propagate for the caller to surface.
+  /// Fetches the worker roster from the backend and upserts it locally —
+  /// existing workers matched by National ID are updated, new ones are
+  /// inserted (see DatabaseHelper.upsertRemoteWorkers) — then reloads so
+  /// the list reflects it. Returns how many were fetched; lets any
+  /// failure propagate for the caller to surface.
+  ///
+  /// Shares the same "has Employee List Data ever been fetched" checkpoint
+  /// as the dashboard's Employee List Data card (see
+  /// WorkerImportRepository.importWorkers): if that card (or this button,
+  /// on an earlier tap) already did the first full fetch, this pulls only
+  /// what changed since; only the very first fetch either of them ever
+  /// does is the full one. This button never starts its own separate
+  /// "initial sync" — [WorkerImportRepository.importFromRemote] would
+  /// have done that unconditionally on every tap.
   Future<int> fetchFromServer() async {
     if (_isFetchingFromServer) return 0;
     _isFetchingFromServer = true;
@@ -341,7 +350,7 @@ class WorkerListViewModel extends BaseViewModel {
           'No internet connection. Please check your network and try again.',
         );
       }
-      final count = await _import.importFromRemote();
+      final count = await _import.importWorkers();
       await load();
       return count;
     } finally {

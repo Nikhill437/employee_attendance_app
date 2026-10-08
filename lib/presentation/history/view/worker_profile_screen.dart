@@ -518,16 +518,20 @@ class _DayCard extends StatelessWidget {
     AppTime.nowInUserZone(),
   );
 
-  /// For today, once the worker has checked out: only the task that was
-  /// still active at that point — the last one assigned, since reassigning
-  /// deactivates every other row for the day (see
-  /// DatabaseHelper.assignWorkerTask/_ensureTodaysWorkerTaskRow). Before
-  /// checkout, and for every other day, every row for the day is shown,
-  /// exactly as before.
+  /// Which task row(s) represent this day: the one actually synced to the
+  /// server, if any — the definitive record of what happened, even once a
+  /// later reassignment has deactivated it — or, if nothing's synced yet,
+  /// whichever row is currently active (the last task assigned that day,
+  /// since reassigning deactivates every other row for the date; see
+  /// DatabaseHelper.assignWorkerTask/_applyTodaysTaskAssignment). Applies
+  /// to any day, not just today: a past day can end up with the same
+  /// several-reassignments-in-one-day shape if the supervisor changed
+  /// their mind more than once before it synced or the day ended.
   List<WorkerTask> get _visibleTasks {
-    if (_isToday && day.attendance.hasCheckedOut) {
-      return day.tasks.where((task) => task.status == 'active').toList();
-    }
+    final synced = day.tasks.where((task) => task.realWorkerTaskId != null);
+    if (synced.isNotEmpty) return synced.toList();
+    final active = day.tasks.where((task) => task.status == 'active');
+    if (active.isNotEmpty) return active.toList();
     return day.tasks;
   }
 
