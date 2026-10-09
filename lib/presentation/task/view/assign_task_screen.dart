@@ -102,27 +102,26 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     return confirmed == true;
   }
 
-  /// Asks whether the task being assigned becomes the worker's standing
-  /// default (updates `workers.task_id`, used every day from now on) or
-  /// applies to today only (left out of `workers.task_id`, expires on its
-  /// own after today — see DatabaseHelper.assignWorkerTask). This replaces
-  /// the generic [_confirmSave] dialog for this one save action: picking
-  /// either button already confirms the save, so there's no need to also
-  /// stack the Yes/No dialog on top. Returns null if dismissed without
-  /// choosing, which cancels the save the same way "No" used to.
-  Future<bool?> _confirmTaskAssignment() {
-    return showDialog<bool>(
+  /// Asks before assigning the pending task, naming its own type (Daily/
+  /// Monthly/Task Based/Hour Based) so the supervisor knows what they're
+  /// confirming. "No" closes only the dialog, so nothing is written and the
+  /// pending pick stays on screen.
+  Future<bool> _confirmAssignTask(TaskType? taskType) async {
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => const _TaskAssignmentChoiceDialog(),
+      builder: (dialogContext) => _AssignTaskConfirmDialog(taskType: taskType),
     );
+    return confirmed == true;
   }
 
   Future<void> _save() async {
-    final isDefault = await _confirmTaskAssignment();
-    if (isDefault == null || !mounted) return;
+    if (!await _confirmAssignTask(_viewModel.pendingTask?.taskType) ||
+        !mounted) {
+      return;
+    }
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    final error = await _viewModel.save(isDefault: isDefault);
+    final error = await _viewModel.save();
     if (!mounted) return;
     if (error == null) {
       navigator.pop(true);
@@ -373,7 +372,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
             target: assignedTask.taskTarget,
           ),
           const SizedBox(height: 18),
-          const SectionLabel('WORKER SUBMISSION'),
+          const SectionLabel('EMPLOYEE SUBMISSION'),
           const SizedBox(height: 10),
           _WorkerSubmissionCard(
             numericValue: _viewModel.entryNumericValue,
@@ -430,6 +429,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
                 else
                   _SupervisorReviewCard(
                     numericValue: _viewModel.reviewNumericValue,
+                    showCompletionCount: _viewModel.reviewNeedsCompletionCount,
                     photo: _viewModel.reviewPhoto,
                     note: _viewModel.reviewNote,
                     taskStatus: _viewModel.reviewTaskStatus,
@@ -989,8 +989,8 @@ class _WorkerSubmissionCardState extends State<_WorkerSubmissionCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppFormField(
-            label: 'Target',
-            hint: 'Enter a numeric value',
+            label: 'Completion count/hours',
+            hint: 'Enter completed task/hours',
             icon: Icons.numbers,
             controller: _numericController,
             keyboardType: TextInputType.number,
@@ -1022,6 +1022,12 @@ class _WorkerSubmissionCardState extends State<_WorkerSubmissionCard> {
 /// saved into `worker_tasks.completed_target`/`work_photo`/`note`.
 class _SupervisorReviewCard extends StatefulWidget {
   final int? numericValue;
+
+  /// Whether the assigned task's own type is Task Based or Hour Based —
+  /// the only types the Completion count/hours field applies to (see
+  /// AssignTaskViewModel.reviewNeedsCompletionCount). Hidden, and not
+  /// required to save, for Daily/Monthly tasks.
+  final bool showCompletionCount;
   final File? photo;
   final String note;
 
@@ -1037,6 +1043,7 @@ class _SupervisorReviewCard extends StatefulWidget {
 
   const _SupervisorReviewCard({
     required this.numericValue,
+    required this.showCompletionCount,
     required this.photo,
     required this.note,
     required this.taskStatus,
@@ -1102,16 +1109,18 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AppFormField(
-            label: 'Completion count/hours',
-            hint: 'Enter a numeric value',
-            icon: Icons.numbers,
-            controller: _numericController,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            isRequired: true,
-          ),
-          const SizedBox(height: 14),
+          if (widget.showCompletionCount) ...[
+            AppFormField(
+              label: 'Completion count/hours',
+              hint: 'Enter completed task/hours',
+              icon: Icons.numbers,
+              controller: _numericController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              isRequired: true,
+            ),
+            const SizedBox(height: 14),
+          ],
           AppOptionSelector<String>(
             label: 'Employee Task Status',
             options: _taskStatusOptions,
@@ -1138,7 +1147,10 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
           const SizedBox(height: 14),
           AppSecondaryButton(
             label: widget.isSaving ? 'Saving...' : 'Save',
-            onPressed: (widget.isSaving || widget.numericValue == null)
+            onPressed:
+                (widget.isSaving ||
+                    (widget.showCompletionCount &&
+                        widget.numericValue == null))
                 ? null
                 : widget.onSave,
           ),
@@ -1247,15 +1259,23 @@ class _SaveConfirmDialog extends StatelessWidget {
   }
 }
 
-/// Asks the supervisor whether a task assignment should become the
-/// worker's standing default or apply to today only — see
-/// _AssignTaskScreenState._confirmTaskAssignment. Pops true for Default,
-/// false for Today, or nothing (null) if dismissed.
-class _TaskAssignmentChoiceDialog extends StatelessWidget {
-  const _TaskAssignmentChoiceDialog();
+/// Asks before assigning a task, naming its own [TaskType] (Daily/Monthly/
+/// Task Based/Hour Based) rather than the generic "Save information" —
+/// see _AssignTaskScreenState._confirmAssignTask. "Yes" updates
+/// `workers.task_id` to this task right away (see DatabaseHelper.
+/// assignWorkerTask); the worker starts actually working it the next time
+/// they check in, same as any standing assignment.
+class _AssignTaskConfirmDialog extends StatelessWidget {
+  final TaskType? taskType;
+
+  const _AssignTaskConfirmDialog({this.taskType});
 
   @override
   Widget build(BuildContext context) {
+    final type = taskType;
+    final message = type == null
+        ? 'Do you want to assign this task to the worker?'
+        : 'Do you want to assign this ${type.label} task to the worker?';
     return Dialog(
       backgroundColor: Colors.white,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24),
@@ -1289,11 +1309,10 @@ class _TaskAssignmentChoiceDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Do you want to assign this task for today or keep it as '
-              'the default task?',
+            Text(
+              message,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 14,
                 height: 1.4,
                 color: AppColors.muted,
@@ -1302,6 +1321,24 @@ class _TaskAssignmentChoiceDialog extends StatelessWidget {
             const SizedBox(height: 22),
             Row(
               children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.slate,
+                      side: const BorderSide(color: AppColors.cardBorder),
+                      minimumSize: const Size(0, 46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'No',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(context, true),
@@ -1315,25 +1352,7 @@ class _TaskAssignmentChoiceDialog extends StatelessWidget {
                       ),
                     ),
                     child: const Text(
-                      'Default',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.slate,
-                      side: const BorderSide(color: AppColors.cardBorder),
-                      minimumSize: const Size(0, 46),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Today',
+                      'Yes',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),

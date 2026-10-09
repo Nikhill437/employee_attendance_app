@@ -3,7 +3,7 @@
 <uses-feature android:name="android.hardware.camera" android:required="true"/>
 
     <application
-        android:label="employee_attendance_app"
+        android:label="Smart Attendance System"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

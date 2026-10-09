@@ -22,8 +22,8 @@ import 'enrollment_complete_screen.dart';
 /// Step 1 of enrollment: the worker's personal details, before the face
 /// capture on step 2. Also doubles as the (much simpler) edit screen for an
 /// existing worker — see [editingWorker]. While the worker is Pending every
-/// field can be edited; once Approved or Rejected only Department and
-/// Enrollment Type can change, and the rest is shown for context but disabled.
+/// field can be edited; once Approved or Rejected only Department can
+/// change, and the rest is shown for context but disabled.
 class EnrollmentFormScreen extends StatefulWidget {
   /// Overridable so tests can inject a fake (avoids the real
   /// DatabaseHelper/ApiClient, which need plugins the test environment
@@ -119,8 +119,6 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       }
       _formViewModel.presetForEditing(
         gender: editing.gender,
-        enrollmentType: editing.payType,
-        shiftBasedType: editing.shiftBasedType,
         dateOfBirth: dob,
         nationalIdImagePath: editing.nationalIdImage,
       );
@@ -158,13 +156,29 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       context: context,
       initialDate: _formViewModel.dateOfBirth ?? DateTime(now.year - 25),
       firstDate: DateTime(now.year - 80),
-      lastDate: now,
+      // A worker must be at least 18 — the picker simply doesn't offer a
+      // more recent date, same floor _proceedToFaceCapture enforces for any
+      // value that reaches it another way (e.g. a preset edit-mode value).
+      lastDate: DateTime(now.year - 18, now.month, now.day),
       helpText: 'Select Date of Birth',
     );
     if (selected == null) return;
 
     _formViewModel.selectDateOfBirth(selected);
     _dobController.text = DateTimeFormatter.dateOfBirth(selected);
+  }
+
+  /// Whether [dateOfBirth] is 18 or more years before today, exact to the
+  /// day (not just a year subtraction) so a birthday later this year
+  /// doesn't count as already turned 18.
+  bool _isAtLeast18(DateTime dateOfBirth) {
+    final now = DateTime.now();
+    var age = now.year - dateOfBirth.year;
+    final birthdayPassedThisYear =
+        now.month > dateOfBirth.month ||
+        (now.month == dateOfBirth.month && now.day >= dateOfBirth.day);
+    if (!birthdayPassedThisYear) age--;
+    return age >= 18;
   }
 
   /// Opens the camera, then hands the shot to the view model to copy into
@@ -205,8 +219,13 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
 
   Future<void> _proceedToFaceCapture() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_formViewModel.dateOfBirth == null) {
+    final dateOfBirth = _formViewModel.dateOfBirth;
+    if (dateOfBirth == null) {
       _showSnackBar('Select the date of birth');
+      return;
+    }
+    if (!_isAtLeast18(dateOfBirth)) {
+      _showSnackBar('Worker must be at least 18 years old to enroll');
       return;
     }
     if (_formViewModel.nationalIdImage == null) {
@@ -254,13 +273,11 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       dateOfBirth: draft.dateOfBirth?.toIso8601String(),
       gender: draft.gender,
       address: draft.address,
-      payType: draft.enrollmentType,
       department: draft.departmentName,
       departmentId: draft.departmentId,
       nationalIdImage: draft.nationalIdImagePath,
       taskId: draft.taskId,
       taskNote: draft.taskNote,
-      shiftBasedType: draft.shiftBasedType,
     );
     if (employee == null || !mounted) return;
 
@@ -270,7 +287,6 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
         builder: (context) => EnrollmentCompleteScreen(
           workerName: employee.name,
           systemId: _systemIdFor(employee.id),
-          enrollmentType: draft.enrollmentType,
           registeredAt: DateTime.parse(employee.attendanceTime),
         ),
       ),
@@ -523,31 +539,6 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
                 minLines: 2,
                 maxLines: 3,
                 maxLength: _noteMaxLength,
-              ),
-            ],
-            const SizedBox(height: 18),
-
-            AppOptionSelector<PayType>(
-              label: 'Enrollment Type',
-              options: PayType.values,
-              selected: _formViewModel.enrollmentType,
-              onSelected: _formViewModel.selectEnrollmentType,
-              labelBuilder: (type) => type.label,
-              selectedBackground: const Color(0xFFD6E4FB),
-              selectedForeground: const Color(0xFF1565C0),
-            ),
-            if (_formViewModel.enrollmentType == PayType.shiftBased) ...[
-              const SizedBox(height: 18),
-              AppDropdownField<ShiftType>(
-                label: 'Shift',
-                isRequired: true,
-                hint: 'Select shift',
-                icon: Icons.schedule_outlined,
-                value: _formViewModel.shiftType,
-                items: ShiftType.values,
-                labelBuilder: (shift) => shift.label,
-                onChanged: _formViewModel.selectShiftType,
-                validator: (shift) => shift == null ? 'Select the shift' : null,
               ),
             ],
           ],

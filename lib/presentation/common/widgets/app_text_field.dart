@@ -19,6 +19,11 @@ class AppTextField extends StatelessWidget {
   /// Restricts what can be typed — e.g. alphanumeric-only for an ID field.
   final List<TextInputFormatter>? inputFormatters;
 
+  /// Hard cap on input length, enforced as the user types (and on paste).
+  /// Hidden counter — same as AppFormField — so this doesn't clutter the
+  /// field with a "0/20" display.
+  final int? maxLength;
+
   const AppTextField({
     super.key,
     required this.label,
@@ -31,6 +36,7 @@ class AppTextField extends StatelessWidget {
     this.onSubmitted,
     this.obscureText = false,
     this.inputFormatters,
+    this.maxLength,
     this.suffixIcon,
   });
 
@@ -49,6 +55,7 @@ class AppTextField extends StatelessWidget {
           onFieldSubmitted: onSubmitted,
           obscureText: obscureText,
           inputFormatters: inputFormatters,
+          maxLength: maxLength,
           autocorrect: false,
           enableSuggestions: false,
           style: const TextStyle(color: Colors.black),
@@ -59,6 +66,9 @@ class AppTextField extends StatelessWidget {
             suffixIcon: suffixIcon,
             filled: true,
             fillColor: Colors.white,
+            // The field already looks complete without the "0/20" character
+            // counter cluttering it.
+            counterText: '',
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
               borderSide: BorderSide.none,

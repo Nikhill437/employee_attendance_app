@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../data/models/department_model.dart';
 import '../../../data/models/worker_task_model.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/worker_task_list_viewmodel.dart';
@@ -136,12 +137,15 @@ Widget? _taskSubtitle(WorkerTask task) {
   );
 }
 
-/// "Target: X · Rate: Y" for [task], or null when neither is set. Matches
-/// the format the Assign Task screen uses.
+/// "Target: X" for [task], or null when there's no target to show. Only
+/// Task Based and Hourly tasks carry a completion target — Daily/Monthly
+/// tasks have none to report here.
 String? _targetRateText(WorkerTask task) {
+  final showsTarget =
+      task.taskType == TaskType.taskBased.name ||
+      task.taskType == TaskType.hourBased.name;
   final parts = [
-    if (task.taskTarget != null) 'Target: ${task.taskTarget}',
-    // if (task.taskRate != null) 'Rate: ${task.taskRate}',
+    if (showsTarget && task.taskTarget != null) 'Target: ${task.taskTarget}',
   ];
   return parts.isEmpty ? null : parts.join(' · ');
 }

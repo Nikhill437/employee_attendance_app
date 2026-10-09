@@ -8,6 +8,7 @@ import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/lookup_repository.dart';
 import '../../../data/repositories/updated_counts_repository.dart';
 import '../../../data/repositories/dashboard_setup_store.dart';
+import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 import '../../../data/repositories/worker_import_repository.dart';
 import '../../../data/repositories/worker_task_import_repository.dart';
@@ -21,6 +22,7 @@ class DashboardViewModel extends BaseViewModel {
   final WorkerAttendanceRepository _workerAttendance;
   final LookupRepository _lookup;
   final UpdatedCountsRepository _updatedCountsRepository;
+  final SupervisorSessionRepository _session;
 
   DashboardViewModel({
     EmployeeRepository? employees,
@@ -30,6 +32,7 @@ class DashboardViewModel extends BaseViewModel {
     WorkerAttendanceRepository? workerAttendance,
     LookupRepository? lookup,
     UpdatedCountsRepository? updatedCountsRepository,
+    SupervisorSessionRepository? session,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _workerImport = workerImport ?? WorkerImportRepository(),
@@ -37,7 +40,8 @@ class DashboardViewModel extends BaseViewModel {
        _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
        _lookup = lookup ?? LookupRepository(),
        _updatedCountsRepository =
-           updatedCountsRepository ?? UpdatedCountsRepository();
+           updatedCountsRepository ?? UpdatedCountsRepository(),
+       _session = session ?? SupervisorSessionRepository();
 
   final DashboardSetupStore _setupStore = DashboardSetupStore();
   int _setupCompleted = 0;
@@ -130,10 +134,23 @@ class DashboardViewModel extends BaseViewModel {
       _pendingNoticeDue = await _workerAttendance.hasUnsyncedData();
     }
 
+    // The server response for a fetch includes every department's workers,
+    // and all of them are stored locally (see WorkerImportRepository) — but
+    // the Employee List Data card's own counts only cover the supervisor's
+    // own department, same as worker_list_screen.dart's list. Falls back to
+    // the unfiltered count when the supervisor's department couldn't be
+    // determined, rather than showing a confusingly empty 0.
+    final supervisorDepartmentId = await _session.getSupervisorDepartmentId();
+    final departmentEnrolled = supervisorDepartmentId == null
+        ? enrolled
+        : enrolled
+              .where((e) => e.departmentId == supervisorDepartmentId)
+              .toList();
+
     _roster = enrolled;
     _summary = DashboardSummary(
-      totalEmployees: enrolled.length,
-      offlineEmployees: enrolled.where((e) => !e.isSynced).length,
+      totalEmployees: departmentEnrolled.length,
+      offlineEmployees: departmentEnrolled.where((e) => !e.isSynced).length,
       employeesLastFetchedAt: await _workerImport.lastSyncedAt(),
       departmentsTotal: await _lookup.getDepartmentCount(),
       departmentsLastFetchedAt: await _lookup.departmentsLastSyncedAt(),
@@ -239,8 +256,8 @@ class DashboardViewModel extends BaseViewModel {
 
   /// The Departments card's Clear action: wipes the local cache and resets
   /// its fetch checkpoint, so the next Check For New Data tap pulls the
-  /// full list again. Departments are pure server-reflected reference
-  /// data, so nothing local is lost.
+  /// full list again instead of only what's changed. Departments are pure
+  /// server-reflected reference data, so nothing local is lost.
   Future<void> clearDepartmentsData() async {
     _isClearingDepartments = true;
     safeNotify();

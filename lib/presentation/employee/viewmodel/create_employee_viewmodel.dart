@@ -48,13 +48,11 @@ class CreateEmployeeViewModel extends BaseViewModel {
     String? dateOfBirth,
     Gender gender = Gender.other,
     String? address,
-    PayType payType = PayType.daily,
     String? department,
     int? departmentId,
     String? nationalIdImage,
     int? taskId,
     String? taskNote,
-    String? shiftBasedType,
   }) async {
     final embeddings = _faceEmbeddings;
     if (embeddings == null) return null;
@@ -73,12 +71,10 @@ class CreateEmployeeViewModel extends BaseViewModel {
         dateOfBirth: dateOfBirth,
         gender: gender,
         address: address,
-        payType: payType,
         department: department,
         departmentId: departmentId,
         nationalIdImage: nationalIdImage,
         taskId: taskId,
-        shiftBasedType: shiftBasedType,
       ),
     );
 
@@ -90,11 +86,6 @@ class CreateEmployeeViewModel extends BaseViewModel {
         note: (taskNote == null || taskNote.trim().isEmpty)
             ? null
             : taskNote.trim(),
-        // Enrollment-time assignment is always the worker's standing
-        // task — there's no Today/Default choice at this point (the
-        // worker hasn't even checked in yet), matching the previous
-        // single-path behavior unchanged.
-        isDefault: true,
       );
     }
 

@@ -34,7 +34,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 22,
+      version: 26,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -238,18 +238,6 @@ class DatabaseHelper {
           ''');
           await db.execute('DROP TABLE worker_tasks_v18');
         }
-        if (oldVersion < 22 && oldVersion >= 7) {
-          // isDefault distinguishes a Today-only assignment (0 — see
-          // assignWorkerTask) from the worker's standing default task
-          // materialized into today's row (1) — see the column's doc
-          // comment in _createWorkerTables.
-          await _addColumnIfMissing(
-            db,
-            'worker_tasks',
-            'isDefault',
-            'BOOLEAN NOT NULL DEFAULT 1',
-          );
-        }
         if (oldVersion < 21 && oldVersion >= 7) {
           // task_note/supervisor_note are in _createWorkerTables for new
           // installs; this adds them to databases created before them.
@@ -266,6 +254,79 @@ class DatabaseHelper {
           // assignment. It's copied into that day's worker_tasks.task_note, worker_tasks.supervisor_note when
           // the worker checks in (see _ensureTodaysWorkerTaskRow).
           await db.execute('ALTER TABLE workers ADD COLUMN note TEXT');
+        }
+        if (oldVersion < 25 && oldVersion >= 7) {
+          // task_type/working_hours moved to the tasks catalog (set per
+          // task, not per assignment); isDefault/task_type/hours/
+          // assignment_type are retired from worker_tasks, and
+          // enrollment_type/shift_based_type are retired from workers. Runs
+          // after every older step above (task_note/supervisor_note/
+          // workers.note) so the columns this rebuild's SELECT reads are
+          // guaranteed to already exist, however far back oldVersion is.
+          await _addColumnIfMissing(db, 'tasks', 'task_type', 'TEXT');
+          await _addColumnIfMissing(db, 'tasks', 'working_hours', 'TEXT');
+
+          await db.execute('ALTER TABLE workers RENAME TO workers_v24');
+          await db.execute(
+            'ALTER TABLE worker_tasks RENAME TO worker_tasks_v24',
+          );
+          await _createWorkerTables(db);
+          await db.execute('''
+            INSERT INTO workers (
+              offline_worker_id, worker_id, full_name, birth_date, gender,
+              national_id, national_id_image, phone_number, department_id,
+              address, face_detection, status, rejection_reason, created_by,
+              approved_by, approved_at, employee_id, task_id, note,
+              created_date, modified_date, server_time, is_synced, synced_at
+            )
+            SELECT
+              offline_worker_id, worker_id, full_name, birth_date, gender,
+              national_id, national_id_image, phone_number, department_id,
+              address, face_detection, status, rejection_reason, created_by,
+              approved_by, approved_at, employee_id, task_id, note,
+              created_date, modified_date, server_time, is_synced, synced_at
+            FROM workers_v24
+          ''');
+          await db.execute('DROP TABLE workers_v24');
+          await db.execute('''
+            INSERT INTO worker_tasks (
+              offline_worker_id, worker_task_id, worker_id, attendance_id,
+              task_id, target, status, assigned_at, created_at, updated_at,
+              task_note, supervisor_note, work_photo, overtime,
+              employee_target, completed_target, task_status, server_time,
+              task_date
+            )
+            SELECT
+              offline_worker_id, worker_task_id, worker_id, attendance_id,
+              task_id, target, status, assigned_at, created_at, updated_at,
+              task_note, supervisor_note, work_photo, overtime,
+              employee_target, completed_target, task_status, server_time,
+              task_date
+            FROM worker_tasks_v24
+          ''');
+          await db.execute('DROP TABLE worker_tasks_v24');
+        }
+        if (oldVersion < 26 && oldVersion >= 7) {
+          // isdefault ('yes'/'no', whether every worker in a task's
+          // department gets it by default) is unused — nothing reads
+          // Task.isDefault anywhere in the app — so it's dropped. Runs
+          // after the v25 step so task_type/working_hours already exist to
+          // carry over.
+          await db.execute('ALTER TABLE tasks RENAME TO tasks_v25');
+          await _createWorkerTables(db);
+          await db.execute('''
+            INSERT INTO tasks (
+              task_id, department_id, task_name, status, created_date,
+              modified_date, modified_by, created_by, target, rate,
+              overtime, task_type, working_hours, server_time
+            )
+            SELECT
+              task_id, department_id, task_name, status, created_date,
+              modified_date, modified_by, created_by, target, rate,
+              overtime, task_type, working_hours, server_time
+            FROM tasks_v25
+          ''');
+          await db.execute('DROP TABLE tasks_v25');
         }
       },
     );
@@ -320,17 +381,11 @@ class DatabaseHelper {
         modified_date TEXT,
         modified_by INTEGER,
         created_by INTEGER,
-        -- 'yes'/'no' from the backend's own `POST attendance/list_task`
-        -- response (see replaceTasks) — whether this task is one every
-        -- worker in its department gets by default, vs one a supervisor
-        -- assigns as needed. Drives the Assign Task screen's default
-        -- pre-selection for a newly-picked task's assignment_type.
-        isdefault TEXT NOT NULL DEFAULT 'no',
-        -- A per-task daily quantity goal, hourly/piece rate, and overtime
-        -- allowance — all backend-defined, mirrored read-only.
         target INTEGER,
         rate INTEGER,
         overtime INTEGER,
+        task_type TEXT,
+        working_hours TEXT,
         server_time TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(department_id, task_name),
         FOREIGN KEY (department_id) REFERENCES departments(department_id)
@@ -349,7 +404,6 @@ class DatabaseHelper {
         phone_number TEXT,
         department_id INTEGER NOT NULL,
         address TEXT,
-        enrollment_type TEXT,
         face_detection TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         rejection_reason TEXT,
@@ -357,25 +411,12 @@ class DatabaseHelper {
         approved_by INTEGER,
         approved_at TEXT,
         employee_id INTEGER UNIQUE,
-        shift_based_type TEXT,
-        -- The backend's own task id — set on some worker records
-        -- independent of the worker_tasks assignment table; not FK'd
-        -- locally since nothing here depends on it being enforced.
         task_id INTEGER,
         note TEXT,
         created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         modified_date TEXT DEFAULT CURRENT_TIMESTAMP,
         server_time TEXT DEFAULT CURRENT_TIMESTAMP,
-        -- Local-only bookkeeping, not part of the backend's schema: whether
-        -- POST attendance/sync-worker has succeeded for this row yet (see
-        -- markWorkerSynced) — drives the worker list's "Synced" pill. Set
-        -- back to 0 whenever check-in/out or a task assignment changes
-        -- this worker's data (see markWorkerUnsynced), so the pill flags
-        -- that there's something new to push.
         is_synced INTEGER NOT NULL DEFAULT 0,
-        -- When [is_synced] was last set true — null until the first
-        -- successful sync. Kept even after a later edit sets is_synced
-        -- back to 0, so the worker list can still show "last synced at".
         synced_at TEXT,
         FOREIGN KEY (department_id) REFERENCES departments(department_id)
           ON UPDATE CASCADE
@@ -389,49 +430,18 @@ class DatabaseHelper {
         attendance_id INTEGER,
         task_id INTEGER NOT NULL,
         target INTEGER,
-        -- Whether this row was materialized from the worker's standing
-        -- assignment (`workers.task_id`, 1 — the default) or is an
-        -- explicit one-day-only override that never touches
-        -- `workers.task_id` (0 — "Today", see assignWorkerTask and
-        -- _applyTodaysTaskAssignment). A Today row expires on its own the
-        -- next day for free: tomorrow's check-in reads `workers.task_id`,
-        -- which was never changed.
-        isDefault BOOLEAN NOT NULL DEFAULT 1,
         status TEXT NOT NULL DEFAULT 'active',
         assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        -- 'default' (available to the worker every day) or 'temporary' —
-        -- vestigial today (see assignWorkerTask, which only ever writes
-        -- 'default' now); which calendar day this row belongs to is
-        -- [task_date]'s job, not this column's.
-        assignment_type TEXT NOT NULL DEFAULT 'default',
-        -- Free-form text the supervisor attaches to this assignment — see
-        -- assign_task_screen.dart's Note field.
         task_note TEXT,
         supervisor_note TEXT,
-        -- This assignment's own overtime allowance and progress toward
-        -- [target] — distinct from the task catalog's own [Task]-level
-        -- target/rate/overtime, which describe the task in general.
         work_photo VARCHAR(255),
         overtime INTEGER,
         employee_target INTEGER,
         completed_target INTEGER,
-        -- 'pending'/'approved'/'rejected' — the backend's ENUM for this
-        -- assignment's own approval state (plain TEXT locally, no CHECK
-        -- constraint — see the schema doc comment above for why).
         task_status TEXT NOT NULL DEFAULT 'pending',
         server_time TEXT DEFAULT CURRENT_TIMESTAMP,
-        -- The calendar day (supervisor's own timezone — see AppTime, same
-        -- as worker_attendance.attendance_date) this row's *daily* record
-        -- belongs to: [employee_target]/[work_photo]/[completed_target]/
-        -- [note]/[task_status]/[overtime] are all scoped to this one day,
-        -- never carried over or overwritten across days. The task
-        -- ASSIGNMENT itself (which task_id a worker is on) stays a
-        -- standing fact that spans every day's row — see
-        -- DatabaseHelper.getWorkerTasks, which creates each new day's row
-        -- automatically (carrying the task_id forward, but with these
-        -- fields blank) the first time it's read on a day with no row yet.
         task_date TEXT NOT NULL,
         UNIQUE(worker_id, task_id, task_date),
         FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE CASCADE,
@@ -453,9 +463,6 @@ class DatabaseHelper {
         status TEXT NOT NULL DEFAULT 'checked_in',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        -- Local-only bookkeeping, not part of the backend's schema: whether
-        -- POST attendance/check-in has succeeded for this row yet (see
-        -- markWorkerAttendanceSynced) — drives the worker list's sync button.
         is_synced INTEGER NOT NULL DEFAULT 0,
         UNIQUE(worker_id, attendance_date),
         FOREIGN KEY (worker_id) REFERENCES workers(offline_worker_id) ON UPDATE CASCADE
@@ -466,9 +473,11 @@ class DatabaseHelper {
   // --- Worker (enrollment) methods ---
 
   static const String _workerSelect = '''
-    SELECT workers.*, departments.department_name AS department_name
+    SELECT workers.*, departments.department_name AS department_name,
+           tasks.task_type AS task_type
     FROM workers
     LEFT JOIN departments ON departments.department_id = workers.department_id
+    LEFT JOIN tasks ON tasks.task_id = workers.task_id
   ''';
 
   /// Inserts [employee] into `workers`. Its `departmentId` must already be
@@ -521,9 +530,10 @@ class DatabaseHelper {
         'task_id': task.id,
         'department_id': task.departmentId,
         'task_name': task.name,
-        'isdefault': task.isDefault ? 'yes' : 'no',
         'target': task.target,
         'rate': task.rate,
+        'task_type': task.taskType?.name,
+        'working_hours': task.workingHours,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -890,12 +900,13 @@ class DatabaseHelper {
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
-             worker_tasks.assignment_type, worker_tasks.isDefault, worker_tasks.employee_target,
+             worker_tasks.employee_target,
              worker_tasks.work_photo, worker_tasks.completed_target,
              worker_tasks.task_note, worker_tasks.supervisor_note,
              worker_tasks.task_status, worker_tasks.task_date,
              worker_tasks.worker_task_id AS real_worker_task_id,
-             tasks.target AS task_target, tasks.rate AS task_rate
+             tasks.target AS task_target, tasks.rate AS task_rate,
+             tasks.task_type AS task_type, tasks.working_hours AS working_hours
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
@@ -909,11 +920,12 @@ class DatabaseHelper {
     final assigned = await db.rawQuery(
       '''
       SELECT ? AS worker_id, tasks.task_id, tasks.task_name, tasks.department_id,
-             'active' AS status, 'default' AS assignment_type, 1 AS isDefault,
+             'active' AS status,
              workers.note AS task_note, NULL AS supervisor_note,
              'pending' AS task_status, '' AS task_date, 0 AS worker_task_id,
              NULL AS real_worker_task_id, tasks.target AS task_target,
-             tasks.rate AS task_rate
+             tasks.rate AS task_rate, tasks.task_type AS task_type,
+             tasks.working_hours AS working_hours
       FROM workers
       JOIN tasks ON tasks.task_id = workers.task_id
       WHERE workers.offline_worker_id = ?
@@ -932,11 +944,12 @@ class DatabaseHelper {
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
-             worker_tasks.assignment_type, worker_tasks.isDefault, worker_tasks.employee_target,
+             worker_tasks.employee_target,
              worker_tasks.work_photo, worker_tasks.completed_target, worker_tasks.task_note, worker_tasks.supervisor_note,
              worker_tasks.task_status, worker_tasks.task_date,
              worker_tasks.worker_task_id AS real_worker_task_id,
-             tasks.target AS task_target, tasks.rate AS task_rate
+             tasks.target AS task_target, tasks.rate AS task_rate,
+             tasks.task_type AS task_type, tasks.working_hours AS working_hours
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
@@ -960,10 +973,11 @@ class DatabaseHelper {
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
-             worker_tasks.assignment_type, worker_tasks.isDefault, worker_tasks.employee_target,
+             worker_tasks.employee_target,
              worker_tasks.work_photo, worker_tasks.completed_target, worker_tasks.task_note, worker_tasks.supervisor_note,
              worker_tasks.task_status, worker_tasks.task_date,
-             worker_tasks.worker_task_id AS real_worker_task_id
+             worker_tasks.worker_task_id AS real_worker_task_id,
+             tasks.task_type AS task_type, tasks.working_hours AS working_hours
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.task_date = ?
@@ -974,14 +988,6 @@ class DatabaseHelper {
     return List.generate(maps.length, (i) => WorkerTask.fromMap(maps[i]));
   }
 
-  /// Creates today's `worker_tasks` row for [workerId]'s current standing
-  /// assignment (the most recent active row, any day) if one doesn't exist
-  /// yet — carrying the task_id/assignment_type forward but leaving every
-  /// daily field (employee_target/work_photo/completed_target/note/
-  /// task_status/overtime) unset and `worker_task_id` null, so it reads as
-  /// a fresh blank record and is picked up by [getUnsyncedWorkerTasks] like
-  /// any other not-yet-synced day. A no-op if today's row already exists,
-  /// or if the worker has no active assignment at all yet.
   /// Adds [column] to [table] only if it's missing, so an upgrade that
   /// rebuilt the table already (see the v19 step) doesn't fail.
   Future<void> _addColumnIfMissing(
@@ -1015,10 +1021,7 @@ class DatabaseHelper {
   /// [assignWorkerTask] sets today's row itself via
   /// [_applyTodaysTaskAssignment] rather than going through here. Does
   /// nothing if the worker has no task, is rejected, or already has an
-  /// active row for today — which can now happen when a Today-only task
-  /// (see [_applyTodaysTaskAssignment]) was assigned before check-in, and
-  /// must win over the standing default rather than being silently
-  /// replaced by it.
+  /// active row for today.
   Future<void> _ensureTodaysWorkerTaskRow(
     DatabaseExecutor db,
     int workerId,
@@ -1056,32 +1059,22 @@ class DatabaseHelper {
       return;
     }
     final note = workerRows.first['note'] as String?;
-    await _applyTodaysTaskAssignment(
-      db,
-      workerId,
-      taskId,
-      note,
-      isDefault: true,
-    );
+    await _applyTodaysTaskAssignment(db, workerId, taskId, note);
   }
 
   /// Sets today's one active `worker_tasks` row to exactly [taskId] —
   /// deactivating whatever else was active for today, reactivating a
   /// same-task row if one already exists (never inserting a duplicate;
   /// the table's own UNIQUE(worker_id, task_id, task_date) would reject
-  /// one anyway), or inserting a fresh one. Shared by the default-task
+  /// one anyway), or inserting a fresh one. Shared by the standing-default
   /// check-in materialization ([_ensureTodaysWorkerTaskRow]) and an
-  /// explicit Default/Today assignment ([assignWorkerTask]) — unlike
-  /// [_ensureTodaysWorkerTaskRow], this always acts regardless of what (if
-  /// anything) was already active for today, since it's driven by an
-  /// explicit supervisor decision rather than "materialize if missing".
+  /// explicit assignment ([assignWorkerTask]).
   Future<void> _applyTodaysTaskAssignment(
     DatabaseExecutor db,
     int workerId,
     int taskId,
-    String? note, {
-    required bool isDefault,
-  }) async {
+    String? note,
+  ) async {
     final today = _todayDateKey();
     final now = AppTime.nowInUserZone().toIso8601String();
 
@@ -1103,12 +1096,7 @@ class DatabaseHelper {
     if (sameTask.isNotEmpty) {
       await db.update(
         'worker_tasks',
-        {
-          'status': 'active',
-          'task_note': note,
-          'isDefault': isDefault ? 1 : 0,
-          'updated_at': now,
-        },
+        {'status': 'active', 'task_note': note, 'updated_at': now},
         where: 'offline_worker_id = ?',
         whereArgs: [sameTask.first['offline_worker_id']],
       );
@@ -1118,9 +1106,7 @@ class DatabaseHelper {
     await db.insert('worker_tasks', {
       'worker_id': workerId,
       'task_id': taskId,
-      'assignment_type': 'default',
       'status': 'active',
-      'isDefault': isDefault ? 1 : 0,
       'assigned_at': now,
       'created_at': now,
       'updated_at': now,
@@ -1146,10 +1132,11 @@ class DatabaseHelper {
       '''
       SELECT worker_tasks.offline_worker_id AS worker_task_id, worker_tasks.worker_id,
              tasks.task_id, tasks.task_name, tasks.department_id, worker_tasks.status,
-             worker_tasks.assignment_type, worker_tasks.isDefault, worker_tasks.completed_target,
+             worker_tasks.completed_target,
              worker_tasks.work_photo, worker_tasks.task_note, worker_tasks.supervisor_note, worker_tasks.task_status,
              worker_tasks.overtime, worker_tasks.created_at, worker_tasks.task_date,
-             worker_tasks.worker_task_id AS real_worker_task_id
+             worker_tasks.worker_task_id AS real_worker_task_id,
+             tasks.task_type AS task_type, tasks.working_hours AS working_hours
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
@@ -1209,43 +1196,27 @@ class DatabaseHelper {
     await markWorkerUnsynced(workerId);
   }
 
-  /// Saves a new task assignment on the worker. [isDefault] true makes it
-  /// the worker's standing assignment: `workers.task_id`/`workers.note`
-  /// is updated, and today's `worker_tasks` row is set to match
-  /// immediately too — before check-in or after, same either way, not
-  /// just when already checked in. [isDefault] false makes it a
-  /// one-day-only "Today" assignment: `workers.task_id`/`workers.note` is
-  /// never touched, and today's `worker_tasks` row is set immediately
-  /// regardless of check-in status — that row is the only place this
-  /// one-day assignment is remembered until check-in consumes it (see
-  /// _ensureTodaysWorkerTaskRow) or the day ends and it's simply never
-  /// read again. Either way, reassigning again before/after today's row
-  /// exists reuses/replaces it rather than creating a duplicate (see
-  /// _applyTodaysTaskAssignment). Rejected workers are skipped.
+  /// Saves a new task assignment on the worker: `workers.task_id`/
+  /// `workers.note` is updated, and today's `worker_tasks` row is set to
+  /// match immediately too — before check-in or after, same either way.
+  /// Reassigning again the same day reuses/replaces today's row rather
+  /// than creating a duplicate (see _applyTodaysTaskAssignment). Rejected
+  /// workers are skipped.
   Future<void> assignWorkerTask({
     required int workerId,
     required int taskId,
     String? note,
-    required bool isDefault,
   }) async {
     final db = await database;
     if (await _isRejectedWorker(db, workerId)) return;
     await db.transaction((txn) async {
-      if (isDefault) {
-        await txn.update(
-          'workers',
-          {'task_id': taskId, 'note': note},
-          where: 'offline_worker_id = ?',
-          whereArgs: [workerId],
-        );
-      }
-      await _applyTodaysTaskAssignment(
-        txn,
-        workerId,
-        taskId,
-        note,
-        isDefault: isDefault,
+      await txn.update(
+        'workers',
+        {'task_id': taskId, 'note': note},
+        where: 'offline_worker_id = ?',
+        whereArgs: [workerId],
       );
+      await _applyTodaysTaskAssignment(txn, workerId, taskId, note);
     });
   }
 
@@ -1891,7 +1862,6 @@ class DatabaseHelper {
           'worker_task_id': ?record.workerTaskId,
           'target': record.target,
           'status': record.status,
-          'assignment_type': record.assignmentType,
           'supervisor_note': record.note,
           'work_photo': record.workPhoto,
           'overtime': record.overtime,

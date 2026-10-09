@@ -53,7 +53,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
        _workerAttendance = workerAttendance ?? WorkerAttendanceRepository();
 
   Gender _gender = Gender.male;
-  PayType _enrollmentType = PayType.daily;
   DateTime? _dateOfBirth;
   Department? _department;
   List<Department> _departments = const [];
@@ -65,14 +64,12 @@ class EnrollmentFormViewModel extends BaseViewModel {
   List<Task> _tasks = const [];
   bool _isLoadingTasks = false;
   String _taskNote = '';
-  ShiftType? _shiftType;
   String? _workerStatus;
 
   /// The worker's status as last read from the `workers` table (see
   /// [loadWorkerStatus]); null until that read finishes.
   String? get workerStatus => _workerStatus;
   Gender get gender => _gender;
-  PayType get enrollmentType => _enrollmentType;
   DateTime? get dateOfBirth => _dateOfBirth;
   Department? get department => _department;
   List<Department> get departments => _departments;
@@ -88,7 +85,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
   List<Task> get tasks => _tasks;
   bool get isLoadingTasks => _isLoadingTasks;
   String get taskNote => _taskNote;
-  ShiftType? get shiftType => _shiftType;
 
   /// Loads the departments cached from the last successful login sync —
   /// call once from the screen's initState. Pre-selects
@@ -154,11 +150,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
     safeNotify();
   }
 
-  void selectShiftType(ShiftType? type) {
-    _shiftType = type;
-    safeNotify();
-  }
-
   bool _departmentLocked = false;
 
   /// True while today's attendance has a check-in but no check-out. The
@@ -182,20 +173,15 @@ class EnrollmentFormViewModel extends BaseViewModel {
     safeNotify();
   }
 
-  /// Edit mode only: sets the display-only Gender/Enrollment Type (and, for
-  /// a Shift Based worker, their shift) fields to the worker's actual
-  /// values — they're disabled in edit mode, but should still show the
+  /// Edit mode only: sets the display-only Gender field to the worker's
+  /// actual values — disabled in edit mode, but should still show the
   /// truth rather than these fields' plain defaults.
   void presetForEditing({
     required Gender gender,
-    required PayType enrollmentType,
-    String? shiftBasedType,
     DateTime? dateOfBirth,
     String? nationalIdImagePath,
   }) {
     _gender = gender;
-    _enrollmentType = enrollmentType;
-    _shiftType = _enumOrNull(ShiftType.values, shiftBasedType);
     _dateOfBirth = dateOfBirth;
     // A stored path is either a local copy (exists on this device) or a
     // server file URL, which can't be opened as a File.
@@ -208,24 +194,8 @@ class EnrollmentFormViewModel extends BaseViewModel {
     safeNotify();
   }
 
-  static T? _enumOrNull<T extends Enum>(List<T> values, String? storedName) {
-    if (storedName == null) return null;
-    for (final value in values) {
-      if (value.name == storedName) return value;
-    }
-    return null;
-  }
-
   void selectGender(Gender gender) {
     _gender = gender;
-    safeNotify();
-  }
-
-  void selectEnrollmentType(PayType type) {
-    _enrollmentType = type;
-    // Only meaningful for Shift Based — picking any other type drops
-    // whatever shift was selected so a stale one can't be saved under it.
-    if (type != PayType.shiftBased) _shiftType = null;
     safeNotify();
   }
 
@@ -282,16 +252,12 @@ class EnrollmentFormViewModel extends BaseViewModel {
       nationalId: nationalId,
       phoneNumber: phoneNumber,
       address: address,
-      enrollmentType: _enrollmentType,
       departmentId: department.id,
       departmentName: department.name,
       taskId: _task?.id,
       taskNote: _task == null || _taskNote.trim().isEmpty
           ? null
           : _taskNote.trim(),
-      shiftBasedType: _enrollmentType == PayType.shiftBased
-          ? _shiftType?.name
-          : null,
       nationalIdImagePath: nationalIdImage.path,
     );
   }
@@ -314,9 +280,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
   }) async {
     final department = _department;
     if (department == null) return 'Select the department';
-    if (_enrollmentType == PayType.shiftBased && _shiftType == null) {
-      return 'Select the shift';
-    }
     if (_isSavingDepartment) return null;
 
     final trimmedName = fullName.trim();
@@ -334,8 +297,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
       }
     }
 
-    final isShiftBased = _enrollmentType == PayType.shiftBased;
-    final newShift = isShiftBased ? _shiftType?.name : null;
     final newDob = _dateOfBirth?.toIso8601String();
     final newGender = _gender.name;
     // Keeps the stored attachment unless a new one was captured, so saving
@@ -346,8 +307,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
     if (departmentChanged && _departmentLocked) {
       return 'Check out for today before changing the department';
     }
-    final typeChanged = _enrollmentType != original.payType;
-    final shiftChanged = newShift != original.shiftBasedType;
     final nameChanged = trimmedName != original.name;
     final phoneChanged = trimmedPhone != original.number;
     final addressChanged = trimmedAddress != (original.address ?? '');
@@ -360,8 +319,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
 
     final anyChange =
         departmentChanged ||
-        typeChanged ||
-        shiftChanged ||
         nameChanged ||
         nationalIdChanged ||
         phoneChanged ||
@@ -386,13 +343,8 @@ class EnrollmentFormViewModel extends BaseViewModel {
       if (genderChanged) 'gender': newGender,
       if (imageChanged) 'national_id_image': newImage,
       if (departmentChanged) 'department_id': department.id,
-      if (typeChanged) 'enrollment_type': _enrollmentType.name,
-      // Local copy always mirrors the type: null whenever it isn't Shift Based.
-      if (typeChanged || shiftChanged) 'shift_based_type': newShift,
       'modified_date': editedAt,
     };
-    // Shift is only sent when Shift Based is selected or its shift changed —
-    // switching away from Shift Based clears it locally but sends nothing.
     final remoteChanges = <String, String>{
       if (resubmitting) 'status': 'pending',
       if (nameChanged) 'full_name': trimmedName,
@@ -402,9 +354,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
       if (dobChanged && newDob != null) 'birth_date': newDob,
       if (genderChanged) 'gender': newGender,
       if (departmentChanged) 'department_id': department.id.toString(),
-      if (typeChanged) 'enrollment_type': _enrollmentType.name,
-      if (isShiftBased && (typeChanged || shiftChanged))
-        'shift_based_type': newShift!,
     };
 
     _isSavingDepartment = true;

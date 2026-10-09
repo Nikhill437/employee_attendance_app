@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'department_model.dart';
 import 'worker_model.dart';
 
 class Employee {
@@ -20,7 +21,6 @@ class Employee {
 
   final Gender gender;
   final String? address;
-  final PayType payType;
 
   /// The department name, for display — read back from the `departments`
   /// join (see `Employee.fromMap`), or set directly right after enrollment
@@ -84,10 +84,9 @@ class Employee {
   /// uses this to actually assign the task in `worker_tasks`.
   final int? taskId;
 
-  /// Which shift this worker works (`workers.shift_based_type`) — only set
-  /// when [payType] is [PayType.shiftBased]; null for every other
-  /// enrollment type.
-  final String? shiftBasedType;
+  /// The assigned task's own type (`tasks.task_type`), joined in via
+  /// [taskId] — null if no task is assigned yet.
+  final TaskType? taskType;
 
   Employee({
     this.id,
@@ -100,7 +99,6 @@ class Employee {
     this.dateOfBirth,
     this.gender = Gender.other,
     this.address,
-    this.payType = PayType.daily,
     this.department,
     this.departmentId,
     this.nationalIdImage,
@@ -112,7 +110,7 @@ class Employee {
     this.remoteWorkerId,
     this.modifiedDate,
     this.taskId,
-    this.shiftBasedType,
+    this.taskType,
   });
 
   Employee copyWith({
@@ -126,7 +124,6 @@ class Employee {
     String? dateOfBirth,
     Gender? gender,
     String? address,
-    PayType? payType,
     String? department,
     int? departmentId,
     String? nationalIdImage,
@@ -137,7 +134,6 @@ class Employee {
     int? remoteEmployeeId,
     int? remoteWorkerId,
     int? taskId,
-    String? shiftBasedType,
   }) {
     return Employee(
       id: id ?? this.id,
@@ -150,7 +146,6 @@ class Employee {
       dateOfBirth: dateOfBirth ?? this.dateOfBirth,
       gender: gender ?? this.gender,
       address: address ?? this.address,
-      payType: payType ?? this.payType,
       department: department ?? this.department,
       departmentId: departmentId ?? this.departmentId,
       nationalIdImage: nationalIdImage ?? this.nationalIdImage,
@@ -161,7 +156,7 @@ class Employee {
       remoteEmployeeId: remoteEmployeeId ?? this.remoteEmployeeId,
       remoteWorkerId: remoteWorkerId ?? this.remoteWorkerId,
       taskId: taskId ?? this.taskId,
-      shiftBasedType: shiftBasedType ?? this.shiftBasedType,
+      taskType: taskType,
     );
   }
 
@@ -188,18 +183,17 @@ class Employee {
       'phone_number': number,
       'department_id': resolvedDepartmentId,
       'address': address,
-      'enrollment_type': payType.name,
       'face_detection': jsonEncode(faceEmbeddings),
       'status': status,
       'created_by': createdBy,
       'created_date': attendanceTime,
       'task_id': taskId,
-      'shift_based_type': shiftBasedType,
     };
   }
 
-  /// Reads back a `workers` row, left-joined with `departments` so
-  /// `department` carries the name rather than just the FK id.
+  /// Reads back a `workers` row, left-joined with `departments` and `tasks`
+  /// so `department` carries the name rather than just the FK id, and
+  /// `taskType` carries the assigned task's own type.
   ///
   /// `id` comes from `offline_worker_id` (the always-populated local row
   /// id), not `worker_id` (the backend's real id, null until this worker's
@@ -223,11 +217,6 @@ class Employee {
       // fall back to a neutral default rather than throwing.
       gender: _enumOrDefault(Gender.values, map['gender'], Gender.other),
       address: map['address'] as String?,
-      payType: _enumOrDefault(
-        PayType.values,
-        map['enrollment_type'],
-        PayType.daily,
-      ),
       department: map['department_name'] as String?,
       departmentId: map['department_id'] as int?,
       nationalIdImage: map['national_id_image'] as String?,
@@ -239,7 +228,7 @@ class Employee {
       remoteWorkerId: map['worker_id'] as int?,
       modifiedDate: map['modified_date'] as String?,
       taskId: map['task_id'] as int?,
-      shiftBasedType: map['shift_based_type'] as String?,
+      taskType: _enumOrNull(TaskType.values, map['task_type']),
     );
   }
 
@@ -272,5 +261,13 @@ class Employee {
       if (value.name == storedName) return value;
     }
     return fallback;
+  }
+
+  static T? _enumOrNull<T extends Enum>(List<T> values, Object? storedName) {
+    if (storedName is! String) return null;
+    for (final value in values) {
+      if (value.name == storedName) return value;
+    }
+    return null;
   }
 }

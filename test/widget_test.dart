@@ -25,7 +25,6 @@ import 'package:employee_attendance_app/presentation/dashboard/viewmodel/worker_
 import 'package:employee_attendance_app/presentation/employee/view/enrollment_form_screen.dart';
 import 'package:employee_attendance_app/presentation/employee/viewmodel/create_employee_viewmodel.dart';
 import 'package:employee_attendance_app/presentation/face_scan/view/face_capture_screen.dart';
-import 'package:employee_attendance_app/data/models/worker_model.dart';
 import 'package:employee_attendance_app/presentation/employee/view/enrollment_complete_screen.dart';
 import 'package:employee_attendance_app/presentation/common/widgets/app_bottom_nav_bar.dart';
 import 'package:employee_attendance_app/presentation/settings/view/settings_screen.dart';
@@ -325,7 +324,7 @@ void main() {
       for (final step in ['Details', 'Face Capture', 'Complete']) {
         expect(find.text(step), findsOneWidget);
       }
-      for (final label in ['Date of Birth', 'Gender', 'Enrollment Type']) {
+      for (final label in ['Date of Birth', 'Gender']) {
         expect(find.text(label), findsOneWidget);
       }
       // The five required fields render their label plus a red "*" as one
@@ -461,7 +460,7 @@ void main() {
         home: EnrollmentCompleteScreen(
           workerName: 'Rajesh Kumar',
           systemId: 'EMP-048',
-          enrollmentType: PayType.daily,
+          taskType: TaskType.daily,
           registeredAt: DateTime.now(),
         ),
       ),

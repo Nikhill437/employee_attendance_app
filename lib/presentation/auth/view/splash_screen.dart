@@ -36,11 +36,23 @@ class SplashScreen extends StatelessWidget {
               right: 30,
               top: 5,
               bottom: 80,
-              child: IgnorePointer(
-                child: Image(
-                  image: AssetImage('assets/logo/logo.png'),
-                  fit: BoxFit.contain,
-                ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IgnorePointer(
+                    child: Image(
+                      image: AssetImage('assets/logo/logo.png'),
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                 Text(
+            'SMART ATTENDANCE SYSTEM',
+            style: TextStyle(
+              fontSize: 13,
+              letterSpacing: 1.2,
+              color: Colors.white70,
+            ),),
+                ],
               ),
             ),
             Positioned(

@@ -2,30 +2,30 @@ import 'package:flutter/material.dart';
 
 /// The eStove lock-up and tagline that opens every green screen.
 class BrandHeader extends StatelessWidget {
-  final double logoWidth;
-  final double logoHeight;
+  final double? logoWidth;
+  final double? logoHeight;
 
   /// Hidden on screens where the lock-up alone is the header.
   final bool showTagline;
 
   const BrandHeader({
     super.key,
-    this.logoWidth = 180,
-    this.logoHeight = 120,
+    this.logoWidth,
+    this.logoHeight,
     this.showTagline = true,
   });
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
         Image(
-          image: const AssetImage('assets/logo/top-branding.png'),
-          width: logoWidth,
-          height: logoHeight,
+          image: AssetImage('assets/logo/logo.png'),
+          fit: BoxFit.contain,
         ),
-        if (showTagline)
+        SizedBox(height: 10),
           const Text(
             'SMART ATTENDANCE SYSTEM',
             style: TextStyle(

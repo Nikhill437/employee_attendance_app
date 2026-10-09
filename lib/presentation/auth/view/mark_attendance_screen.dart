@@ -4,8 +4,10 @@ import '../../../core/routes/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/input_formatters.dart';
 import '../../../data/models/auth/auth_user_model.dart';
+import '../../../data/models/department_model.dart';
 import '../../../data/models/worker_attendance_model.dart';
 import '../../../data/repositories/employee_repository.dart';
+import '../../../data/repositories/task_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../../face_scan/view/face_scan_screen.dart';
@@ -34,6 +36,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   final WorkerAttendanceRepository _attendanceRepository =
       WorkerAttendanceRepository();
   final EmployeeRepository _employeeRepository = EmployeeRepository();
+  final TaskRepository _taskRepository = TaskRepository();
 
   /// This scan's check-in/check-out outcome, recorded as soon as the face
   /// match succeeds — read by [_buildSuccessView] to pick the right
@@ -127,14 +130,14 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   /// from [_runScanFlow] rather than recording the scan again here.
   ///
   /// Returns whether [_runScanFlow] should go on to call [_finish] —
-  /// always true for check-in (and for a third-or-later scan with nothing
-  /// new to show), but for check-out only once the worker's checkout-time
-  /// task entry has actually been saved (AssignTaskScreen's Worker
-  /// Submission card pops `true` on a successful save, same as its header
-  /// back arrow pops with nothing) — [_finish] itself is what already picks
-  /// the right destination for how this screen was opened: back to
-  /// worker_list_screen.dart's card ([_isSupervisorInitiated]) or on to
-  /// splash_screen.dart (the public kiosk flow).
+  /// true once the follow-up screen (if any was shown) is dismissed by any
+  /// means, whether that's a successful save, its header back arrow, or
+  /// the OS back button/swipe-back gesture — none of those should leave
+  /// the worker stranded on this screen's own success view. [_finish]
+  /// itself is what already picks the right destination for how this
+  /// screen was opened: back to worker_list_screen.dart's card
+  /// ([_isSupervisorInitiated]) or on to splash_screen.dart (the public
+  /// kiosk flow).
   Future<bool> _openFollowUpScreen(AuthUser user) async {
     final workerId = user.id;
     final record = _scanRecord;
@@ -151,11 +154,32 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
         );
         return true;
       case WorkerScanOutcome.checkedOut:
+        final assignment = await _taskRepository.getCurrentAssignment(
+          workerId,
+        );
+        if (!mounted) return false;
+        // Daily/Monthly tasks have nothing for the worker to submit at
+        // checkout (no per-day count/hours to record) — only Task Based/
+        // Hour Based tasks (and the checkout-time Worker Submission card
+        // that goes with them) need this screen at all.
+        final taskType = assignment?.taskType;
+        final needsSubmission =
+            taskType == TaskType.taskBased.name ||
+            taskType == TaskType.hourBased.name;
+        if (!needsSubmission) return true;
+
         final employee = await _employeeRepository.findByEmployeeId(
           user.employeeId,
         );
         if (!mounted) return false;
-        final saved = await Navigator.push<bool>(
+        // The result (true on a successful save, null/false from the header
+        // back arrow or the OS back button/swipe-back gesture) is ignored —
+        // showing this screen is additive, same as WorkerTaskListScreen
+        // above for check-in, so dismissing it by any means should still go
+        // on to _finish(). Gating on `saved == true` left a back/swipe exit
+        // stuck on this screen's own success view forever, since nothing
+        // else was left to move it on.
+        await Navigator.push<bool>(
           context,
           MaterialPageRoute(
             builder: (context) => AssignTaskScreen(
@@ -168,7 +192,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
             ),
           ),
         );
-        return saved == true;
+        return true;
       case WorkerScanOutcome.alreadyCheckedOut:
       case null:
         return true;

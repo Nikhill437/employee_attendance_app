@@ -112,9 +112,13 @@ class WorkerListViewModel extends BaseViewModel {
 
   /// The list after the current search term and attendance filter, ordered:
   /// pending workers with no backend worker_id, then approved-but-unsynced
-  /// workers, then everyone else — each group by worker_id descending. Shows every worker regardless of department
-  /// for now — see [canManageTasks] for where a department check still
-  /// applies, to task-action gating rather than list visibility.
+  /// workers, then everyone else — each group by worker_id descending.
+  /// Scoped to the supervisor's own department — a fetch stores every
+  /// department's workers locally (see WorkerImportRepository), but only
+  /// the supervisor's own are ever shown here, same as [canManageTasks]'s
+  /// task-action gating. Falls back to showing everyone when the
+  /// supervisor's department couldn't be determined, rather than an empty
+  /// list with no way to tell why.
   List<Worker> get workers {
     final term = _query.toLowerCase();
     final filtered = _workers.where((worker) {
@@ -123,6 +127,9 @@ class WorkerListViewModel extends BaseViewModel {
           _hiddenWorkerIds.contains(worker.workerId)) {
         return false;
       }
+      final matchesDepartment =
+          _supervisorDepartmentId == null ||
+          worker.departmentId == _supervisorDepartmentId;
       final matchesFilter =
           _attendanceFilter == null ||
           (_attendanceFilter == AttendanceFilter.checkIn
@@ -133,7 +140,7 @@ class WorkerListViewModel extends BaseViewModel {
           worker.name.toLowerCase().contains(term) ||
           worker.employeeId.toLowerCase().contains(term) ||
           (worker.remoteEmployeeId?.toString().contains(term) ?? false);
-      return matchesFilter && matchesTerm;
+      return matchesDepartment && matchesFilter && matchesTerm;
     });
 
     // Priority 1: no backend worker_id yet and still pending approval.
@@ -371,14 +378,13 @@ class WorkerListViewModel extends BaseViewModel {
     final taskStatusByWorker = await _tasks.getWorkerTaskStatusByWorker();
     _supervisorDepartmentId = await _session.getSupervisorDepartmentId();
 
-    // Workers whose department or enrollment type was edited and not synced.
+    // Workers whose department was edited and not synced.
     final pendingDepartmentOrType = <int>{};
     for (final employee in employees) {
       final id = employee.id;
       if (id == null) continue;
       final pending = await _editQueue.pendingFor(id);
-      if (pending.containsKey('department_id') ||
-          pending.containsKey('enrollment_type')) {
+      if (pending.containsKey('department_id')) {
         pendingDepartmentOrType.add(id);
       }
     }
@@ -389,7 +395,7 @@ class WorkerListViewModel extends BaseViewModel {
         Worker(
           name: employee.name,
           employeeId: employee.employeeId,
-          payType: employee.payType,
+          taskType: employee.taskType,
           department: employee.department,
           checkInAt: checkIns[employee.employeeId],
           displayAttendanceAt: _displayAttendanceAt(

@@ -60,7 +60,6 @@ class WorkerSyncApi {
       'gender': worker.gender.name,
       'national_id': worker.employeeId,
       'phone_number': worker.number,
-      'enrollment_type': worker.payType.name,
       'face_detection': jsonEncode(worker.faceEmbeddings),
     };
     if (worker.dateOfBirth != null) fields['birth_date'] = worker.dateOfBirth!;

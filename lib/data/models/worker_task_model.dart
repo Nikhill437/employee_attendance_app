@@ -1,5 +1,5 @@
 /// One task assigned to a worker — a `worker_tasks` row, joined with
-/// `tasks` for its display name and department (see TaskRepository /
+/// `tasks` for its display name, department, and type (see TaskRepository /
 /// DatabaseHelper).
 class WorkerTask {
   final int workerTaskId;
@@ -15,17 +15,6 @@ class WorkerTask {
 
   /// The `worker_tasks` row's own status (e.g. 'active').
   final String status;
-
-  /// 'default' (available to the worker every day) or 'temporary' (only
-  /// for the day named by the row's `assigned_at` date) — see the
-  /// `worker_tasks.assignment_type` column doc comment in DatabaseHelper.
-  final String assignmentType;
-
-  /// Whether this row reflects the worker's standing assignment (true) or
-  /// is a one-day-only "Today" override that never touched
-  /// `workers.task_id` and expires on its own after today (false) — see
-  /// the `worker_tasks.isDefault` column doc comment in DatabaseHelper.
-  final bool isDefault;
 
   /// The worker's own checkout-time numeric reading for this task
   /// (`worker_tasks.employee_target`) — see assign_task_screen.dart's
@@ -80,13 +69,16 @@ class WorkerTask {
   /// read-only (see AssignTaskViewModel.isReviewLocked).
   final int? realWorkerTaskId;
 
-  /// The task catalog's own daily quantity goal and hourly/piece rate
-  /// (`tasks.target`/`tasks.rate`) — the same read-only, backend-defined
-  /// values [Task.target]/[Task.rate] carry, joined in here so the
-  /// Currently Assigned banner can show them without a second lookup.
-  /// Null when the backend hasn't set one.
+  /// The task catalog's own daily quantity goal, hourly/piece rate, type,
+  /// and scheduled hours (`tasks.target`/`tasks.rate`/`tasks.task_type`/
+  /// `tasks.working_hours`) — the same read-only, backend-defined values
+  /// [Task.target]/[Task.rate]/[Task.taskType]/[Task.workingHours] carry,
+  /// joined in here so the Currently Assigned banner can show them without
+  /// a second lookup. Null when the backend hasn't set one.
   final int? taskTarget;
   final int? taskRate;
+  final String? taskType;
+  final String? workingHours;
 
   const WorkerTask({
     required this.workerTaskId,
@@ -95,8 +87,6 @@ class WorkerTask {
     required this.taskName,
     required this.departmentId,
     required this.status,
-    required this.assignmentType,
-    this.isDefault = true,
     this.employeeTarget,
     this.workPhoto,
     this.completedTarget,
@@ -109,6 +99,8 @@ class WorkerTask {
     this.realWorkerTaskId,
     this.taskTarget,
     this.taskRate,
+    this.taskType,
+    this.workingHours,
   });
 
   factory WorkerTask.fromMap(Map<String, dynamic> map) {
@@ -119,8 +111,6 @@ class WorkerTask {
       taskName: map['task_name'] as String,
       departmentId: map['department_id'] as int,
       status: map['status'] as String? ?? 'active',
-      assignmentType: map['assignment_type'] as String? ?? 'default',
-      isDefault: (map['isDefault'] as int? ?? 1) == 1,
       employeeTarget: map['employee_target'] as int?,
       workPhoto: map['work_photo'] as String?,
       completedTarget: map['completed_target'] as int?,
@@ -133,6 +123,8 @@ class WorkerTask {
       realWorkerTaskId: map['real_worker_task_id'] as int?,
       taskTarget: map['task_target'] as int?,
       taskRate: map['task_rate'] as int?,
+      taskType: map['task_type'] as String?,
+      workingHours: map['working_hours'] as String?,
     );
   }
 }

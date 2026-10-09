@@ -5,7 +5,7 @@ import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
-import '../../../data/models/worker_model.dart';
+import '../../../data/models/department_model.dart';
 import '../../common/widgets/common_widgets.dart';
 
 /// Step 3 of enrollment: confirms the worker was registered and offers the
@@ -16,14 +16,15 @@ class EnrollmentCompleteScreen extends StatelessWidget {
   /// The identifier the system assigned, e.g. `EMP-048`.
   final String systemId;
 
-  final PayType enrollmentType;
+  /// The assigned task's own type — null if no task was picked.
+  final TaskType? taskType;
   final DateTime registeredAt;
 
   const EnrollmentCompleteScreen({
     super.key,
     required this.workerName,
     required this.systemId,
-    required this.enrollmentType,
+    this.taskType,
     required this.registeredAt,
   });
 
@@ -146,10 +147,11 @@ class EnrollmentCompleteScreen extends StatelessWidget {
               style: _valueStyle.copyWith(color: AppColors.success),
             ),
           ),
-          _DetailRow(
-            label: 'Enrollment Type',
-            value: PayTypeChip(payType: enrollmentType),
-          ),
+          if (taskType != null)
+            _DetailRow(
+              label: 'Task Type',
+              value: TaskTypeChip(taskType: taskType!),
+            ),
           _DetailRow(
             label: 'Registration Date',
             value: Text(_registrationLabel, style: _valueStyle),

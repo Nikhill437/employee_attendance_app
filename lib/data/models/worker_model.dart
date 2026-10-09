@@ -1,3 +1,5 @@
+import 'department_model.dart';
+
 /// A worker's gender, as recorded on the enrollment form.
 enum Gender {
   male('Male'),
@@ -5,31 +7,6 @@ enum Gender {
   other('Other');
 
   const Gender(this.label);
-
-  final String label;
-}
-
-/// How a worker is paid, shown as the chip under their name.
-enum PayType {
-  daily('Daily'),
-  monthly('Monthly'),
-  taskBased('Task Based'),
-  shiftBased('Shift Based');
-
-  const PayType(this.label);
-
-  final String label;
-}
-
-/// Which shift a Shift Based worker (see [PayType.shiftBased]) works,
-/// stored in `workers.shift_based_type`. Only meaningful alongside that
-/// enrollment type — null for every other one.
-enum ShiftType {
-  morning('Morning'),
-  afternoon('Afternoon'),
-  night('Night');
-
-  const ShiftType(this.label);
 
   final String label;
 }
@@ -68,7 +45,7 @@ enum VerificationStatus {
 
 /// One row of the worker list.
 ///
-/// [payType] and [department] come from the employee's stored enrollment
+/// [taskType] and [department] come from the employee's stored enrollment
 /// record. [verification] reflects the backend's real approval status
 /// (`Employee.status`) once this worker has been synced or imported —
 /// 'Not Verified' until then, since there's nothing from the server to
@@ -79,7 +56,10 @@ class Worker {
   final String name;
   final String employeeId;
   final String role;
-  final PayType payType;
+
+  /// The currently assigned task's own type (`tasks.task_type`), joined in
+  /// via `workers.task_id` — null if no task is assigned yet.
+  final TaskType? taskType;
   final AttendanceStatus attendance;
 
   /// The department entered on the enrollment form, or null for records
@@ -164,7 +144,7 @@ class Worker {
     required this.name,
     required this.employeeId,
     this.role = 'Worker',
-    this.payType = PayType.daily,
+    this.taskType,
     this.attendance = AttendanceStatus.absent,
     this.department,
     this.checkInAt,

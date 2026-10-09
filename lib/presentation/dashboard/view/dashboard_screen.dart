@@ -102,6 +102,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  /// The combined Employee List Data & Tasks card's shared "Check For New
+  /// Data" button: imports the worker roster, then the worker-task
+  /// assignments, one after another — each still showing its own sync
+  /// sheet and updating its own last-synced checkpoint exactly as it did
+  /// as a separate card, same as [_fetchDepartmentsAndTasks] does for
+  /// Departments & Tasks.
+  Future<void> _fetchEmployeeListAndTasks() async {
+    await _importWorkers();
+    if (!mounted) return;
+    await _fetchWorkerTasks();
+  }
+
   /// Turns one page's raw `(fetchedSoFar, currentPage, totalPages)` report
   /// — the shape every paginated fetch API reports progress in — into the
   /// sync bottom sheet's [SyncProgress]. [existingBefore] is the local row
@@ -172,72 +184,67 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  /// The Employee List Data card's Clear action: also drops any locally
-  /// enrolled employee not yet pushed to the server.
-  Future<void> _clearEmployeeData() => _confirmAndClear(
-    title: 'Clear employee data?',
+  /// The combined Employee List Data & Tasks card's single Clear action:
+  /// wipes both local caches and resets both fetch checkpoints, so the
+  /// next Check For New Data tap pulls both full lists again. Also drops
+  /// any locally enrolled employee, or task reassignment/review, not yet
+  /// pushed to the server — the view's confirmation dialog warns about
+  /// this before calling here.
+  Future<void> _clearEmployeeListAndTasksData() => _confirmAndClear(
+    title: 'Clear employee & task data?',
     message:
-        'This removes every employee stored on this device, including '
-        'any not yet synced to the server. The next Check For New Data '
-        'tap will re-download the full list.',
-    clear: _viewModel.clearEmployeeData,
-    successMessage: 'Employee data cleared',
-    failurePrefix: 'Could not clear employee data',
+        'This removes every employee and employee task assignment stored '
+        'on this device, including any not yet synced to the server. The '
+        'next Check For New Data tap will re-download both full lists.',
+    clear: () async {
+      await _viewModel.clearEmployeeData();
+      await _viewModel.clearWorkerTasksData();
+    },
+    successMessage: 'Employee & task data cleared',
+    failurePrefix: 'Could not clear employee & task data',
   );
 
-  /// The Departments card's Clear action. Departments are pure
-  /// server-reflected reference data, so nothing local is ever lost here.
-  Future<void> _clearDepartmentsData() => _confirmAndClear(
-    title: 'Clear department data?',
-    message:
-        'This removes every department stored on this device. The next '
-        'Check For New Data tap will re-download the full list.',
-    clear: _viewModel.clearDepartmentsData,
-    successMessage: 'Department data cleared',
-    failurePrefix: 'Could not clear department data',
-  );
-
-  /// The Tasks card's Clear action — same as departments, for the task
-  /// catalog.
-  Future<void> _clearTasksCatalogData() => _confirmAndClear(
-    title: 'Clear task data?',
-    message:
-        'This removes every task stored on this device. The next Check '
-        'For New Data tap will re-download the full list.',
-    clear: _viewModel.clearTasksCatalogData,
-    successMessage: 'Task data cleared',
-    failurePrefix: 'Could not clear task data',
-  );
-
-  /// The Employee Tasks List card's Clear action: also drops any task
-  /// reassignment or review made on this device and not yet synced to the
-  /// server.
-  Future<void> _clearWorkerTasksData() => _confirmAndClear(
-    title: 'Clear employee task data?',
-    message:
-        'This removes every employee task assignment stored on this '
-        'device, including any reassignment or review not yet synced to '
-        'the server. The next Check For New Data tap will re-download the '
-        'full list.',
-    clear: _viewModel.clearWorkerTasksData,
-    successMessage: 'Employee task data cleared',
-    failurePrefix: 'Could not clear employee task data',
-  );
-
-  /// The Employee Attendance card's Clear action: also drops any
-  /// check-in/check-out scanned on this device and not yet synced to the
+  /// The standalone Employee Attendance card's Clear action: wipes every
+  /// local check-in/check-out record, including any not yet synced to the
   /// server.
   Future<void> _clearAttendanceData() => _confirmAndClear(
     title: 'Clear attendance data?',
     message:
         'This removes every attendance record stored on this device, '
-        'including any check-in or check-out not yet synced to the '
-        'server. The next Check For New Data tap will re-download the '
-        'full list.',
+        'including any not yet synced to the server. The next Check For '
+        'New Data tap will re-download the full list.',
     clear: _viewModel.clearAttendanceData,
     successMessage: 'Attendance data cleared',
     failurePrefix: 'Could not clear attendance data',
   );
+
+  /// The combined Departments & Tasks card's single Clear action: wipes
+  /// both local caches and resets both fetch checkpoints, so the next
+  /// Check For New Data tap pulls both full lists again (their
+  /// initial-fetch behavior). Both are pure server-reflected reference
+  /// data, so nothing local is ever lost here.
+  Future<void> _clearDepartmentsAndTasksData() => _confirmAndClear(
+    title: 'Clear department & task data?',
+    message:
+        'This removes every department and task stored on this device. '
+        'The next Check For New Data tap will re-download both full lists.',
+    clear: () async {
+      await _viewModel.clearDepartmentsData();
+      await _viewModel.clearTasksCatalogData();
+    },
+    successMessage: 'Department & task data cleared',
+    failurePrefix: 'Could not clear department & task data',
+  );
+
+  /// The later of two last-synced times, for the combined Departments &
+  /// Tasks card's single last-synced line — each catalog's own checkpoint
+  /// is still tracked and preserved independently underneath; only the
+  /// display is merged into one.
+  DateTime? _latestOf(DateTime? a, DateTime? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return a.isAfter(b) ? a : b;
+  }
 
   /// Departments/Tasks fetches are paginated the same way the Employee
   /// List import is, so this reports real progress too.
@@ -279,6 +286,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  /// The combined Departments & Tasks card's shared "Check For New Data"
+  /// button: runs the two existing, independent fetches one after another,
+  /// each still showing its own sync sheet and updating its own last-synced
+  /// checkpoint. Neither call's failure is reported as the other's success —
+  /// [showSyncBottomSheet] already keeps each download's error inside its
+  /// own sheet, so one failing has no effect on the other running.
+  Future<void> _fetchDepartmentsAndTasks() async {
+    await _fetchDepartments();
+    if (!mounted) return;
+    await _fetchTasks();
   }
 
   /// No server-reported "changed count" exists for attendance, so the
@@ -347,29 +366,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.pushNamed(context, AppRoutes.workerList),
                 ),
                 const SizedBox(height: 14),
-                _ImportWorkersCard(
-                  isImporting: _viewModel.isImportingWorkers,
-                  isClearing: _viewModel.isClearingEmployees,
-                  onPressed: _viewModel.canRunSetupStep(1)
-                      ? _importWorkers
+                _EmployeeListAndTasksCard(
+                  isFetching:
+                      _viewModel.isImportingWorkers ||
+                      _viewModel.isFetchingWorkerTasks,
+                  onFetch: _viewModel.canRunSetupStep(1)
+                      ? _fetchEmployeeListAndTasks
                       : null,
-                  onClear: _clearEmployeeData,
-                  updatedCount: _viewModel.updatedCounts.workerCount,
+                  isClearing:
+                      _viewModel.isClearingEmployees ||
+                      _viewModel.isClearingWorkerTasks,
+                  onClear: _clearEmployeeListAndTasksData,
+                  lastFetchedAt: _latestOf(
+                    _viewModel.summary.employeesLastFetchedAt,
+                    _viewModel.summary.workerTasksLastFetchedAt,
+                  ),
+                  updatedWorkerCount: _viewModel.updatedCounts.workerCount,
                   totalEmployees: _viewModel.summary.totalEmployees,
                   offlineEmployees: _viewModel.summary.offlineEmployees,
-                  lastFetchedAt: _viewModel.summary.employeesLastFetchedAt,
-                ),
-                const SizedBox(height: 14),
-                _FetchWorkerTasksCard(
-                  isFetching: _viewModel.isFetchingWorkerTasks,
-                  isClearing: _viewModel.isClearingWorkerTasks,
-                  onPressed: _viewModel.canRunSetupStep(2)
-                      ? _fetchWorkerTasks
-                      : null,
-                  onClear: _clearWorkerTasksData,
-                  total: _viewModel.summary.workerTasksTotal,
+                  totalTasks: _viewModel.summary.workerTasksTotal,
                   pendingReview: _viewModel.summary.pendingWorkerTasks,
-                  lastFetchedAt: _viewModel.summary.workerTasksLastFetchedAt,
                 ),
                 const SizedBox(height: 14),
                 _FetchAttendanceCard(
@@ -380,30 +396,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       : null,
                   onClear: _clearAttendanceData,
                   total: _viewModel.summary.attendanceTotal,
-                  notSynced: _viewModel.summary.unsyncedAttendance,
+                  unsynced: _viewModel.summary.unsyncedAttendance,
                   lastFetchedAt: _viewModel.summary.attendanceLastFetchedAt,
                 ),
                 const SizedBox(height: 14),
-                _FetchCard(
-                  label: 'DEPARTMENTS',
-                  isFetching: _viewModel.isFetchingDepartments,
-                  isClearing: _viewModel.isClearingDepartments,
-                  onPressed: _fetchDepartments,
-                  onClear: _clearDepartmentsData,
-                  total: _viewModel.summary.departmentsTotal,
-                  newOnServer: _viewModel.updatedCounts.departmentCount,
-                  lastFetchedAt: _viewModel.summary.departmentsLastFetchedAt,
-                ),
-                const SizedBox(height: 14),
-                _FetchCard(
-                  label: 'TASKS',
-                  isFetching: _viewModel.isFetchingTasks,
-                  isClearing: _viewModel.isClearingTasks,
-                  onPressed: _fetchTasks,
-                  onClear: _clearTasksCatalogData,
-                  total: _viewModel.summary.tasksCatalogTotal,
-                  newOnServer: _viewModel.updatedCounts.taskCount,
-                  lastFetchedAt: _viewModel.summary.tasksCatalogLastFetchedAt,
+                _DepartmentsAndTasksCard(
+                  isFetching:
+                      _viewModel.isFetchingDepartments ||
+                      _viewModel.isFetchingTasks,
+                  onFetch: _fetchDepartmentsAndTasks,
+                  isClearing:
+                      _viewModel.isClearingDepartments ||
+                      _viewModel.isClearingTasks,
+                  onClear: _clearDepartmentsAndTasksData,
+                  lastFetchedAt: _latestOf(
+                    _viewModel.summary.departmentsLastFetchedAt,
+                    _viewModel.summary.tasksCatalogLastFetchedAt,
+                  ),
+                  newOnServer:
+                      _viewModel.updatedCounts.departmentCount +
+                      _viewModel.updatedCounts.taskCount,
+                  departmentsTotal: _viewModel.summary.departmentsTotal,
+                  tasksTotal: _viewModel.summary.tasksCatalogTotal,
                 ),
                 const SizedBox(height: 14),
                 // _EmployeesPreviewCard(
@@ -630,7 +644,8 @@ class _EmployeeRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          PayTypeChip(payType: employee.payType),
+          if (employee.taskType != null)
+            TaskTypeChip(taskType: employee.taskType!),
         ],
       ),
     );
@@ -667,33 +682,40 @@ class _UpdatedCountBadge extends StatelessWidget {
   }
 }
 
-/// The dashboard's "Employee List Data" overview: how many employees are
-/// stored locally, how many of those are offline (not yet pushed to the
-/// server), when the roster was last checked, and the actions to clear or
-/// refresh it. Fetches worker data from the backend
-/// (`POST attendance/worker_data`) and upserts it locally by National ID.
-/// [updatedCount] is how many changed worker records the server currently
-/// reports (`attendance/updated-counts`) — a hint that there's something
-/// new to fetch, not a cap on what actually comes back.
-class _ImportWorkersCard extends StatelessWidget {
-  final bool isImporting;
+/// Employee List Data and Employee Tasks List, combined into one card:
+/// each still shows its own two stat boxes (nothing stops being tracked),
+/// under one shared last-synced time, one shared Clear button, and one
+/// shared "Check For New Data" button that imports the worker roster, then
+/// the worker-task assignments, one after another. Fetches worker data
+/// from the backend (`POST attendance/worker_data`) and upserts it locally
+/// by National ID. [updatedWorkerCount] is how many changed worker records
+/// the server currently reports (`attendance/updated-counts`) — a hint
+/// that there's something new to fetch, not a cap on what actually comes
+/// back; there's no equivalent server-reported count for worker tasks.
+class _EmployeeListAndTasksCard extends StatelessWidget {
+  final bool isFetching;
+  final VoidCallback? onFetch;
   final bool isClearing;
-  final VoidCallback? onPressed;
-  final VoidCallback? onClear;
-  final int updatedCount;
+  final VoidCallback onClear;
+  final DateTime? lastFetchedAt;
+  final int updatedWorkerCount;
+
   final int totalEmployees;
   final int offlineEmployees;
-  final DateTime? lastFetchedAt;
+  final int totalTasks;
+  final int pendingReview;
 
-  const _ImportWorkersCard({
-    required this.isImporting,
+  const _EmployeeListAndTasksCard({
+    required this.isFetching,
+    required this.onFetch,
     required this.isClearing,
-    required this.onPressed,
     required this.onClear,
-    required this.updatedCount,
+    required this.lastFetchedAt,
+    required this.updatedWorkerCount,
     required this.totalEmployees,
     required this.offlineEmployees,
-    required this.lastFetchedAt,
+    required this.totalTasks,
+    required this.pendingReview,
   });
 
   @override
@@ -705,8 +727,9 @@ class _ImportWorkersCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(child: SectionLabel('EMPLOYEE LIST DATA')),
-              if (updatedCount > 0) _UpdatedCountBadge(count: updatedCount),
+              const Expanded(child: SectionLabel('EMPLOYEE LIST & TASKS')),
+              if (updatedWorkerCount > 0)
+                _UpdatedCountBadge(count: updatedWorkerCount),
             ],
           ),
           const SizedBox(height: 14),
@@ -735,14 +758,39 @@ class _ImportWorkersCard extends StatelessWidget {
               ),
             ],
           ),
+          // const SizedBox(height: 10),
+          // Row(
+          //   children: [
+          //     Expanded(
+          //       child: _StatBox(
+          //         icon: Icons.check_circle_outline,
+          //         label: 'TOTAL TASKS',
+          //         value: totalTasks,
+          //         caption: 'ON THIS DEVICE',
+          //         color: AppColors.success,
+          //         background: const Color(0xFFE9F7EF),
+          //       ),
+          //     ),
+          //     const SizedBox(width: 12),
+          //     Expanded(
+          //       child: _StatBox(
+          //         icon: Icons.rate_review_outlined,
+          //         label: 'PENDING REVIEW',
+          //         value: pendingReview,
+          //         caption: 'AWAITING VERDICT',
+          //         color: AppColors.warning,
+          //         background: const Color(0xFFFCEFE3),
+          //       ),
+          //     ),
+          //   ],
+          // ),
           const SizedBox(height: 14),
           _OverviewCardActions(
             lastFetchedAt: lastFetchedAt,
-            isFetching: isImporting,
+            isFetching: isFetching,
             isClearing: isClearing,
-            onFetch: onPressed,
+            onFetch: onFetch,
             onClear: onClear,
-            newDataCount: updatedCount,
           ),
         ],
       ),
@@ -826,7 +874,8 @@ class _StatBox extends StatelessWidget {
 /// The bottom row shared by every overview card: the last-fetched
 /// timestamp on the left, Clear and the fetch action right-aligned
 /// (wrapping onto a second line on a narrow screen rather than
-/// overflowing).
+/// overflowing). Each card shows its own "New data available" pill only
+/// once, next to its section label — not repeated here too.
 class _OverviewCardActions extends StatelessWidget {
   final DateTime? lastFetchedAt;
   final bool isFetching;
@@ -834,18 +883,12 @@ class _OverviewCardActions extends StatelessWidget {
   final VoidCallback? onFetch;
   final VoidCallback? onClear;
 
-  /// How many changed records the server currently reports for this card
-  /// (0 when unknown/none — see _UpdatedCountBadge) — shown as a "New
-  /// Data Available" pill alongside the last-synced line.
-  final int newDataCount;
-
   const _OverviewCardActions({
     required this.lastFetchedAt,
     required this.isFetching,
     required this.isClearing,
     required this.onFetch,
     required this.onClear,
-    this.newDataCount = 0,
   });
 
   @override
@@ -854,17 +897,7 @@ class _OverviewCardActions extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _LastSynced(lastFetchedAt, withIcon: true, withDate: true),
-            ),
-            if (newDataCount > 0) ...[
-              const SizedBox(width: 8),
-              _UpdatedCountBadge(count: newDataCount),
-            ],
-          ],
-        ),
+        _LastSynced(lastFetchedAt, withIcon: true, withDate: true),
         const SizedBox(height: 10),
         Wrap(
           alignment: WrapAlignment.end,
@@ -925,29 +958,33 @@ class _OverviewCardActions extends StatelessWidget {
   }
 }
 
-/// A dashboard overview card in the same style as Employee List Data: a
-/// title, two stat boxes, the last-fetched row, and Clear/Check For New
-/// Data actions. Used for the Departments and Tasks catalogs, whose
-/// second stat is the already-known "new on server" count.
-class _FetchCard extends StatelessWidget {
-  final String label;
+/// The Departments and Tasks catalogs, combined into one card: each still
+/// shows its own total stat box (per-catalog last-synced/Clear are no
+/// longer shown individually), under one shared last-synced time, one
+/// shared Clear button, and one shared "Check For New Data" button that
+/// runs both fetches together. [newOnServer] is however many changed
+/// department + task records the server currently reports combined — shown
+/// as one "New data available" pill, the same as every other overview card.
+class _DepartmentsAndTasksCard extends StatelessWidget {
   final bool isFetching;
+  final VoidCallback onFetch;
   final bool isClearing;
-  final VoidCallback onPressed;
   final VoidCallback onClear;
-  final int total;
-  final int newOnServer;
   final DateTime? lastFetchedAt;
+  final int newOnServer;
 
-  const _FetchCard({
-    required this.label,
+  final int departmentsTotal;
+  final int tasksTotal;
+
+  const _DepartmentsAndTasksCard({
     required this.isFetching,
+    required this.onFetch,
     required this.isClearing,
-    required this.onPressed,
     required this.onClear,
-    required this.total,
-    required this.newOnServer,
     required this.lastFetchedAt,
+    required this.newOnServer,
+    required this.departmentsTotal,
+    required this.tasksTotal,
   });
 
   @override
@@ -956,15 +993,21 @@ class _FetchCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionLabel(label),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(child: SectionLabel('DEPARTMENTS & TASKS')),
+              if (newOnServer > 0) _UpdatedCountBadge(count: newOnServer),
+            ],
+          ),
           const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
                 child: _StatBox(
                   icon: Icons.check_circle_outline,
-                  label: 'TOTAL $label',
-                  value: total,
+                  label: 'TOTAL DEPARTMENTS',
+                  value: departmentsTotal,
                   caption: 'ON THIS DEVICE',
                   color: AppColors.success,
                   background: const Color(0xFFE9F7EF),
@@ -973,12 +1016,12 @@ class _FetchCard extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: _StatBox(
-                  icon: Icons.cloud_sync_outlined,
-                  label: 'NEW ON SERVER',
-                  value: newOnServer,
-                  caption: 'PENDING FETCH',
-                  color: AppColors.warning,
-                  background: const Color(0xFFFCEFE3),
+                  icon: Icons.check_circle_outline,
+                  label: 'TOTAL TASKS',
+                  value: tasksTotal,
+                  caption: 'ON THIS DEVICE',
+                  color: AppColors.success,
+                  background: const Color(0xFFE9F7EF),
                 ),
               ),
             ],
@@ -988,9 +1031,8 @@ class _FetchCard extends StatelessWidget {
             lastFetchedAt: lastFetchedAt,
             isFetching: isFetching,
             isClearing: isClearing,
-            onFetch: onPressed,
+            onFetch: onFetch,
             onClear: onClear,
-            newDataCount: newOnServer,
           ),
         ],
       ),
@@ -998,17 +1040,20 @@ class _FetchCard extends StatelessWidget {
   }
 }
 
-/// Downloads the department's check-ins and check-outs into the local
-/// `worker_attendance` table. Second stat is how many local rows haven't
-/// synced to the server yet, since there's no server-side "changed count"
-/// for attendance the way there is for departments/tasks.
+/// The dashboard's standalone "Employee Attendance" overview: how many
+/// check-in/check-out records are stored locally, how many of those
+/// haven't synced yet, when it was last checked, and the actions to clear
+/// or refresh it. Fetches the department's check-ins/check-outs
+/// (`GET attendance/departmentwise_attendance`) via
+/// [DashboardViewModel.fetchDepartmentAttendance] — no server-reported
+/// "changed count" exists for attendance, so there's no badge here.
 class _FetchAttendanceCard extends StatelessWidget {
   final bool isFetching;
   final bool isClearing;
   final VoidCallback? onPressed;
   final VoidCallback onClear;
   final int total;
-  final int notSynced;
+  final int unsynced;
   final DateTime? lastFetchedAt;
 
   const _FetchAttendanceCard({
@@ -1017,7 +1062,7 @@ class _FetchAttendanceCard extends StatelessWidget {
     required this.onPressed,
     required this.onClear,
     required this.total,
-    required this.notSynced,
+    required this.unsynced,
     required this.lastFetchedAt,
   });
 
@@ -1046,76 +1091,8 @@ class _FetchAttendanceCard extends StatelessWidget {
                 child: _StatBox(
                   icon: Icons.cloud_off_outlined,
                   label: 'NOT SYNCED',
-                  value: notSynced,
-                  caption: 'SAVED WITHOUT SYNC',
-                  color: AppColors.warning,
-                  background: const Color(0xFFFCEFE3),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _OverviewCardActions(
-            lastFetchedAt: lastFetchedAt,
-            isFetching: isFetching,
-            isClearing: isClearing,
-            onFetch: onPressed,
-            onClear: onClear,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Second stat is how many locally stored worker-task rows still await a
-/// supervisor's approve/reject verdict.
-class _FetchWorkerTasksCard extends StatelessWidget {
-  final bool isFetching;
-  final bool isClearing;
-  final VoidCallback? onPressed;
-  final VoidCallback onClear;
-  final int total;
-  final int pendingReview;
-  final DateTime? lastFetchedAt;
-
-  const _FetchWorkerTasksCard({
-    required this.isFetching,
-    required this.isClearing,
-    required this.onPressed,
-    required this.onClear,
-    required this.total,
-    required this.pendingReview,
-    required this.lastFetchedAt,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionLabel('EMPLOYEE TASKS LIST'),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _StatBox(
-                  icon: Icons.check_circle_outline,
-                  label: 'TOTAL TASKS',
-                  value: total,
-                  caption: 'ON THIS DEVICE',
-                  color: AppColors.success,
-                  background: const Color(0xFFE9F7EF),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _StatBox(
-                  icon: Icons.rate_review_outlined,
-                  label: 'PENDING REVIEW',
-                  value: pendingReview,
-                  caption: 'AWAITING VERDICT',
+                  value: unsynced,
+                  caption: 'AWAITING SYNC',
                   color: AppColors.warning,
                   background: const Color(0xFFFCEFE3),
                 ),

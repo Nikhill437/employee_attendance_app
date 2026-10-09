@@ -82,6 +82,15 @@ class AssignTaskViewModel extends BaseViewModel {
   String get reviewNote => _reviewNote;
   String get reviewTaskStatus => _reviewTaskStatus;
 
+  /// Whether the assigned task's own type (`tasks.task_type`) is Task Based
+  /// or Hour Based — the only types the Supervisor Review's Completion
+  /// count/hours field applies to (Daily/Monthly tasks aren't counted or
+  /// timed per day, so there's nothing for the supervisor to enter there).
+  bool get reviewNeedsCompletionCount {
+    final type = _assignedTask?.taskType;
+    return type == TaskType.taskBased.name || type == TaskType.hourBased.name;
+  }
+
   /// Whether today's Supervisor Review has already synced to the backend
   /// (`worker_tasks.worker_task_id` set on *today's* row — see
   /// WorkerTask.realWorkerTaskId) — once true, the review for today is
@@ -177,11 +186,9 @@ class AssignTaskViewModel extends BaseViewModel {
 
   /// Assigns [pendingTask] as the worker's one active task — whatever was
   /// previously active for them is flipped inactive (see
-  /// DatabaseHelper.assignWorkerTask). [isDefault] true makes it the
-  /// worker's standing assignment; false makes it a one-day-only "Today"
-  /// assignment that never becomes the default. Returns an error message
-  /// on failed validation, or null on success.
-  Future<String?> save({required bool isDefault}) async {
+  /// DatabaseHelper.assignWorkerTask). Returns an error message on failed
+  /// validation, or null on success.
+  Future<String?> save() async {
     if (_isSaving) return null;
     final task = _pendingTask;
     if (task == null) return 'Select a task to assign';
@@ -194,7 +201,6 @@ class AssignTaskViewModel extends BaseViewModel {
       workerId: workerId,
       taskId: task.id,
       note: trimmedNote.isEmpty ? null : trimmedNote,
-      isDefault: isDefault,
     );
     _pendingTask = null;
     _pendingNote = '';
@@ -280,7 +286,9 @@ class AssignTaskViewModel extends BaseViewModel {
     if (task == null) return 'No task assigned yet';
     if (!isAssignmentToday) return 'Check in today first';
     if (isReviewLocked) return 'Already synced for today';
-    if (_reviewNumericValue == null) return 'Quantity is required';
+    if (reviewNeedsCompletionCount && _reviewNumericValue == null) {
+      return 'Quantity is required';
+    }
     if (_isSavingReview) return null;
 
     _isSavingReview = true;

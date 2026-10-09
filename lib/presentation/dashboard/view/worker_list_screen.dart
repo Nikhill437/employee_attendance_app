@@ -894,7 +894,7 @@ class _WorkerCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        PayTypeChip(payType: worker.payType),
+        if (worker.taskType != null) TaskTypeChip(taskType: worker.taskType!),
       ],
     );
   }

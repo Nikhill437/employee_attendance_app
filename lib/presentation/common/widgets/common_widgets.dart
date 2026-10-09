@@ -19,4 +19,4 @@ export 'app_version_label.dart';
 export 'background_screen.dart';
 export 'brand_header.dart';
 export 'dashed_circle_painter.dart';
-export 'pay_type_chip.dart';
+export 'task_type_chip.dart';

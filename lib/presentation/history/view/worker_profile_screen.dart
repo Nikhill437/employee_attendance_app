@@ -925,14 +925,16 @@ class _DayTaskCard extends StatelessWidget {
             valueColor: _taskStatusColor,
           ),
           // const SizedBox(height: 10),
-          _TaskDetailLine(
-            label: 'Employee quantity',
-            value: task.employeeTarget?.toString() ?? 'Not provided',
-          ),
-          _TaskDetailLine(
-            label: 'Supervisor quantity',
-            value: task.completedTarget?.toString() ?? 'Not reviewed',
-          ),
+          if (task.employeeTarget != null)
+            _TaskDetailLine(
+              label: 'Employee quantity',
+              value: task.employeeTarget.toString(),
+            ),
+          if (task.completedTarget != null)
+            _TaskDetailLine(
+              label: 'Supervisor quantity',
+              value: task.completedTarget.toString(),
+            ),
           // _TaskDetailLine(
           //   label: 'Review',
           //   value: _taskStatusLabel,

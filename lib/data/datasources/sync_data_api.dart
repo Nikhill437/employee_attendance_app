@@ -56,7 +56,6 @@ class SyncDataApi {
         'supervisor_note': task.supervisorNote,
         'created_at': task.createdAt,
         'task_date': task.taskDate,
-        'isDefault': task.isDefault ? 1 : 0,
       };
 
       final photoPath = task.workPhoto;

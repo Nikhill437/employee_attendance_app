@@ -49,24 +49,29 @@ class LookupRepository {
     return tasks.length;
   }
 
-  /// The dashboard's "Refresh Departments" button
-  /// (`POST attendance/department_data`) — upserts whichever departments
-  /// the server reports changed (see
-  /// AttendanceLookupApi.fetchServertimeDepartment, paginated and
-  /// list-shaped the same way [fetchDepartments]/[syncDepartmentsFromRemote]
-  /// is) into the existing cache rather than replacing it wholesale, so
-  /// every other cached department is left untouched. Returns how many
-  /// came back.
+  /// The dashboard's "Check For New Data" action for departments. With no
+  /// stored Department server time (never synced, or just cleared by
+  /// [clearDepartments]) this pulls the full list the same way
+  /// [syncDepartmentsFromRemote] does (see AttendanceLookupApi.
+  /// fetchDepartments) — the initial-fetch behavior. Every later call sends
+  /// the stored time to `POST attendance/department_data` (see
+  /// AttendanceLookupApi.fetchServertimeDepartment) and upserts whichever
+  /// departments the server reports changed into the existing cache rather
+  /// than replacing it wholesale, so every other cached department is left
+  /// untouched. The new time is saved only after the local write succeeds,
+  /// so a failed fetch leaves it unchanged. Returns how many came back.
   Future<int> refreshDepartmentFromServerTime({
     void Function(int fetchedSoFar, int currentPage, int totalPages)?
     onProgress,
   }) async {
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
-    final serverTime = await lastDepartmentServerTime.read() ?? syncStartedAt;
-    final departments = await _api.fetchServertimeDepartment(
-      date: serverTime,
-      onProgress: onProgress,
-    );
+    final storedTime = await lastDepartmentServerTime.read();
+    final departments = storedTime == null
+        ? await _api.fetchDepartments()
+        : await _api.fetchServertimeDepartment(
+            date: storedTime,
+            onProgress: onProgress,
+          );
     if (departments.isNotEmpty) {
       await _dbHelper.replaceDepartments(departments);
     }
@@ -75,19 +80,21 @@ class LookupRepository {
     return departments.length;
   }
 
-  /// The dashboard's "Refresh Tasks" button
-  /// (`POST attendance/task_data`) — same upsert-in-place approach as
+  /// The dashboard's "Check For New Data" action for tasks — same
+  /// initial-fetch-then-incremental approach as
   /// [refreshDepartmentFromServerTime].
   Future<int> refreshTasksFromServerTime({
     void Function(int fetchedSoFar, int currentPage, int totalPages)?
     onProgress,
   }) async {
     final syncStartedAt = DateTime.now().toUtc().toIso8601String();
-    final serverTime = await lastTaskServerTime.read() ?? syncStartedAt;
-    final tasks = await _api.fetchServertimeTask(
-      date: serverTime,
-      onProgress: onProgress,
-    );
+    final storedTime = await lastTaskServerTime.read();
+    final tasks = storedTime == null
+        ? await _api.fetchTasks()
+        : await _api.fetchServertimeTask(
+            date: storedTime,
+            onProgress: onProgress,
+          );
     await _dbHelper.replaceTasks(tasks);
     // Saved only after the local write succeeded.
     await lastTaskServerTime.save(syncStartedAt);
@@ -117,14 +124,17 @@ class LookupRepository {
   }
 
   /// The Departments card's Clear action: wipes the local cache and resets
-  /// its sync checkpoint, so the next fetch pulls the full list again.
+  /// its sync checkpoint, so the next [refreshDepartmentFromServerTime]
+  /// call pulls the full list again (its initial-fetch behavior) instead
+  /// of asking for changes since a stale time. Departments are pure
+  /// server-reflected reference data, so nothing local is lost.
   Future<void> clearDepartments() async {
     await _dbHelper.clearDepartments();
     await lastDepartmentServerTime.clear();
   }
 
   /// The Tasks card's Clear action — same as [clearDepartments], for the
-  /// local `tasks` catalog cache.
+  /// local `tasks` catalog cache and its server-time checkpoint.
   Future<void> clearTaskCatalog() async {
     await _dbHelper.clearTaskCatalog();
     await lastTaskServerTime.clear();

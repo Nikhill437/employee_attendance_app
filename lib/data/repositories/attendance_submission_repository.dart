@@ -68,7 +68,6 @@ class AttendanceSubmissionRepository {
             'task_id': assignment.taskId,
             'status': assignment.status,
             'department_id': assignment.departmentId,
-            'assignment_type': assignment.assignmentType,
           },
         )
         .toList();

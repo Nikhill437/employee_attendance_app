@@ -32,6 +32,32 @@ class Department {
   int get hashCode => id.hashCode;
 }
 
+/// How a task is worked/paid — a property of the task catalog itself
+/// (`tasks.task_type`), carried along automatically whenever that task is
+/// picked (enrollment_form_screen.dart, assign_task_screen.dart). Replaces
+/// the old per-worker `PayType` that used to be chosen separately on the
+/// enrollment form (`workers.enrollment_type`), with `shiftBased` dropped
+/// and `hourBased` added.
+enum TaskType {
+  daily('Daily'),
+  monthly('Monthly'),
+  taskBased('Task Based'),
+  hourBased('Hour Based');
+
+  const TaskType(this.label);
+
+  final String label;
+}
+
+TaskType? _taskTypeOrNull(dynamic value) {
+  if (value == null) return null;
+  final raw = value.toString();
+  for (final type in TaskType.values) {
+    if (type.name.toLowerCase() == raw.toLowerCase()) return type;
+  }
+  return null;
+}
+
 /// A task within a department, as cached locally from the backend's
 /// `POST attendance/list_task` response. Field names/envelope aren't
 /// confirmed yet (unlike Department, whose shape is confirmed against the
@@ -40,7 +66,6 @@ class Task {
   final int id;
   final int departmentId;
   final String name;
-  final bool isDefault;
 
   /// A per-task daily quantity goal and hourly/piece rate — both
   /// backend-defined and read-only here, null when the backend hasn't set
@@ -50,13 +75,22 @@ class Task {
   final int? target;
   final int? rate;
 
+  /// See [TaskType] — null when the backend hasn't set one.
+  final TaskType? taskType;
+
+  /// The scheduled clock time for an [TaskType.hourBased] task
+  /// (`tasks.working_hours`) — "HH:mm", 24-hour. Null for every other
+  /// task type, or when the backend hasn't set one.
+  final String? workingHours;
+
   const Task({
     required this.id,
     required this.departmentId,
     required this.name,
-    this.isDefault = false,
     this.target,
     this.rate,
+    this.taskType,
+    this.workingHours,
   });
 
   factory Task.fromRemote(Map<String, dynamic> json) {
@@ -64,9 +98,10 @@ class Task {
       id: _asInt(json['task_id'] ?? json['id']),
       departmentId: _asInt(json['department_id']),
       name: (json['task_name'] ?? json['name']).toString(),
-      isDefault: json['isdefault']?.toString() == 'yes',
       target: _asIntOrNull(json['target']),
       rate: _asIntOrNull(json['rate']),
+      taskType: _taskTypeOrNull(json['task_type']),
+      workingHours: json['working_hours'] as String?,
     );
   }
 
@@ -76,9 +111,10 @@ class Task {
       id: map['task_id'] as int,
       departmentId: map['department_id'] as int,
       name: map['task_name'] as String,
-      isDefault: map['isdefault']?.toString() == 'yes',
       target: map['target'] as int?,
       rate: map['rate'] as int?,
+      taskType: _taskTypeOrNull(map['task_type']),
+      workingHours: map['working_hours'] as String?,
     );
   }
 }
