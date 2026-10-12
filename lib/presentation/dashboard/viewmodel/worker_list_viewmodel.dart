@@ -10,7 +10,6 @@ import '../../../data/models/worker_model.dart';
 import '../../../data/repositories/attendance_repository.dart';
 import '../../../data/repositories/attendance_submission_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
-import '../../../data/repositories/hidden_worker_store.dart';
 import '../../../data/repositories/worker_edit_queue.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_repository.dart';
@@ -41,8 +40,6 @@ class WorkerListViewModel extends BaseViewModel {
   final AttendanceSubmissionRepository _attendanceSubmission;
   final TaskRepository _tasks;
   final WorkerEditQueue _editQueue;
-  final HiddenWorkerStore _hiddenWorkers;
-  Set<int> _hiddenWorkerIds = const {};
 
   WorkerListViewModel({
     EmployeeRepository? employees,
@@ -55,7 +52,6 @@ class WorkerListViewModel extends BaseViewModel {
     AttendanceSubmissionRepository? attendanceSubmission,
     TaskRepository? tasks,
     WorkerEditQueue? editQueue,
-    HiddenWorkerStore? hiddenWorkers,
   }) : _employees = employees ?? EmployeeRepository(),
        _attendance = attendance ?? AttendanceRepository(),
        _sync = sync ?? WorkerSyncRepository(),
@@ -66,8 +62,7 @@ class WorkerListViewModel extends BaseViewModel {
        _attendanceSubmission =
            attendanceSubmission ?? AttendanceSubmissionRepository(),
        _tasks = tasks ?? TaskRepository(),
-       _editQueue = editQueue ?? WorkerEditQueue(),
-       _hiddenWorkers = hiddenWorkers ?? HiddenWorkerStore();
+       _editQueue = editQueue ?? WorkerEditQueue();
 
   bool _isLoading = true;
   bool _isFetchingFromServer = false;
@@ -119,17 +114,19 @@ class WorkerListViewModel extends BaseViewModel {
   /// task-action gating. Falls back to showing everyone when the
   /// supervisor's department couldn't be determined, rather than an empty
   /// list with no way to tell why.
+  ///
+  /// A worker enrolled under a different department is still shown here
+  /// — not hidden — as long as they haven't been pushed to the server yet
+  /// ([Worker.isSynced] false), so the supervisor who enrolled them can
+  /// still find and sync them. Once that sync succeeds, they drop out of
+  /// this list the same way any other-department worker would.
   List<Worker> get workers {
     final term = _query.toLowerCase();
     final filtered = _workers.where((worker) {
-      // Workers whose department change has synced are left off the list.
-      if (worker.workerId != null &&
-          _hiddenWorkerIds.contains(worker.workerId)) {
-        return false;
-      }
       final matchesDepartment =
           _supervisorDepartmentId == null ||
-          worker.departmentId == _supervisorDepartmentId;
+          worker.departmentId == _supervisorDepartmentId ||
+          !worker.isSynced;
       final matchesFilter =
           _attendanceFilter == null ||
           (_attendanceFilter == AttendanceFilter.checkIn
@@ -389,7 +386,6 @@ class WorkerListViewModel extends BaseViewModel {
       }
     }
 
-    _hiddenWorkerIds = await _hiddenWorkers.read();
     _workers = [
       for (final employee in employees)
         Worker(

@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 
 import '../../core/network/api_client.dart';
 import '../../core/network/api_routes.dart';
+import '../../core/utils/app_time.dart';
 import '../models/employee_model.dart';
 
 /// Remote datasource for pushing a locally enrolled worker to the backend.
@@ -69,9 +70,10 @@ class WorkerSyncApi {
     if (worker.address != null) fields['address'] = worker.address!;
     // The creation timestamp (see Employee.attendanceTime) — sent on create
     // and never changed by an edit.
-    fields['created_date'] = worker.attendanceTime;
-    if (worker.modifiedDate != null) {
-      fields['modified_date'] = worker.modifiedDate!;
+    fields['created_date'] = _formatTimestamp(worker.attendanceTime)!;
+    final modifiedDate = _formatTimestamp(worker.modifiedDate);
+    if (modifiedDate != null) {
+      fields['modified_date'] = modifiedDate;
     }
     // The task picked on the enrollment form's Task dropdown (see
     // Employee.taskId) — the assigned task being synced along with this
@@ -93,5 +95,22 @@ class WorkerSyncApi {
       );
     }
     return formData;
+  }
+
+  /// The backend wants a real ISO-8601 UTC timestamp.
+  /// [Employee.attendanceTime]/[Employee.modifiedDate] are stored locally
+  /// as `AppTime.nowInUserZone().toIso8601String()` — a naive string whose
+  /// calendar fields are the supervisor's own timezone (from their login
+  /// response), not the device's. Parsing it and calling plain `.toUtc()`
+  /// would convert using the *device's* timezone instead — wrong whenever
+  /// that differs from the supervisor's — so this goes through
+  /// `AppTime.userWallTimeToUtc`, the actual inverse of `nowInUserZone`,
+  /// instead. Null stays null. Safe to apply unconditionally here: this
+  /// form only ever goes out for a worker with no real backend id yet (see
+  /// WorkerSyncRepository.syncWorker), so neither field can already be a
+  /// UTC value round-tripped from the server.
+  String? _formatTimestamp(String? isoString) {
+    if (isoString == null) return null;
+    return AppTime.userWallTimeToUtc(DateTime.parse(isoString)).toIso8601String();
   }
 }

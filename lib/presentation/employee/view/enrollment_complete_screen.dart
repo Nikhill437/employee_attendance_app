@@ -104,10 +104,6 @@ class EnrollmentCompleteScreen extends StatelessWidget {
     );
   }
 
-  void _startAnotherEnrollment(BuildContext context) {
-    Navigator.pushReplacementNamed(context, AppRoutes.enrollmentForm);
-  }
-
   Widget _buildSuccessBadge() {
     return Center(
       child: Container(

@@ -166,7 +166,8 @@ class _LoginScreenState extends State<LoginScreen> {
             SizedBox(height: 4),
             TextButton(onPressed: ()=> Navigator.pop(context), child: Text(
                     'Back to Home',
-                    style: TextStyle(fontSize: 16, color: Colors.white),)),
+                    style: TextStyle(fontSize: 16, color: Colors.white,  decoration: TextDecoration.underline,
+            decorationColor: Colors.white,),)),
           ],
         ),
       ),

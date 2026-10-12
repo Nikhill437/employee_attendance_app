@@ -7,7 +7,6 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/dashboard_summary_model.dart';
-import '../../../data/models/employee_model.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/dashboard_viewmodel.dart';
 import 'sync_bottom_sheet.dart';
@@ -588,69 +587,6 @@ class _DashboardHeader extends StatelessWidget {
 //   }
 // }
 
-class _EmployeeRow extends StatelessWidget {
-  final Employee employee;
-
-  const _EmployeeRow({required this.employee});
-
-  String get _initials {
-    final parts = employee.name.trim().split(RegExp(r'\s+'));
-    if (parts.isEmpty || parts.first.isEmpty) return '?';
-    if (parts.length == 1) return parts.first[0].toUpperCase();
-    return (parts.first[0] + parts.last[0]).toUpperCase();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 18,
-            backgroundColor: const Color(0xFFE7F6EC),
-            child: Text(
-              _initials,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: AppColors.deepGreen,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  employee.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.ink,
-                  ),
-                ),
-                Text(
-                  employee.employeeId,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    color: AppColors.muted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (employee.taskType != null)
-            TaskTypeChip(taskType: employee.taskType!),
-        ],
-      ),
-    );
-  }
-}
 
 /// A small pill showing how many changed records the server reports for
 /// one of Workers/Departments/Tasks (`attendance/updated-counts`) — hidden
@@ -1418,43 +1354,6 @@ class _MiniStat extends StatelessWidget {
 //   }
 // }
 
-class _VerificationRow extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String label;
-  final int value;
-
-  const _VerificationRow({
-    required this.icon,
-    required this.iconColor,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: iconColor),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 15, color: AppColors.ink),
-          ),
-        ),
-        Text(
-          '$value',
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: AppColors.ink,
-          ),
-        ),
-      ],
-    );
-  }
-}
 
 /// "Last synced: 10:30 AM", or an em dash while nothing has synced yet.
 class _LastSynced extends StatelessWidget {

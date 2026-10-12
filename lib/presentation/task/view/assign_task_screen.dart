@@ -369,6 +369,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
           // The worker's view doesn't show the rate. The supervisor's view does.
           _CurrentAssignmentBanner(
             taskName: assignedTask.taskName,
+            taskType: _taskTypeFromName(assignedTask.taskType),
             target: assignedTask.taskTarget,
           ),
           const SizedBox(height: 18),
@@ -404,6 +405,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
               if (assignedTask != null) ...[
                 _CurrentAssignmentBanner(
                   taskName: assignedTask.taskName,
+                  taskType: _taskTypeFromName(assignedTask.taskType),
                   target: assignedTask.taskTarget,
                   rate: assignedTask.taskRate,
                 ),
@@ -494,6 +496,15 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     );
   }
 
+  /// The Task dropdown's own [TaskTypeChip] — shown as a proper colored
+  /// pill next to the task name (both in the closed field and the option
+  /// list) rather than mixed into the label text, which read as confusing.
+  /// Null for a task with no type set.
+  Widget? _taskTypeChipOrNull(Task task) {
+    final taskType = task.taskType;
+    return taskType == null ? null : TaskTypeChip(taskType: taskType);
+  }
+
   Widget _buildTaskPicker() {
     if (_viewModel.isLoadingTasks) {
       return _buildDisabledTaskField('Loading tasks...');
@@ -516,6 +527,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       value: null,
       items: _viewModel.availableTasks,
       labelBuilder: (task) => task.name,
+      trailingBuilder: _taskTypeChipOrNull,
       onChanged: (task) {
         if (task != null) _viewModel.addTask(task);
       },
@@ -645,6 +657,10 @@ class _HeaderAvatar extends StatelessWidget {
 class _CurrentAssignmentBanner extends StatelessWidget {
   final String taskName;
 
+  /// See [TaskType] — null when the backend hasn't set one, shown as a
+  /// [TaskTypeChip] alongside the task name.
+  final TaskType? taskType;
+
   /// The task catalog's own daily quantity goal / hourly-piece rate (see
   /// Task.target/Task.rate) — shown alongside the task name when the
   /// backend has set either; a null one is left out rather than shown
@@ -654,13 +670,14 @@ class _CurrentAssignmentBanner extends StatelessWidget {
 
   const _CurrentAssignmentBanner({
     required this.taskName,
+    this.taskType,
     this.target,
     this.rate,
   });
 
   @override
   Widget build(BuildContext context) {
-    final targetRate = _formatTargetRate(target, rate);
+    final targetRate = _formatTargetRate(target, rate, taskType);
     // A plain Container, not Expanded(Container(...)) — this widget is
     // always placed directly as a ListView item (see _buildCheckoutBody/
     // _buildSupervisorBody), never as a Row/Column child, and Expanded
@@ -692,13 +709,23 @@ class _CurrentAssignmentBanner extends StatelessWidget {
           const SizedBox(height: 5),
           Padding(
             padding: const EdgeInsets.only(left: 20.0),
-            child: Text(
-              taskName,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.ink,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    taskName,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.ink,
+                    ),
+                  ),
+                ),
+                if (taskType != null) ...[
+                  const SizedBox(width: 8),
+                  TaskTypeChip(taskType: taskType!),
+                ],
+              ],
             ),
           ),
           if (targetRate != null)
@@ -715,12 +742,28 @@ class _CurrentAssignmentBanner extends StatelessWidget {
   }
 }
 
+/// Converts a [WorkerTask.taskType] raw name back into a [TaskType], the
+/// way [_CurrentAssignmentBanner] needs it for its [TaskTypeChip] — null
+/// when the backend hasn't set one, or the name doesn't match any value.
+TaskType? _taskTypeFromName(String? name) {
+  if (name == null) return null;
+  for (final type in TaskType.values) {
+    if (type.name == name) return type;
+  }
+  return null;
+}
+
 /// "Target: 50 · Rate: 12" (either half omitted when its own value is
 /// null), or null outright when both are — never shown blank or as zero.
-/// Shared by [_CurrentAssignmentBanner] and [_PendingTaskCard].
-String? _formatTargetRate(int? target, int? rate) {
+/// Target is only ever shown for Task Based/Hour Based tasks —
+/// Daily/Monthly tasks have no per-day count to report (same gating as
+/// enrollment_form_screen.dart's own target display). Shared by
+/// [_CurrentAssignmentBanner] and [_PendingTaskCard].
+String? _formatTargetRate(int? target, int? rate, TaskType? taskType) {
+  final showsTarget =
+      taskType == TaskType.taskBased || taskType == TaskType.hourBased;
   final parts = [
-    if (target != null) 'Target: $target',
+    if (showsTarget && target != null) 'Target: $target',
     if (rate != null) 'Rate: $rate',
   ];
   return parts.isEmpty ? null : parts.join(' · ');
@@ -735,7 +778,7 @@ class _PendingTaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final targetRate = _formatTargetRate(task.target, task.rate);
+    final targetRate = _formatTargetRate(task.target, task.rate, task.taskType);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
@@ -755,14 +798,24 @@ class _PendingTaskCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  task.name,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.ink,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        task.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                    ),
+                    if (task.taskType != null) ...[
+                      const SizedBox(width: 8),
+                      TaskTypeChip(taskType: task.taskType!),
+                    ],
+                  ],
                 ),
                 if (targetRate != null)
                   Padding(

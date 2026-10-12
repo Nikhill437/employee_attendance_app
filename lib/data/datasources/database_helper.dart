@@ -34,7 +34,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 26,
+      version: 27,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -328,6 +328,13 @@ class DatabaseHelper {
           ''');
           await db.execute('DROP TABLE tasks_v25');
         }
+        if (oldVersion < 27) {
+          // pending_worker_tasks holds a fetched worker-task record whose
+          // server worker_id doesn't resolve to any local worker yet —
+          // previously such a record was silently dropped (see
+          // upsertRemoteWorkerTasks/resolvePendingWorkerTasksForWorker).
+          await _createWorkerTables(db);
+        }
       },
     );
   }
@@ -466,6 +473,32 @@ class DatabaseHelper {
         is_synced INTEGER NOT NULL DEFAULT 0,
         UNIQUE(worker_id, attendance_date),
         FOREIGN KEY (worker_id) REFERENCES workers(offline_worker_id) ON UPDATE CASCADE
+      )
+    ''');
+    // A worker-task record fetched from the server whose `server_worker_id`
+    // doesn't match any local `workers.worker_id` yet — there's no local
+    // offline_worker_id to attach it to (worker_tasks.worker_id is that
+    // local id, a different numbering space from the server's worker_id,
+    // so storing the raw server id there would risk misattributing it to
+    // whichever different local worker already happens to have that same
+    // offline_worker_id). Held here until that worker is imported, then
+    // resolved into worker_tasks and removed — see
+    // upsertRemoteWorkerTasks/resolvePendingWorkerTasksForWorker.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_worker_tasks(
+        offline_worker_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_worker_task_id INTEGER UNIQUE,
+        server_worker_id INTEGER NOT NULL,
+        task_id INTEGER NOT NULL,
+        target INTEGER,
+        status TEXT NOT NULL DEFAULT 'active',
+        assigned_at TEXT,
+        supervisor_note TEXT,
+        work_photo VARCHAR(255),
+        overtime INTEGER,
+        employee_target INTEGER,
+        completed_target INTEGER,
+        task_status TEXT
       )
     ''');
   }
@@ -891,9 +924,20 @@ class DatabaseHelper {
   }
 
   /// The worker's task for the assign screen. Today's active row if the
-  /// worker has a daily record today. Otherwise the persistent assignment:
-  /// `workers.task_id` with `workers.note`, read-only (task_date is empty, so
-  /// nothing can be saved on it). Nothing is written here.
+  /// worker has a daily record today *and* it still matches
+  /// `workers.task_id` — otherwise the persistent assignment: `workers.task_id`
+  /// with `workers.note`, read-only (task_date is empty, so nothing can be
+  /// saved on it). Nothing is written here.
+  ///
+  /// The two can disagree when the worker already checked out today and the
+  /// supervisor then assigned a different task: assignWorkerTask
+  /// deliberately leaves today's (already-closed) row alone in that case,
+  /// updating only `workers.task_id` for the worker's next check-in — so
+  /// showing today's now-stale row here would make that reassignment look
+  /// like it did nothing. Falling back to the persistent assignment instead
+  /// surfaces it immediately. A reassignment made before checkout doesn't
+  /// hit this at all: assignWorkerTask updates today's row at the same time,
+  /// so the two never disagree while the row is still open.
   Future<WorkerTask?> getCurrentAssignment(int workerId) async {
     final db = await database;
     final today = await db.rawQuery(
@@ -915,7 +959,22 @@ class DatabaseHelper {
     ''',
       [workerId, _todayDateKey()],
     );
-    if (today.isNotEmpty) return WorkerTask.fromMap(today.first);
+    if (today.isNotEmpty) {
+      final todayRow = today.first;
+      final workerRows = await db.query(
+        'workers',
+        columns: ['task_id'],
+        where: 'offline_worker_id = ?',
+        whereArgs: [workerId],
+        limit: 1,
+      );
+      final standingTaskId = workerRows.isNotEmpty
+          ? workerRows.first['task_id'] as int?
+          : null;
+      if (standingTaskId == null || standingTaskId == todayRow['task_id']) {
+        return WorkerTask.fromMap(todayRow);
+      }
+    }
 
     final assigned = await db.rawQuery(
       '''
@@ -986,6 +1045,23 @@ class DatabaseHelper {
       [workerId, date],
     );
     return List.generate(maps.length, (i) => WorkerTask.fromMap(maps[i]));
+  }
+
+  /// Every distinct `task_date` [workerId] has a `worker_tasks` row for —
+  /// for the worker report's day list, so a day with task records but no
+  /// `worker_attendance` row (see _assignMatchingTasks/assignWorkerTask's
+  /// own doc comments for how that can happen) still gets a day card
+  /// instead of being silently dropped.
+  Future<List<String>> getTaskDatesForWorker(int workerId) async {
+    final db = await database;
+    final rows = await db.query(
+      'worker_tasks',
+      distinct: true,
+      columns: ['task_date'],
+      where: 'worker_id = ?',
+      whereArgs: [workerId],
+    );
+    return rows.map((row) => row['task_date'] as String).toList();
   }
 
   /// Adds [column] to [table] only if it's missing, so an upgrade that
@@ -1197,10 +1273,22 @@ class DatabaseHelper {
   }
 
   /// Saves a new task assignment on the worker: `workers.task_id`/
-  /// `workers.note` is updated, and today's `worker_tasks` row is set to
-  /// match immediately too — before check-in or after, same either way.
-  /// Reassigning again the same day reuses/replaces today's row rather
-  /// than creating a duplicate (see _applyTodaysTaskAssignment). Rejected
+  /// `workers.note` is always updated. Today's `worker_tasks` row is only
+  /// touched if the worker already has an active one for today *and*
+  /// hasn't checked out yet — reassigning again the same day, before
+  /// checkout, reuses/replaces that row rather than creating a duplicate
+  /// (see _applyTodaysTaskAssignment). If they haven't checked in yet
+  /// today, or have already checked out, no `worker_tasks` row is
+  /// created/changed here at all; one gets created later, at their next
+  /// check-in (see _ensureTodaysWorkerTaskRow), picking up this new
+  /// `workers.task_id` then. This keeps every `worker_tasks` row tied to a
+  /// day the worker actually attended, so it always has a matching
+  /// `worker_attendance` row — a day assigned but never checked into would
+  /// otherwise sit invisible on the worker's report and never sync (see
+  /// AttendanceSubmissionRepository.getUnsyncedWorkerTasks's same-day
+  /// attendance requirement). The checkout check stops a reassignment made
+  /// after the worker has already left for the day from overwriting what
+  /// they actually did that day with a task they never performed. Rejected
   /// workers are skipped.
   Future<void> assignWorkerTask({
     required int workerId,
@@ -1216,6 +1304,28 @@ class DatabaseHelper {
         where: 'offline_worker_id = ?',
         whereArgs: [workerId],
       );
+
+      final todaysRow = await txn.query(
+        'worker_tasks',
+        columns: ['offline_worker_id'],
+        where: "worker_id = ? AND task_date = ? AND status = 'active'",
+        whereArgs: [workerId, _todayDateKey()],
+        limit: 1,
+      );
+      if (todaysRow.isEmpty) return;
+
+      final todaysAttendance = await txn.query(
+        'worker_attendance',
+        columns: ['status'],
+        where: 'worker_id = ? AND attendance_date = ?',
+        whereArgs: [workerId, _todayDateKey()],
+        limit: 1,
+      );
+      final alreadyCheckedOut =
+          todaysAttendance.isNotEmpty &&
+          todaysAttendance.first['status'] == 'checked_out';
+      if (alreadyCheckedOut) return;
+
       await _applyTodaysTaskAssignment(txn, workerId, taskId, note);
     });
   }
@@ -1614,6 +1724,18 @@ class DatabaseHelper {
           );
         }
 
+        // A worker-task record fetched before this worker was known locally
+        // (pull order isn't guaranteed) is queued rather than dropped — see
+        // resolvePendingWorkerTasksForWorker's own doc comment. Resolved
+        // regardless of this worker's status, same as a live-import record
+        // only actually skips on 'rejected' (see _upsertResolvedWorkerTask).
+        await resolvePendingWorkerTasksForWorker(
+          txn,
+          serverWorkerId: worker.workerId,
+          offlineWorkerId: offlineWorkerId,
+          rejected: worker.status == 'rejected',
+        );
+
         // Task assignment only happens once the backend confirms this
         // worker as approved (verified) — a rejected (or still-pending)
         // worker gets none of this, regardless of what the response
@@ -1829,6 +1951,17 @@ class DatabaseHelper {
   /// first; a record for a worker not yet known locally (not imported/
   /// synced) is skipped rather than inserted as a dangling FK, same as
   /// [_assignMatchingTasks] does for an unknown task.
+  /// Upserts every fetched assignment whose worker is already known
+  /// locally; one whose server `worker_id` isn't is stashed in
+  /// `pending_worker_tasks` instead (see _queuePendingWorkerTask) rather
+  /// than dropped — resolved automatically once that worker is imported
+  /// (see resolvePendingWorkerTasksForWorker, called from
+  /// upsertRemoteWorkers). A `task_id` not yet in the local `tasks` catalog
+  /// is still stored as-is — every read of worker_tasks joins against
+  /// tasks, so the row is simply invisible until the task catalog catches
+  /// up, with no FK-integrity risk (unlike the worker case, since
+  /// worker_tasks.task_id already uses the backend's own id, not a
+  /// separate local numbering space).
   Future<void> upsertRemoteWorkerTasks(
     List<RemoteWorkerTaskRecord> records,
   ) async {
@@ -1843,63 +1976,158 @@ class DatabaseHelper {
           whereArgs: [record.workerId],
           limit: 1,
         );
-        if (workerRows.isEmpty) continue;
+        if (workerRows.isEmpty) {
+          await _queuePendingWorkerTask(txn, record);
+          continue;
+        }
         final offlineWorkerId = workerRows.first['offline_worker_id'] as int;
         final rejected = workerRows.first['status'] == 'rejected';
-
-        final knownTask = await txn.query(
-          'tasks',
-          columns: ['task_id'],
-          where: 'task_id = ?',
-          whereArgs: [record.taskId],
-          limit: 1,
-        );
-        if (knownTask.isEmpty) continue;
-
-        final row = {
-          // Only set when the server sent one, so a record without it never
-          // wipes an id already stored locally.
-          'worker_task_id': ?record.workerTaskId,
-          'target': record.target,
-          'status': record.status,
-          'supervisor_note': record.note,
-          'work_photo': record.workPhoto,
-          'overtime': record.overtime,
-          'employee_target': record.employeeTarget,
-          'completed_target': record.completedTarget,
-          'task_status': ?record.taskStatus,
-          'updated_at': now,
-        };
-
-        final assignedAt = record.assignedAt ?? now;
-        final existingId = await _findExistingWorkerTaskRow(
+        await _upsertResolvedWorkerTask(
           txn,
           offlineWorkerId: offlineWorkerId,
-          taskId: record.taskId,
-          serverWorkerTaskId: record.workerTaskId,
-          taskDate: assignedAt.substring(0, 10),
+          rejected: rejected,
+          record: record,
+          now: now,
         );
-
-        if (existingId == null) {
-          if (rejected) continue;
-          await txn.insert('worker_tasks', {
-            ...row,
-            'worker_id': offlineWorkerId,
-            'task_id': record.taskId,
-            'assigned_at': assignedAt,
-            'created_at': now,
-            'task_date': assignedAt.substring(0, 10),
-          }, conflictAlgorithm: ConflictAlgorithm.ignore);
-        } else {
-          await txn.update(
-            'worker_tasks',
-            row,
-            where: 'offline_worker_id = ?',
-            whereArgs: [existingId],
-          );
-        }
       }
     });
+  }
+
+  /// The actual insert-or-update of one assignment once its local
+  /// `offline_worker_id` is known — shared by [upsertRemoteWorkerTasks]
+  /// (worker already known) and [resolvePendingWorkerTasksForWorker]
+  /// (worker only just became known).
+  Future<void> _upsertResolvedWorkerTask(
+    DatabaseExecutor txn, {
+    required int offlineWorkerId,
+    required bool rejected,
+    required RemoteWorkerTaskRecord record,
+    required String now,
+  }) async {
+    final row = {
+      // Only set when the server sent one, so a record without it never
+      // wipes an id already stored locally.
+      'worker_task_id': ?record.workerTaskId,
+      'target': record.target,
+      'status': record.status,
+      'supervisor_note': record.note,
+      'work_photo': record.workPhoto,
+      'overtime': record.overtime,
+      'employee_target': record.employeeTarget,
+      'completed_target': record.completedTarget,
+      'task_status': ?record.taskStatus,
+      'updated_at': now,
+    };
+
+    // record.assignedAt (the backend's own created_at) is UTC, like
+    // every other backend timestamp — converted to the supervisor's
+    // own wall-clock time here, the same way every other locally-stored
+    // timestamp is, before task_date is derived from it. Converting
+    // straight from UTC without this would risk landing a record near
+    // midnight UTC on the wrong local calendar day.
+    final assignedAt = record.assignedAt == null
+        ? now
+        : AppTime.toUserTime(
+            DateTime.parse(record.assignedAt!),
+          ).toIso8601String();
+    final existingId = await _findExistingWorkerTaskRow(
+      txn,
+      offlineWorkerId: offlineWorkerId,
+      taskId: record.taskId,
+      serverWorkerTaskId: record.workerTaskId,
+      taskDate: assignedAt.substring(0, 10),
+    );
+
+    if (existingId == null) {
+      if (rejected) return;
+      await txn.insert('worker_tasks', {
+        ...row,
+        'worker_id': offlineWorkerId,
+        'task_id': record.taskId,
+        'assigned_at': assignedAt,
+        'created_at': now,
+        'task_date': assignedAt.substring(0, 10),
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    } else {
+      await txn.update(
+        'worker_tasks',
+        row,
+        where: 'offline_worker_id = ?',
+        whereArgs: [existingId],
+      );
+    }
+  }
+
+  /// Stashes [record] in `pending_worker_tasks` — see that table's doc
+  /// comment in _createWorkerTables for why.
+  Future<void> _queuePendingWorkerTask(
+    DatabaseExecutor txn,
+    RemoteWorkerTaskRecord record,
+  ) async {
+    await txn.insert('pending_worker_tasks', {
+      'server_worker_task_id': ?record.workerTaskId,
+      'server_worker_id': record.workerId,
+      'task_id': record.taskId,
+      'target': record.target,
+      'status': record.status,
+      'assigned_at': record.assignedAt,
+      'supervisor_note': record.note,
+      'work_photo': record.workPhoto,
+      'overtime': record.overtime,
+      'employee_target': record.employeeTarget,
+      'completed_target': record.completedTarget,
+      'task_status': record.taskStatus,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Resolves every `pending_worker_tasks` row stashed for [serverWorkerId]
+  /// now that it maps to [offlineWorkerId] locally, then removes them —
+  /// called from [upsertRemoteWorkers] right after a worker's own row is
+  /// upserted, so a task record that arrived before its worker did (pull
+  /// order isn't guaranteed) still ends up in `worker_tasks` once the
+  /// worker catches up, instead of staying lost.
+  Future<void> resolvePendingWorkerTasksForWorker(
+    DatabaseExecutor txn, {
+    required int serverWorkerId,
+    required int offlineWorkerId,
+    required bool rejected,
+  }) async {
+    final pending = await txn.query(
+      'pending_worker_tasks',
+      where: 'server_worker_id = ?',
+      whereArgs: [serverWorkerId],
+    );
+    if (pending.isEmpty) return;
+
+    final now = AppTime.nowInUserZone().toIso8601String();
+    for (final row in pending) {
+      final record = RemoteWorkerTaskRecord(
+        workerTaskId: row['server_worker_task_id'] as int?,
+        workerId: serverWorkerId,
+        taskId: row['task_id'] as int,
+        target: row['target'] as int?,
+        status: (row['status'] as String?) ?? 'active',
+        assignedAt: row['assigned_at'] as String?,
+        note: row['supervisor_note'] as String?,
+        workPhoto: row['work_photo'] as String?,
+        overtime: row['overtime'] as int?,
+        employeeTarget: row['employee_target'] as int?,
+        completedTarget: row['completed_target'] as int?,
+        taskStatus: row['task_status'] as String?,
+      );
+      await _upsertResolvedWorkerTask(
+        txn,
+        offlineWorkerId: offlineWorkerId,
+        rejected: rejected,
+        record: record,
+        now: now,
+      );
+    }
+    await txn.delete(
+      'pending_worker_tasks',
+      where: 'server_worker_id = ?',
+      whereArgs: [serverWorkerId],
+    );
   }
 
   /// The local `worker_tasks` row a fetched assignment should update, or null

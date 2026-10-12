@@ -514,22 +514,31 @@ class _DayCard extends StatelessWidget {
   const _DayCard({required this.day, required this.onViewDetails});
 
   bool get _isToday => DateTimeFormatter.isSameDay(
-    DateTime.tryParse(day.attendance.attendanceDate) ?? DateTime(0),
+    DateTime.tryParse(day.date) ?? DateTime(0),
     AppTime.nowInUserZone(),
   );
 
-  /// Which task row(s) represent this day: the one actually synced to the
-  /// server, if any — the definitive record of what happened, even once a
-  /// later reassignment has deactivated it — or, if nothing's synced yet,
-  /// whichever row is currently active (the last task assigned that day,
-  /// since reassigning deactivates every other row for the date; see
-  /// DatabaseHelper.assignWorkerTask/_applyTodaysTaskAssignment). Applies
-  /// to any day, not just today: a past day can end up with the same
-  /// several-reassignments-in-one-day shape if the supervisor changed
-  /// their mind more than once before it synced or the day ended.
+  /// Which task row represents this day: the one that's both synced *and*
+  /// still active, if there is one — the definitive, current record. If a
+  /// reassignment has since deactivated every synced row (none of them is
+  /// active anymore), the most recently created synced row is shown instead
+  /// of all of them — otherwise a day that synced twice around a same-day
+  /// reassignment (old task synced, then reassigned, then the new task also
+  /// synced) would show both tasks instead of just the current one. If
+  /// nothing's synced yet, whichever row is currently active (the last task
+  /// assigned that day, since reassigning deactivates every other row for
+  /// the date; see DatabaseHelper.assignWorkerTask/_applyTodaysTaskAssignment).
+  /// Applies to any day, not just today: a past day can end up with the same
+  /// several-reassignments-in-one-day shape if the supervisor changed their
+  /// mind more than once before it synced or the day ended.
   List<WorkerTask> get _visibleTasks {
-    final synced = day.tasks.where((task) => task.realWorkerTaskId != null);
-    if (synced.isNotEmpty) return synced.toList();
+    final synced = day.tasks.where((task) => task.realWorkerTaskId != null).toList();
+    if (synced.isNotEmpty) {
+      final activeSynced = synced.where((task) => task.status == 'active');
+      if (activeSynced.isNotEmpty) return activeSynced.toList();
+      synced.sort((a, b) => a.workerTaskId.compareTo(b.workerTaskId));
+      return [synced.last];
+    }
     final active = day.tasks.where((task) => task.status == 'active');
     if (active.isNotEmpty) return active.toList();
     return day.tasks;
@@ -537,8 +546,9 @@ class _DayCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final date = DateTime.tryParse(day.attendance.attendanceDate);
-    final isSynced = day.attendance.isSynced;
+    final attendance = day.attendance;
+    final date = DateTime.tryParse(day.date);
+    final isSynced = attendance?.isSynced ?? false;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -560,9 +570,7 @@ class _DayCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    date == null
-                        ? day.attendance.attendanceDate
-                        : _shortDate(date),
+                    date == null ? day.date : _shortDate(date),
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
@@ -584,9 +592,19 @@ class _DayCard extends StatelessWidget {
                 ],
               ),
               _StatusPill(
-                label: isSynced ? 'Synced' : 'Not synced',
-                color: isSynced ? AppColors.success : AppColors.warning,
-                background: isSynced
+                label: attendance == null
+                    ? 'No attendance'
+                    : isSynced
+                    ? 'Synced'
+                    : 'Not synced',
+                color: attendance == null
+                    ? AppColors.muted
+                    : isSynced
+                    ? AppColors.success
+                    : AppColors.warning,
+                background: attendance == null
+                    ? const Color(0xFFF0F0F0)
+                    : isSynced
                     ? const Color(0xFFE7F6EC)
                     : const Color(0xFFFDF3E3),
               ),
@@ -601,14 +619,14 @@ class _DayCard extends StatelessWidget {
                 child: _TimeColumn(
                   icon: Icons.login,
                   label: 'Check in',
-                  time: day.attendance.checkInTime,
+                  time: attendance?.checkInTime,
                 ),
               ),
               Expanded(
                 child: _TimeColumn(
                   icon: Icons.logout,
                   label: 'Check out',
-                  time: day.attendance.checkOutTime,
+                  time: attendance?.checkOutTime,
                 ),
               ),
             ],
@@ -663,14 +681,6 @@ class _DayCard extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  String _recordedAtLabel() {
-    final time = day.attendance.checkOutTime ?? day.attendance.checkInTime;
-    if (time == null) return '';
-    final parsed = DateTime.tryParse(time);
-    if (parsed == null) return '';
-    return 'Recorded ${DateTimeFormatter.clock(parsed)}';
   }
 
   static const _weekdayNames = [
@@ -786,7 +796,7 @@ class _DayDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final attendance = day.attendance;
-    final date = DateTime.tryParse(attendance.attendanceDate);
+    final date = DateTime.tryParse(day.date);
     return Scaffold(
       backgroundColor: AppColors.pageGrey,
       body: Column(
@@ -794,7 +804,7 @@ class _DayDetailScreen extends StatelessWidget {
           AppScreenHeader(
             title: 'Day Details',
             subtitle: date == null
-                ? '$workerName — ${attendance.attendanceDate}'
+                ? '$workerName — ${day.date}'
                 : '$workerName — ${DateTimeFormatter.dayLabel(date)}',
             showBack: true,
           ),
@@ -815,13 +825,19 @@ class _DayDetailScreen extends StatelessWidget {
                           children: [
                             const SectionLabel('ATTENDANCE'),
                             _StatusPill(
-                              label: attendance.isSynced
+                              label: attendance == null
+                                  ? 'No attendance'
+                                  : attendance.isSynced
                                   ? 'Synced'
                                   : 'Not synced',
-                              color: attendance.isSynced
+                              color: attendance == null
+                                  ? AppColors.muted
+                                  : attendance.isSynced
                                   ? AppColors.success
                                   : AppColors.warning,
-                              background: attendance.isSynced
+                              background: attendance == null
+                                  ? const Color(0xFFF0F0F0)
+                                  : attendance.isSynced
                                   ? const Color(0xFFE7F6EC)
                                   : const Color(0xFFFDF3E3),
                             ),
@@ -834,14 +850,14 @@ class _DayDetailScreen extends StatelessWidget {
                               child: _TimeColumn(
                                 icon: Icons.login,
                                 label: 'Check in',
-                                time: attendance.checkInTime,
+                                time: attendance?.checkInTime,
                               ),
                             ),
                             Expanded(
                               child: _TimeColumn(
                                 icon: Icons.logout,
                                 label: 'Check out',
-                                time: attendance.checkOutTime,
+                                time: attendance?.checkOutTime,
                               ),
                             ),
                           ],
@@ -884,6 +900,18 @@ class _DayTaskCard extends StatelessWidget {
 
   const _DayTaskCard({required this.task});
 
+  // `task.taskType` is the stored tasks.task_type column, which holds
+  // TaskType's own enum name ('daily'/'monthly'/'taskBased'/'hourBased' —
+  // see DatabaseHelper's insert), not the backend's raw string, so it's
+  // matched here rather than re-parsed through TaskType.values.
+  String get _taskTypeLabel => switch (task.taskType) {
+    'hourBased' => 'Hourly',
+    'monthly' => 'Monthly',
+    'daily' => 'Daily',
+    'taskBased' => 'Task-based',
+    _ => 'Other',
+  };
+
   String get _taskStatusLabel => switch (task.taskStatus) {
     'approved' => 'Approved',
     'rejected' => 'Rejected',
@@ -922,6 +950,11 @@ class _DayTaskCard extends StatelessWidget {
           _TaskDetailLine(
             label: 'Task Status',
             value: _taskStatusLabel,
+            valueColor: _taskStatusColor,
+          ),
+          _TaskDetailLine(
+            label: 'Task Type',
+            value: _taskTypeLabel,
             valueColor: _taskStatusColor,
           ),
           // const SizedBox(height: 10),

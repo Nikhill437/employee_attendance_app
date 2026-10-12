@@ -257,7 +257,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       final count = await _viewModel.fetchFromServer();
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Fetched $count workers from server')),
+        SnackBar(content: Text('Fetched $count employees from server')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -949,12 +949,6 @@ class _WorkerCard extends StatelessWidget {
       ],
     );
   }
-
-  Color get _workStatusColor => switch (worker.workStatus) {
-    WorkStatus.completed => AppColors.success,
-    WorkStatus.inProgress => AppColors.warning,
-    WorkStatus.notStarted => AppColors.muted,
-  };
 
   /// The worker's own backend approval state (`workers.status`, via
   /// [Worker.status]) — distinct from [Worker.verification], which is a

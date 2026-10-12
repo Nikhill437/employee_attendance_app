@@ -199,9 +199,11 @@ class AttendanceSubmissionRepository {
   /// the local rows that were submitted. An entry matches a row only when
   /// every key the response sent agrees: the backend `worker_id`, the
   /// `task_id`, the `attendance_id` of that row's day (from the response's
-  /// attendances), and `created_at` to the second (the server's format may
-  /// differ from ours). A key the response leaves out isn't checked. An
-  /// entry that matches no row is skipped, so it's sent again on the next
+  /// attendances), and `created_at` to the second (converted to UTC the same
+  /// way [SyncDataApi.submit] converted it before sending — the response
+  /// echoes back what was actually sent, which is UTC, not the row's own
+  /// wall-clock `created_at`). A key the response leaves out isn't checked.
+  /// An entry that matches no row is skipped, so it's sent again on the next
   /// sync rather than attached to the wrong row.
   List<MapEntry<WorkerTask, SyncedWorkerTask>> _matchWorkerTasks(
     int realWorkerId,
@@ -244,7 +246,7 @@ class AttendanceSubmissionRepository {
       return false;
     }
     if (entry.createdAt != null &&
-        !_sameSecond(candidate.createdAt, entry.createdAt!)) {
+        !_sameSecond(_formatTimestamp(candidate.createdAt), entry.createdAt!)) {
       return false;
     }
     return true;

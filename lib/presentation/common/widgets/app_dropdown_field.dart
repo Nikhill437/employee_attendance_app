@@ -18,6 +18,12 @@ class AppDropdownField<T> extends StatefulWidget {
   final ValueChanged<T?> onChanged;
   final FormFieldValidator<T?>? validator;
 
+  /// Renders an extra widget (e.g. a type chip) for an item, next to its
+  /// label — in both the closed field (for [value]) and the option sheet's
+  /// list (see showAppSelectionSheet). Null for an item that has none of
+  /// its own, or when left unset entirely.
+  final Widget? Function(T item)? trailingBuilder;
+
   /// False shows the field greyed out and stops it opening.
   final bool enabled;
 
@@ -33,6 +39,7 @@ class AppDropdownField<T> extends StatefulWidget {
     this.value,
     this.validator,
     this.enabled = true,
+    this.trailingBuilder,
   });
 
   @override
@@ -46,6 +53,7 @@ class _AppDropdownFieldState<T> extends State<AppDropdownField<T>> {
       title: widget.label,
       items: widget.items,
       labelBuilder: widget.labelBuilder,
+      trailingBuilder: widget.trailingBuilder,
       selected: widget.value,
     );
     if (picked == null) return;
@@ -87,6 +95,9 @@ class _AppDropdownFieldState<T> extends State<AppDropdownField<T>> {
           validator: (_) => widget.validator?.call(widget.value),
           builder: (field) {
             final value = widget.value;
+            final trailingWidget = value == null
+                ? null
+                : widget.trailingBuilder?.call(value);
             final borderColor = field.hasError
                 ? AppColors.danger
                 : AppColors.cardBorder;
@@ -130,6 +141,10 @@ class _AppDropdownFieldState<T> extends State<AppDropdownField<T>> {
                             ),
                           ),
                         ),
+                        if (trailingWidget != null) ...[
+                          trailingWidget,
+                          const SizedBox(width: 8),
+                        ],
                         const Icon(
                           Icons.keyboard_arrow_down_rounded,
                           color: AppColors.muted,

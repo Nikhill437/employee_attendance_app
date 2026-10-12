@@ -113,16 +113,6 @@ class SplashScreen extends StatelessWidget {
       Navigator.pushNamed(context, AppRoutes.login);
     }
   }
-
-  /// There is no password-reset flow yet, so this points the user at the one
-  /// route that does work today rather than silently doing nothing.
-  void _onForgotPassword(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Contact your supervisor to reset your password'),
-      ),
-    );
-  }
 }
 
 /// One of the two landing actions: white when [filled], outlined otherwise.

@@ -146,7 +146,8 @@ class AttendanceDetailScreen extends StatelessWidget {
                       Navigator.of(context).popUntil((route) => route.isFirst),
                   child: const Text(
                     'Back to Home',
-                    style: TextStyle(fontSize: 16),
+                    style: TextStyle(fontSize: 16, decoration: TextDecoration.underline,
+            decorationColor: Colors.white,),
                   ),
                 ),
               ),

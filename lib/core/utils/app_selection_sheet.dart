@@ -5,11 +5,14 @@ import '../theme/app_colors.dart';
 /// Shows [items] in a bottom sheet and resolves to the one the user taps, or
 /// null if the sheet is dismissed. [selected] gets a check mark. Every
 /// dropdown in the app opens through this, so they all look and behave alike.
+/// [trailingBuilder], when given, renders an extra widget (e.g. a type chip)
+/// before that check mark — null for an item that has none of its own.
 Future<T?> showAppSelectionSheet<T>({
   required BuildContext context,
   required String title,
   required List<T> items,
   required String Function(T item) labelBuilder,
+  Widget? Function(T item)? trailingBuilder,
   T? selected,
 }) {
   return showModalBottomSheet<T>(
@@ -71,6 +74,7 @@ Future<T?> showAppSelectionSheet<T>({
                   itemBuilder: (context, index) {
                     final item = items[index];
                     final isSelected = selected != null && item == selected;
+                    final trailingWidget = trailingBuilder?.call(item);
                     return ListTile(
                       title: Text(
                         labelBuilder(item),
@@ -84,9 +88,21 @@ Future<T?> showAppSelectionSheet<T>({
                               : AppColors.ink,
                         ),
                       ),
-                      trailing: isSelected
-                          ? const Icon(Icons.check, color: AppColors.deepGreen)
-                          : null,
+                      trailing: trailingWidget == null && !isSelected
+                          ? null
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ?trailingWidget,
+                                if (isSelected) ...[
+                                  const SizedBox(width: 8),
+                                  const Icon(
+                                    Icons.check,
+                                    color: AppColors.deepGreen,
+                                  ),
+                                ],
+                              ],
+                            ),
                       onTap: () => Navigator.pop(sheetContext, item),
                     );
                   },

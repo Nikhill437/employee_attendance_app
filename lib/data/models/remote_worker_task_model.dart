@@ -1,11 +1,7 @@
 /// One worker-task assignment row from the backend's
 /// `POST attendance/worker_task_list` / `POST attendance/server_time_worker_task_list`
 /// responses — both confirmed to return the same row shape (see
-/// WorkerTaskListApi). Field names/envelope aren't confirmed yet (unlike
-/// [RemoteWorkerRecord], whose shape is confirmed) — this mirrors the
-/// local `worker_tasks` table's own column names as a best guess, same
-/// precedent as every other not-yet-confirmed endpoint in this app;
-/// adjust [fromJson] once the real response is seen.
+/// WorkerTaskListApi). Response shape now confirmed against a real payload.
 class RemoteWorkerTaskRecord {
   /// The backend's own `worker_tasks.offline_worker_id`-equivalent id for
   /// this assignment — stored locally as `worker_tasks.worker_task_id`.
@@ -27,6 +23,12 @@ class RemoteWorkerTaskRecord {
   final int? target;
   final String status;
   final String assignmentType;
+
+  /// The backend's own `created_at` for this assignment (the response has
+  /// no separate `assigned_at` key — confirmed against a real payload) —
+  /// the row's real date, used to derive the local `task_date` it's stored
+  /// under (see DatabaseHelper.upsertRemoteWorkerTasks). UTC, same as every
+  /// other backend timestamp.
   final String? assignedAt;
   final String? note;
   final String? workPhoto;
@@ -59,7 +61,7 @@ class RemoteWorkerTaskRecord {
       target: _asIntOrNull(json['target']),
       status: (json['status'] as String?) ?? 'active',
       assignmentType: (json['assignment_type'] as String?) ?? 'default',
-      assignedAt: json['assigned_at'] as String?,
+      assignedAt: json['created_at'] as String?,
       note: json['note'] as String?,
       workPhoto: json['work_photo'] as String?,
       overtime: _asIntOrNull(json['overtime']),

@@ -42,20 +42,25 @@ enum TaskType {
   daily('Daily'),
   monthly('Monthly'),
   taskBased('Task Based'),
-  hourBased('Hour Based');
+  hourBased('Hourly');
 
   const TaskType(this.label);
 
   final String label;
 }
 
+/// The backend's own `task_type` values are 'daily', 'monthly',
+/// 'task_based', 'hourly' — three of which don't match [TaskType]'s enum
+/// name 1:1 ('task_based' has an underscore [TaskType.taskBased] doesn't;
+/// 'hourly' doesn't resemble [TaskType.hourBased] at all). Stripping
+/// underscores handles 'task_based'; 'hourly' needs an explicit alias.
 TaskType? _taskTypeOrNull(dynamic value) {
   if (value == null) return null;
-  final raw = value.toString();
+  final raw = value.toString().toLowerCase().replaceAll('_', '');
   for (final type in TaskType.values) {
-    if (type.name.toLowerCase() == raw.toLowerCase()) return type;
+    if (type.name.toLowerCase() == raw) return type;
   }
-  return null;
+  return raw == 'hourly' ? TaskType.hourBased : null;
 }
 
 /// A task within a department, as cached locally from the backend's

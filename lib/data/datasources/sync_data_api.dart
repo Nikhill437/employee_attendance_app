@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/api_routes.dart';
+import '../../core/utils/app_time.dart';
 import '../models/sync_data_result_model.dart';
 import '../models/worker_task_model.dart';
 
@@ -54,8 +55,7 @@ class SyncDataApi {
         'overtime': task.overtime ?? 0,
         'task_note': task.taskNote,
         'supervisor_note': task.supervisorNote,
-        'created_at': task.createdAt,
-        'task_date': task.taskDate,
+        'created_at': _formatTimestamp(task.createdAt),
       };
 
       final photoPath = task.workPhoto;
@@ -145,6 +145,20 @@ class SyncDataApi {
     }
 
     return SyncDataResult(attendances: attendances, workerTasks: workerTasks);
+  }
+
+  /// The backend wants a real ISO-8601 UTC timestamp.
+  /// [WorkerTask.createdAt] is stored locally as
+  /// `AppTime.nowInUserZone().toIso8601String()` — a naive string whose
+  /// calendar fields are the supervisor's own timezone (from their login
+  /// response), not the device's. Parsing it and calling plain `.toUtc()`
+  /// would convert using the *device's* timezone instead — wrong whenever
+  /// that differs from the supervisor's — so this goes through
+  /// `AppTime.userWallTimeToUtc`, the actual inverse of `nowInUserZone`,
+  /// instead. Null stays null.
+  String? _formatTimestamp(String? isoString) {
+    if (isoString == null) return null;
+    return AppTime.userWallTimeToUtc(DateTime.parse(isoString)).toIso8601String();
   }
 
   /// Normalizes a response value that could be a single object, a list of

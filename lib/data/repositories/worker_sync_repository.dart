@@ -1,6 +1,5 @@
 import '../datasources/worker_sync_api.dart';
 import 'employee_repository.dart';
-import 'hidden_worker_store.dart';
 import 'worker_edit_queue.dart';
 
 /// Pushes one locally enrolled worker to the backend
@@ -11,22 +10,23 @@ class WorkerSyncRepository {
   final WorkerSyncApi _api;
   final EmployeeRepository _employees;
   final WorkerEditQueue _editQueue;
-  final HiddenWorkerStore _hiddenWorkers;
 
   WorkerSyncRepository({
     WorkerSyncApi? api,
     EmployeeRepository? employees,
     WorkerEditQueue? editQueue,
-    HiddenWorkerStore? hiddenWorkers,
   }) : _api = api ?? WorkerSyncApi(),
        _employees = employees ?? EmployeeRepository(),
-       _editQueue = editQueue ?? WorkerEditQueue(),
-       _hiddenWorkers = hiddenWorkers ?? HiddenWorkerStore();
+       _editQueue = editQueue ?? WorkerEditQueue();
 
   /// Syncs the worker enrolled under [employeeId] (their National ID), then
   /// marks them synced locally so the worker list can show it. Throws if
   /// that ID isn't enrolled, or lets an [ApiException] from the network
-  /// call propagate — the caller decides how to surface either.
+  /// call propagate — the caller decides how to surface either. Whether
+  /// this worker then shows up in any given supervisor's worker list is
+  /// purely [WorkerListViewModel.workers]' own department-match check
+  /// against the now-synced [Employee.departmentId] — nothing here hides
+  /// it specially after a department change.
   Future<void> syncWorker(String employeeId) async {
     final worker = await _employees.findByEmployeeId(employeeId);
     if (worker == null) {
@@ -40,9 +40,6 @@ class WorkerSyncRepository {
       // The backend already has this worker — send just the changed fields.
       final changes = await _editQueue.pendingFor(offlineId);
       await _api.updateWorker(realWorkerId: realId, changes: changes);
-      if (changes.containsKey('department_id')) {
-        await _hiddenWorkers.add(offlineId);
-      }
       await _editQueue.clear(offlineId);
       await _employees.markSynced(employeeId, realWorkerId: realId);
       return;
@@ -55,10 +52,6 @@ class WorkerSyncRepository {
     // shows the server's message.
     final realWorkerId = await _api.syncWorker(worker);
     if (offlineId != null) {
-      final pending = await _editQueue.pendingFor(offlineId);
-      if (pending.containsKey('department_id')) {
-        await _hiddenWorkers.add(offlineId);
-      }
       await _editQueue.clear(offlineId);
     }
     await _employees.markSynced(employeeId, realWorkerId: realWorkerId);

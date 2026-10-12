@@ -204,14 +204,28 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     _taskNoteController.clear();
   }
 
+  /// The Task dropdown's own [TaskTypeChip] — shown as a proper colored
+  /// pill next to the task name (both in the closed field and the option
+  /// list) rather than mixed into the label text, which read as confusing.
+  /// Null for a task with no type set.
+  Widget? _taskTypeChipOrNull(Task task) {
+    final taskType = task.taskType;
+    return taskType == null ? null : TaskTypeChip(taskType: taskType);
+  }
+
   /// "Target: 50 · Rate: 12" for the currently selected task (either half
   /// omitted when its own value is null), or null outright when both are
-  /// — never shown blank or as zero.
+  /// — never shown blank or as zero. Target is only ever shown for Task
+  /// Based/Hour Based tasks — Daily/Monthly tasks have no per-day count to
+  /// report, same as the other task-type-gated displays
+  /// (worker_task_list_screen.dart, assign_task_screen.dart).
   String? get _selectedTaskTargetRate {
     final task = _formViewModel.task;
     if (task == null) return null;
+    final showsTarget =
+        task.taskType == TaskType.taskBased || task.taskType == TaskType.hourBased;
     final parts = [
-      if (task.target != null) 'Target: ${task.target}',
+      if (showsTarget && task.target != null) 'Target: ${task.target}',
       if (task.rate != null) 'Rate: ${task.rate}',
     ];
     return parts.isEmpty ? null : parts.join(' · ');
@@ -509,19 +523,30 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               value: _formViewModel.task,
               items: _formViewModel.tasks,
               labelBuilder: (task) => task.name,
+              trailingBuilder: _taskTypeChipOrNull,
               onChanged: _onTaskSelected,
               validator: (task) =>
                   !_isEditing && task == null ? 'Select the task' : null,
             ),
             if (_formViewModel.task != null) ...[
               const SizedBox(height: 8),
-              Text(
-                'Selected task: ${_formViewModel.task!.name}',
-                style: const TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.deepGreen,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Selected task: \n${_formViewModel.task!.name}',
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.deepGreen,
+                      ),
+                    ),
+                  ),
+                  if (_formViewModel.task!.taskType != null) ...[
+                    const SizedBox(width: 8),
+                    TaskTypeChip(taskType: _formViewModel.task!.taskType!),
+                  ],
+                ],
               ),
               if (_selectedTaskTargetRate != null) ...[
                 const SizedBox(height: 2),
