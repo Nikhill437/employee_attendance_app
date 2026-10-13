@@ -563,7 +563,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('No workers to show'), findsOneWidget);
+    expect(find.text('No employee to show'), findsOneWidget);
     expect(find.text('Enroll Worker'), findsOneWidget);
   });
 

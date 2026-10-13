@@ -1,7 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/face_scan_viewmodel.dart';
@@ -85,18 +84,18 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen>
           ),
         ],
       ),
-      bottomNavigationBar: AppBottomNavBar(
-        current: AppSection.workers,
-        onSectionSelected: (target) =>
-            switchToSection(context, AppSection.workers, target),
-      ),
     );
   }
 
   Widget _buildContent() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: [
+    // No bottomNavigationBar on this screen, so the list needs its own
+    // clearance from the system navigation bar/gesture area — same
+    // reasoning as enrollment_form_screen.dart's own Save button.
+    return SafeArea(
+      top: false,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        children: [
         const AppCard(
           padding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           child: AppStepIndicator(steps: _steps, currentStep: 1),
@@ -128,7 +127,8 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen>
         //     ),
         //   ),
         // ),
-      ],
+        ],
+      ),
     );
   }
 

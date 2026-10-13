@@ -68,7 +68,7 @@ class _WorkerHistoryScreenState extends State<WorkerHistoryScreen> {
     if (_viewModel.entries.isEmpty) {
       return const Center(
         child: Text(
-          'No workers to show',
+          'No employees to show',
           style: TextStyle(color: AppColors.muted),
         ),
       );

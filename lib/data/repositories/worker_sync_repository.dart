@@ -30,7 +30,7 @@ class WorkerSyncRepository {
   Future<void> syncWorker(String employeeId) async {
     final worker = await _employees.findByEmployeeId(employeeId);
     if (worker == null) {
-      throw ArgumentError('No worker enrolled with National ID $employeeId');
+      throw ArgumentError('No employee enrolled with National ID $employeeId');
     }
     final offlineId = worker.id;
     final realId = offlineId == null

@@ -375,7 +375,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
               padding: EdgeInsets.only(top: 48),
               child: Center(
                 child: Text(
-                  'No workers to show',
+                  'No employees to show',
                   style: TextStyle(color: AppColors.muted),
                 ),
               ),
