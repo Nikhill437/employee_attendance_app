@@ -5,6 +5,7 @@ import '../models/remote_worker_attendance_model.dart';
 import '../models/attendance_log_model.dart';
 import '../models/department_model.dart';
 import '../models/employee_model.dart';
+import '../models/holiday_model.dart';
 import '../models/remote_worker_model.dart';
 import '../models/remote_worker_task_model.dart';
 import '../models/worker_attendance_model.dart';
@@ -34,7 +35,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 27,
+      version: 29,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -335,6 +336,20 @@ class DatabaseHelper {
           // upsertRemoteWorkerTasks/resolvePendingWorkerTasksForWorker).
           await _createWorkerTables(db);
         }
+        if (oldVersion < 28) {
+          // holiday mirrors the backend's own table — a read-only cache of
+          // admin-defined holidays, same precedent as departments/tasks.
+          await _createWorkerTables(db);
+        }
+        if (oldVersion < 29) {
+          // task_note is in _createWorkerTables for new installs; this adds
+          // it to pending_worker_tasks rows created before it existed, so a
+          // worker-task record queued while its worker wasn't known yet
+          // keeps its assignment-time note distinct from its (separate)
+          // supervisor_note once resolved — see
+          // resolvePendingWorkerTasksForWorker/_upsertResolvedWorkerTask.
+          await _addColumnIfMissing(db, 'pending_worker_tasks', 'task_note', 'TEXT');
+        }
       },
     );
   }
@@ -493,12 +508,33 @@ class DatabaseHelper {
         target INTEGER,
         status TEXT NOT NULL DEFAULT 'active',
         assigned_at TEXT,
+        task_note TEXT,
         supervisor_note TEXT,
         work_photo VARCHAR(255),
         overtime INTEGER,
         employee_target INTEGER,
         completed_target INTEGER,
         task_status TEXT
+      )
+    ''');
+    // Mirrors the backend's own `holiday` table — admin-defined, read-only
+    // from this app's side (fetched, never created locally), same
+    // precedent as departments/tasks. created_by/modified_by aren't FK'd
+    // to a local admin-accounts table (none exists yet), and MySQL's own
+    // `ON UPDATE CURRENT_TIMESTAMP` on modified_date isn't reproduced —
+    // same reasoning as every other table here.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS holiday(
+        holiday_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        holiday_name TEXT NOT NULL,
+        description TEXT,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        created_by INTEGER,
+        created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        modified_by INTEGER,
+        modified_date TEXT,
+        server_time TEXT DEFAULT CURRENT_TIMESTAMP
       )
     ''');
   }
@@ -567,6 +603,28 @@ class DatabaseHelper {
         'rate': task.rate,
         'task_type': task.taskType?.name,
         'working_hours': task.workingHours,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Replaces the local `holiday` cache with the backend's current list
+  /// (see LookupRepository.refreshHolidaysFromServerTime, the dashboard's
+  /// Holiday card) — rows are upserted by the backend's own `holiday_id`.
+  /// `created_by`/`created_date`/`modified_by`/`modified_date`/`server_time`
+  /// are left out of the insert map entirely and fall back to the table's
+  /// own column defaults (or NULL), since this app never needs them beyond
+  /// the count/date range shown on the card.
+  Future<void> replaceHolidays(List<Holiday> holidays) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final holiday in holidays) {
+      batch.insert('holiday', {
+        'holiday_id': holiday.id,
+        'holiday_name': holiday.name,
+        'description': holiday.description,
+        'start_date': holiday.startDate,
+        'end_date': holiday.endDate,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -656,6 +714,24 @@ class DatabaseHelper {
     );
     if (rows.isEmpty) return null;
     return rows.first['status'] as String?;
+  }
+
+  /// The worker's current `note` in the local `workers` table — the
+  /// standing note from their latest task assignment (see the column's own
+  /// doc comment above), kept up to date by [assignWorkerTask] regardless
+  /// of whether a `worker_tasks` row exists yet to copy it into. Null if no
+  /// such worker row exists, or none was ever set.
+  Future<String?> getWorkerNote(int offlineWorkerId) async {
+    final db = await database;
+    final rows = await db.query(
+      'workers',
+      columns: ['note'],
+      where: 'offline_worker_id = ?',
+      whereArgs: [offlineWorkerId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['note'] as String?;
   }
 
   /// The backend's real id for the worker at local id [offlineWorkerId], or
@@ -874,6 +950,50 @@ class DatabaseHelper {
   Future<void> clearTaskCatalog() async {
     final db = await database;
     await db.delete('tasks');
+  }
+
+  Future<int> getHolidayCount() => _countRows('holiday');
+
+  /// Wipes the local `holiday` cache — same reasoning as [clearDepartments].
+  Future<void> clearHolidays() async {
+    final db = await database;
+    await db.delete('holiday');
+  }
+
+  /// Whether "today" (see [_todayDateKey]) falls within any locally cached
+  /// holiday's [start_date, end_date] range, inclusive — the check-in block
+  /// in [recordWorkerScan]. Those bounds are UTC ISO strings from the
+  /// server; compared date-only in the supervisor's own timezone (see
+  /// AppTime), the same zone [_todayDateKey] itself is keyed off.
+  Future<bool> isTodayHoliday() async {
+    final db = await database;
+    final rows = await db.query('holiday', columns: ['start_date', 'end_date']);
+    if (rows.isEmpty) return false;
+
+    final today = AppTime.nowInUserZone();
+    final todayDateOnly = DateTime(today.year, today.month, today.day);
+    for (final row in rows) {
+      final start = DateTime.tryParse(row['start_date'] as String);
+      final end = DateTime.tryParse(row['end_date'] as String);
+      if (start == null || end == null) continue;
+      final startLocal = AppTime.toUserTime(start);
+      final endLocal = AppTime.toUserTime(end);
+      final startDateOnly = DateTime(
+        startLocal.year,
+        startLocal.month,
+        startLocal.day,
+      );
+      final endDateOnly = DateTime(
+        endLocal.year,
+        endLocal.month,
+        endLocal.day,
+      );
+      if (!todayDateOnly.isBefore(startDateOnly) &&
+          !todayDateOnly.isAfter(endDateOnly)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<int> getWorkerTaskCount() => _countRows('worker_tasks');
@@ -1469,6 +1589,12 @@ class DatabaseHelper {
   /// only ever reached after [FaceScanScreen]'s 1:1 match succeeds (see
   /// MarkAttendanceScreen._showTaskScreenIfNeeded), so an unverified scan
   /// never makes it this far.
+  ///
+  /// A first scan of the day on a locally cached holiday (see
+  /// [isTodayHoliday]) is blocked — no row is inserted, and the
+  /// [WorkerScanOutcome.holiday] outcome is returned instead. A worker who
+  /// already checked in before the holiday was synced is unaffected, since
+  /// their row already exists and this only guards the check-in branch.
   Future<WorkerAttendanceRecord> recordWorkerScan(int workerId) async {
     final db = await database;
     final today = _todayDateKey();
@@ -1480,6 +1606,22 @@ class DatabaseHelper {
     );
 
     if (existing.isEmpty) {
+      // A worker who hasn't checked in yet today cannot check in on a
+      // locally cached holiday — a worker already checked in before the
+      // holiday was synced is unaffected, since that row already exists
+      // and this branch is never reached for them.
+      if (await isTodayHoliday()) {
+        return WorkerAttendanceRecord(
+          attendanceId: -1,
+          workerId: workerId,
+          attendanceDate: today,
+          checkInTime: null,
+          checkOutTime: null,
+          status: 'holiday',
+          outcome: WorkerScanOutcome.holiday,
+        );
+      }
+
       final now = AppTime.nowInUserZone().toIso8601String();
       final row = {
         'worker_id': workerId,
@@ -1501,6 +1643,16 @@ class DatabaseHelper {
     }
 
     final row = existing.first;
+    if (row['status'] == 'checked_out') {
+      // A third-or-later scan on a day already checked out — left as-is
+      // rather than overwriting the real check_out_time (and re-flagging
+      // is_synced) with this stray scan's time.
+      return WorkerAttendanceRecord.fromMap(
+        row,
+        outcome: WorkerScanOutcome.alreadyCheckedOut,
+      );
+    }
+
     final now = AppTime.nowInUserZone().toIso8601String();
     await markWorkerUnsynced(workerId);
     await db.update(
@@ -2010,7 +2162,8 @@ class DatabaseHelper {
       'worker_task_id': ?record.workerTaskId,
       'target': record.target,
       'status': record.status,
-      'supervisor_note': record.note,
+      'task_note': record.taskNote,
+      'supervisor_note': record.supervisorNote,
       'work_photo': record.workPhoto,
       'overtime': record.overtime,
       'employee_target': record.employeeTarget,
@@ -2071,7 +2224,8 @@ class DatabaseHelper {
       'target': record.target,
       'status': record.status,
       'assigned_at': record.assignedAt,
-      'supervisor_note': record.note,
+      'task_note': record.taskNote,
+      'supervisor_note': record.supervisorNote,
       'work_photo': record.workPhoto,
       'overtime': record.overtime,
       'employee_target': record.employeeTarget,
@@ -2108,7 +2262,8 @@ class DatabaseHelper {
         target: row['target'] as int?,
         status: (row['status'] as String?) ?? 'active',
         assignedAt: row['assigned_at'] as String?,
-        note: row['supervisor_note'] as String?,
+        taskNote: row['task_note'] as String?,
+        supervisorNote: row['supervisor_note'] as String?,
         workPhoto: row['work_photo'] as String?,
         overtime: row['overtime'] as int?,
         employeeTarget: row['employee_target'] as int?,

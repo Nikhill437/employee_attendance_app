@@ -2,6 +2,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/network/api_routes.dart';
 import '../models/department_model.dart';
+import '../models/holiday_model.dart';
 
 /// Remote datasource for the reference lists (departments/tasks) an
 /// enrollment picks from.
@@ -141,6 +142,39 @@ class AttendanceLookupApi {
     }
 
     return results;
+  }
+
+  /// GET attendance/holiday_data. Confirmed response shape: `{"success":
+  /// true, "message": "...", "data": [{"holiday_id": 1, "holiday_name":
+  /// "Gandhi Jayanti", "description": "...", "start_date": "...", "end_date":
+  /// "...", ...}, ...]}` — unpaginated, unlike [fetchDepartments]/
+  /// [fetchTasks], so this is a single call.
+  Future<List<Holiday>> fetchHolidays() async {
+    final data = await _client.get(ApiRoutes.holidayData);
+    return _holidayRows(data);
+  }
+
+  /// POST attendance/holiday_server_time with [date] as the stored Holiday
+  /// server time (`{"date": ...}`), returning the holidays changed since
+  /// then — same shape as [fetchHolidays], just scoped. [date] is the
+  /// stored holiday server time (see LookupRepository). Errors propagate,
+  /// so a failed call never advances that time.
+  Future<List<Holiday>> fetchServertimeHoliday({required String date}) async {
+    final data = await _client.post(
+      ApiRoutes.serverTimeHoliday,
+      data: {'date': date},
+    );
+    return _holidayRows(data);
+  }
+
+  List<Holiday> _holidayRows(dynamic data) {
+    if (data is! Map || data['data'] is! List) {
+      throw ApiException('Unexpected holiday response from the server.');
+    }
+    final rows = data['data'] as List;
+    return rows
+        .map((row) => Holiday.fromRemote(row as Map<String, dynamic>))
+        .toList();
   }
 
   List<Map<String, dynamic>> _asList(dynamic data) {

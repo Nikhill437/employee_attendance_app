@@ -242,12 +242,20 @@ class AssignTaskViewModel extends BaseViewModel {
     _isSubmittingEntry = true;
     safeNotify();
     try {
+      final newPhotoPath = _entryPhoto?.path;
+      final oldPhotoPath = task.workPhoto;
       await _taskRepository.submitWorkerTaskEntry(
         workerTaskId: task.workerTaskId,
         workerId: workerId,
         employeeTarget: _entryNumericValue,
-        workPhoto: _entryPhoto?.path,
+        workPhoto: newPhotoPath,
       );
+      // The old photo is now orphaned once the new one is saved as
+      // work_photo — delete it so a stale reference can never linger (see
+      // _copyToPermanentStorage, which only ever creates new files).
+      if (newPhotoPath != null && oldPhotoPath != null) {
+        await _deletePhotoIfReplaced(oldPhotoPath, newPhotoPath);
+      }
       await loadTasks();
       return null;
     } finally {
@@ -294,19 +302,42 @@ class AssignTaskViewModel extends BaseViewModel {
     _isSavingReview = true;
     safeNotify();
     try {
+      final newPhotoPath = _reviewPhoto?.path;
+      final oldPhotoPath = task.workPhoto;
       await _taskRepository.saveSupervisorTaskReview(
         workerTaskId: task.workerTaskId,
         workerId: workerId,
         completedTarget: _reviewNumericValue,
-        workPhoto: _reviewPhoto?.path,
+        workPhoto: newPhotoPath,
         note: _reviewNote.trim().isEmpty ? null : _reviewNote.trim(),
         taskStatus: _reviewTaskStatus,
       );
+      // Same cleanup as saveWorkerEntry — the review can also replace
+      // work_photo with a freshly captured one.
+      if (newPhotoPath != null && oldPhotoPath != null) {
+        await _deletePhotoIfReplaced(oldPhotoPath, newPhotoPath);
+      }
       await loadTasks();
       return null;
     } finally {
       _isSavingReview = false;
       safeNotify();
+    }
+  }
+
+  /// Deletes [oldPath] once [newPath] has been saved as its replacement —
+  /// best-effort: a failed delete just leaves an orphan file (the
+  /// pre-existing behavior), never lets cleanup itself fail a successful
+  /// save. A no-op when [oldPath] and [newPath] are actually the same file.
+  Future<void> _deletePhotoIfReplaced(String oldPath, String newPath) async {
+    if (oldPath == newPath) return;
+    try {
+      final oldFile = File(oldPath);
+      if (await oldFile.exists()) {
+        await oldFile.delete();
+      }
+    } catch (_) {
+      // Ignored — see doc comment above.
     }
   }
 

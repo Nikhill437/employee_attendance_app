@@ -29,6 +29,11 @@ class DashboardSummary {
   final int tasksCatalogTotal;
   final DateTime? tasksCatalogLastFetchedAt;
 
+  /// The dashboard's Holiday overview card: local holiday cache size and
+  /// the last successful fetch's time.
+  final int holidaysTotal;
+  final DateTime? holidaysLastFetchedAt;
+
   /// The dashboard's Employee Tasks List overview card: local worker-task
   /// row count, how many of those still await a supervisor verdict, and
   /// the last successful fetch's start time.
@@ -65,6 +70,8 @@ class DashboardSummary {
     this.departmentsLastFetchedAt,
     this.tasksCatalogTotal = 0,
     this.tasksCatalogLastFetchedAt,
+    this.holidaysTotal = 0,
+    this.holidaysLastFetchedAt,
     this.workerTasksTotal = 0,
     this.pendingWorkerTasks = 0,
     this.workerTasksLastFetchedAt,

@@ -117,6 +117,11 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
       if (dob != null) {
         _dobController.text = DateTimeFormatter.dateOfBirth(dob);
       }
+      // The note saved alongside this worker's current task assignment
+      // (workers.note) — the listener attached above syncs it into
+      // _formViewModel's own state the same way a supervisor's own typing
+      // would.
+      if (editing.note != null) _taskNoteController.text = editing.note!;
       _formViewModel.presetForEditing(
         gender: editing.gender,
         dateOfBirth: dob,
@@ -179,6 +184,47 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
         (now.month == dateOfBirth.month && now.day >= dateOfBirth.day);
     if (!birthdayPassedThisYear) age--;
     return age >= 18;
+  }
+
+  /// Parses a typed "DD/MM/YYYY" (see AppInputFormatters.dateOfBirth, which
+  /// keeps the field in exactly this shape as the supervisor types) — null
+  /// for anything incomplete or not a real calendar date (e.g. 31/02),
+  /// rather than letting DateTime roll it over to a different day.
+  DateTime? _parseDateOfBirthText(String text) {
+    final match = RegExp(r'^(\d{2})/(\d{2})/(\d{4})$').firstMatch(text.trim());
+    if (match == null) return null;
+    final day = int.parse(match.group(1)!);
+    final month = int.parse(match.group(2)!);
+    final year = int.parse(match.group(3)!);
+    final date = DateTime(year, month, day);
+    if (date.day != day || date.month != month || date.year != year) {
+      return null;
+    }
+    return date;
+  }
+
+  /// Keeps the view model's own [EnrollmentFormViewModel.dateOfBirth] in
+  /// sync as the supervisor types a date directly, the same way picking one
+  /// from the calendar already does — [_validateDateOfBirthText] is what
+  /// actually surfaces an incomplete or under-18 date as an error; this
+  /// only updates the model once there's a real date to update it with.
+  void _onDateOfBirthTextChanged(String text) {
+    final parsed = _parseDateOfBirthText(text);
+    if (parsed != null) _formViewModel.selectDateOfBirth(parsed);
+  }
+
+  /// Inline validator for a typed Date of Birth — picking one from the
+  /// calendar can't produce an invalid value (see _pickDateOfBirth's own
+  /// `lastDate`), but typing can, so this is the one place that actually
+  /// has to catch both "not a real date" and "under 18" as the supervisor
+  /// enters it, rather than only at Save time.
+  String? _validateDateOfBirthText(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return 'Select the date of birth';
+    final parsed = _parseDateOfBirthText(text);
+    if (parsed == null) return 'Enter a valid date (DD/MM/YYYY)';
+    if (!_isAtLeast18(parsed)) return 'Worker must be at least 18 years old';
+    return null;
   }
 
   /// Opens the camera, then hands the shot to the view model to copy into
@@ -420,11 +466,25 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
             const SizedBox(height: 18),
             AppFormField(
               label: 'Date of Birth',
-              hint: 'Select Date of Birth',
+              hint: 'DD/MM/YYYY',
               icon: Icons.calendar_today_outlined,
               controller: _dobController,
               enabled: !_detailsLocked,
-              onTap: _detailsLocked ? null : _pickDateOfBirth,
+              keyboardType: TextInputType.datetime,
+              inputFormatters: AppInputFormatters.dateOfBirth,
+              onChanged: _onDateOfBirthTextChanged,
+              validator: _validateDateOfBirthText,
+              // Typing still works (readOnly defaults false) — this just
+              // adds the calendar as a second way to set it, same as before.
+              suffixIcon: _detailsLocked
+                  ? null
+                  : IconButton(
+                      icon: const Icon(
+                        Icons.calendar_month_outlined,
+                        color: AppColors.muted,
+                      ),
+                      onPressed: _pickDateOfBirth,
+                    ),
             ),
             const SizedBox(height: 18),
             AppOptionSelector<Gender>(
@@ -522,6 +582,11 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
               icon: Icons.task_alt_outlined,
               value: _formViewModel.task,
               items: _formViewModel.tasks,
+              // An Approved worker's task is reassigned through the Assign
+              // Task screen instead — see EnrollmentFormViewModel.saveEdits,
+              // which only persists a task/note change here for Pending or
+              // Rejected.
+              enabled: !_detailsLocked,
               labelBuilder: (task) => task.name,
               trailingBuilder: _taskTypeChipOrNull,
               onChanged: _onTaskSelected,
@@ -561,6 +626,7 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
                 hint: 'Add an optional note for this task',
                 icon: Icons.notes_outlined,
                 controller: _taskNoteController,
+                enabled: !_detailsLocked,
                 minLines: 2,
                 maxLines: 3,
                 maxLength: _noteMaxLength,

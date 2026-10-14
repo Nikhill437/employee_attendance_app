@@ -37,14 +37,36 @@ class WorkerSyncApi {
   /// sends only `worker_id` plus the fields the supervisor actually changed
   /// (see WorkerEditQueue), never the whole profile. Request shape not
   /// confirmed against the real backend yet; same endpoint as [syncWorker].
+  ///
+  /// `national_id_image` in [changes] is special: when the supervisor picks
+  /// a replacement photo (see EnrollmentFormViewModel.saveEdits), the queue
+  /// holds the new LOCAL file's path, not plain text — sent the same way
+  /// [_toFormData] attaches one, as a `national_id_image` multipart file,
+  /// so the backend actually receives and stores the new photo instead of
+  /// silently keeping the old one. Every other key in [changes] is a plain
+  /// text field, same as before.
   Future<void> updateWorker({
     required int realWorkerId,
     required Map<String, String> changes,
   }) async {
+    final textChanges = Map<String, String>.from(changes)
+      ..remove('national_id_image');
     final formData = FormData.fromMap({
       'worker_id': realWorkerId.toString(),
-      ...changes,
+      ...textChanges,
     });
+    final imagePath = changes['national_id_image'];
+    if (imagePath != null && imagePath.isNotEmpty) {
+      formData.files.add(
+        MapEntry(
+          'national_id_image',
+          await MultipartFile.fromFile(
+            imagePath,
+            filename: imagePath.split('/').last,
+          ),
+        ),
+      );
+    }
     log('Updating worker $realWorkerId: ${changes.keys.join(', ')}');
     await _client.post(ApiRoutes.syncWorker, data: formData);
   }

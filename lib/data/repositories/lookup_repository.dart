@@ -101,13 +101,36 @@ class LookupRepository {
     return tasks.length;
   }
 
+  /// The dashboard's "Check For New Data" action for holidays. With no
+  /// stored Holiday server time (never synced, or just cleared by
+  /// [clearHolidays]) this pulls the full list (see
+  /// AttendanceLookupApi.fetchHolidays) — the initial-fetch behavior. Every
+  /// later call sends the stored time to `POST
+  /// attendance/holiday_server_time` (see
+  /// AttendanceLookupApi.fetchServertimeHoliday) and upserts whichever
+  /// holidays the server reports changed into the existing cache, same as
+  /// [refreshDepartmentFromServerTime]. The new time is saved only after the
+  /// local write succeeds, so a failed fetch leaves it unchanged. Returns
+  /// how many came back.
+  Future<int> refreshHolidaysFromServerTime() async {
+    final syncStartedAt = DateTime.now().toUtc().toIso8601String();
+    final storedTime = await lastHolidayServerTime.read();
+    final holidays = storedTime == null
+        ? await _api.fetchHolidays()
+        : await _api.fetchServertimeHoliday(date: storedTime);
+    await _dbHelper.replaceHolidays(holidays);
+    await lastHolidayServerTime.save(syncStartedAt);
+    return holidays.length;
+  }
+
   /// The locally cached departments, for the enrollment form's dropdown.
   Future<List<Department>> getDepartments() => _dbHelper.getDepartments();
 
-  /// How many departments/tasks are cached locally — the dashboard
+  /// How many departments/tasks/holidays are cached locally — the dashboard
   /// overview cards' total stat.
   Future<int> getDepartmentCount() => _dbHelper.getDepartmentCount();
   Future<int> getTaskCatalogCount() => _dbHelper.getTaskCatalogCount();
+  Future<int> getHolidayCount() => _dbHelper.getHolidayCount();
 
   /// The last successful department/task sync's start time, in the
   /// supervisor's own timezone (see AppTime) — null if none has run yet.
@@ -119,6 +142,12 @@ class LookupRepository {
 
   Future<DateTime?> tasksLastSyncedAt() async {
     final stored = await lastTaskServerTime.read();
+    final parsed = stored == null ? null : DateTime.tryParse(stored);
+    return parsed == null ? null : AppTime.toUserTime(parsed);
+  }
+
+  Future<DateTime?> holidaysLastSyncedAt() async {
+    final stored = await lastHolidayServerTime.read();
     final parsed = stored == null ? null : DateTime.tryParse(stored);
     return parsed == null ? null : AppTime.toUserTime(parsed);
   }
@@ -138,5 +167,12 @@ class LookupRepository {
   Future<void> clearTaskCatalog() async {
     await _dbHelper.clearTaskCatalog();
     await lastTaskServerTime.clear();
+  }
+
+  /// The Holiday card's Clear action — same as [clearDepartments], for the
+  /// local `holiday` cache and its last-synced checkpoint.
+  Future<void> clearHolidays() async {
+    await _dbHelper.clearHolidays();
+    await lastHolidayServerTime.clear();
   }
 }

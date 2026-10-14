@@ -63,6 +63,11 @@ class EmployeeRepository {
   Future<String?> getWorkerStatus(int offlineWorkerId) =>
       _dbHelper.getWorkerStatus(offlineWorkerId);
 
+  /// The worker's current standing note from the local `workers` table —
+  /// see DatabaseHelper.getWorkerNote.
+  Future<String?> getWorkerNote(int offlineWorkerId) =>
+      _dbHelper.getWorkerNote(offlineWorkerId);
+
   /// Writes the enrollment fields an Edit Worker save changed — see
   /// DatabaseHelper.updateWorkerEnrollment.
   Future<void> updateEnrollment({

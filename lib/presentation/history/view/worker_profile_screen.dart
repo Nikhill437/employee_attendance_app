@@ -518,29 +518,28 @@ class _DayCard extends StatelessWidget {
     AppTime.nowInUserZone(),
   );
 
-  /// Which task row represents this day: the one that's both synced *and*
-  /// still active, if there is one — the definitive, current record. If a
-  /// reassignment has since deactivated every synced row (none of them is
-  /// active anymore), the most recently created synced row is shown instead
-  /// of all of them — otherwise a day that synced twice around a same-day
-  /// reassignment (old task synced, then reassigned, then the new task also
-  /// synced) would show both tasks instead of just the current one. If
-  /// nothing's synced yet, whichever row is currently active (the last task
-  /// assigned that day, since reassigning deactivates every other row for
-  /// the date; see DatabaseHelper.assignWorkerTask/_applyTodaysTaskAssignment).
-  /// Applies to any day, not just today: a past day can end up with the same
-  /// several-reassignments-in-one-day shape if the supervisor changed their
-  /// mind more than once before it synced or the day ended.
+  /// Which task row represents this day: whichever row is currently
+  /// `status == 'active'` — by DatabaseHelper.assignWorkerTask/
+  /// _applyTodaysTaskAssignment's own invariant, at most one row is ever
+  /// active per worker per day, and reassigning deactivates every other
+  /// row for the date, so the active row is always the last task assigned
+  /// that day, synced or not. Syncing never changes which row is active or
+  /// inserts a second row for the same assignment (see
+  /// DatabaseHelper.markWorkerTaskSynced) — it just sets that same row's
+  /// own `worker_task_id` in place — so once the active row syncs, this
+  /// keeps showing that exact record rather than switching to some other
+  /// synced-but-stale row. Only when a day has no active row at all (older
+  /// data with no active flag set) does this fall back to the most
+  /// recently created synced row, or — if nothing's synced either —
+  /// every row for the day.
   List<WorkerTask> get _visibleTasks {
+    final active = day.tasks.where((task) => task.status == 'active').toList();
+    if (active.isNotEmpty) return active;
     final synced = day.tasks.where((task) => task.realWorkerTaskId != null).toList();
     if (synced.isNotEmpty) {
-      final activeSynced = synced.where((task) => task.status == 'active');
-      if (activeSynced.isNotEmpty) return activeSynced.toList();
       synced.sort((a, b) => a.workerTaskId.compareTo(b.workerTaskId));
       return [synced.last];
     }
-    final active = day.tasks.where((task) => task.status == 'active');
-    if (active.isNotEmpty) return active.toList();
     return day.tasks;
   }
 
@@ -927,6 +926,7 @@ class _DayTaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final note = task.supervisorNote?.trim();
+    final taskNote = task.taskNote?.trim();
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -973,8 +973,10 @@ class _DayTaskCard extends StatelessWidget {
           //   value: _taskStatusLabel,
           //   valueColor: _taskStatusColor,
           // ),
+          if (taskNote != null && taskNote.isNotEmpty)
+            _TaskDetailLine(label: 'Task Note', value: taskNote),
           if (note != null && note.isNotEmpty)
-            _TaskDetailLine(label: 'Note', value: note),
+            _TaskDetailLine(label: 'Supervisor Note', value: note),
         ],
       ),
     );

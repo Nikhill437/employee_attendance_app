@@ -30,7 +30,19 @@ class RemoteWorkerTaskRecord {
   /// under (see DatabaseHelper.upsertRemoteWorkerTasks). UTC, same as every
   /// other backend timestamp.
   final String? assignedAt;
-  final String? note;
+
+  /// The backend's own assignment-time note (its `task_note` key) — maps to
+  /// local `worker_tasks.task_note`, the same column the local
+  /// assign-task/check-in flow writes (see
+  /// DatabaseHelper._applyTodaysTaskAssignment). Kept separate from
+  /// [supervisorNote] so importing/re-syncing an assignment never
+  /// overwrites a supervisor's own checkout-review note with it.
+  final String? taskNote;
+
+  /// The backend's own checkout-review note (its `supervisor_note` key) —
+  /// maps to local `worker_tasks.supervisor_note`, the same column
+  /// DatabaseHelper.saveSupervisorTaskReview writes locally.
+  final String? supervisorNote;
   final String? workPhoto;
   final int? overtime;
   final int? employeeTarget;
@@ -45,7 +57,8 @@ class RemoteWorkerTaskRecord {
     this.status = 'active',
     this.assignmentType = 'default',
     this.assignedAt,
-    this.note,
+    this.taskNote,
+    this.supervisorNote,
     this.workPhoto,
     this.overtime,
     this.employeeTarget,
@@ -62,7 +75,8 @@ class RemoteWorkerTaskRecord {
       status: (json['status'] as String?) ?? 'active',
       assignmentType: (json['assignment_type'] as String?) ?? 'default',
       assignedAt: json['created_at'] as String?,
-      note: json['note'] as String?,
+      taskNote: json['task_note'] as String?,
+      supervisorNote: json['supervisor_note'] as String?,
       workPhoto: json['work_photo'] as String?,
       overtime: _asIntOrNull(json['overtime']),
       employeeTarget: _asIntOrNull(json['employee_target']),

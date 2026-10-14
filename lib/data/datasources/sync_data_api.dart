@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 
@@ -60,6 +61,17 @@ class SyncDataApi {
 
       final photoPath = task.workPhoto;
       if (photoPath != null && photoPath.isNotEmpty) {
+        // The photo is required once one's been captured for a task — never
+        // silently sync without it. A missing local file (see
+        // AssignTaskViewModel's photo-replace cleanup) must stop this sync
+        // with a message the supervisor can act on, not a raw file error
+        // that falls through to ApiException.messageFor's generic fallback.
+        if (!await File(photoPath).exists()) {
+          throw ApiException(
+            'A task photo is missing on this device. Recapture it and save '
+            'before syncing.',
+          );
+        }
         final photoIndex = photoFiles.length;
         payload['photo_index'] = photoIndex;
         photoFiles.add(

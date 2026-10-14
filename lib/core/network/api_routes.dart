@@ -26,4 +26,6 @@ class ApiRoutes {
   static const String assignTask = '/attendance/assigntask';
   static const String checkIn = '/attendance/check-in';
   static const String submitAttendance = '/attendance/submit-attendance';
+  static const String holidayData = '/attendance/holiday_data';
+  static const String serverTimeHoliday = '/attendance/holiday_server_time';
 }

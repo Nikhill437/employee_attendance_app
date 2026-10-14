@@ -47,3 +47,10 @@ const ServerSyncTimeStore lastDepartmentAttendanceCallTime =
 const ServerSyncTimeStore lastWorkerTaskServerTime = ServerSyncTimeStore(
   'last_worker_task_server_time',
 );
+
+/// The Holiday download's last fetch time. There's no incremental holiday
+/// endpoint (unlike departments/tasks), so this is only ever used for the
+/// dashboard's "Last synced" display, never sent back to the server.
+const ServerSyncTimeStore lastHolidayServerTime = ServerSyncTimeStore(
+  'last_holiday_server_time',
+);

@@ -88,6 +88,11 @@ class Employee {
   /// [taskId] — null if no task is assigned yet.
   final TaskType? taskType;
 
+  /// The note written alongside [taskId]'s assignment (`workers.note`) —
+  /// null if none was given. Shown (and kept editable) on the enrollment
+  /// form's Task Note field when editing this worker.
+  final String? note;
+
   Employee({
     this.id,
     required this.name,
@@ -97,7 +102,7 @@ class Employee {
     required this.faceVerified,
     required this.faceEmbeddings,
     this.dateOfBirth,
-    this.gender = Gender.other,
+    this.gender = Gender.male,
     this.address,
     this.department,
     this.departmentId,
@@ -111,6 +116,7 @@ class Employee {
     this.modifiedDate,
     this.taskId,
     this.taskType,
+    this.note,
   });
 
   Employee copyWith({
@@ -215,7 +221,7 @@ class Employee {
       dateOfBirth: map['birth_date'] as String?,
       // Records enrolled before these columns existed have null here —
       // fall back to a neutral default rather than throwing.
-      gender: _enumOrDefault(Gender.values, map['gender'], Gender.other),
+      gender: _enumOrDefault(Gender.values, map['gender'], Gender.male),
       address: map['address'] as String?,
       department: map['department_name'] as String?,
       departmentId: map['department_id'] as int?,
@@ -229,6 +235,7 @@ class Employee {
       modifiedDate: map['modified_date'] as String?,
       taskId: map['task_id'] as int?,
       taskType: _enumOrNull(TaskType.values, map['task_type']),
+      note: map['note'] as String?,
     );
   }
 

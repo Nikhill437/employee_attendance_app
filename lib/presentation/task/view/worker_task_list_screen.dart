@@ -106,7 +106,7 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
                     color: AppColors.deepGreen,
                   ),
                   title: Text(task.taskName),
-                  subtitle: _taskSubtitle(task),
+                  subtitle: _taskSubtitle(task, _viewModel.workerNote),
                 ),
                 if (task != _viewModel.tasks.last)
                   const Divider(height: 1, color: AppColors.cardBorder),
@@ -119,10 +119,13 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
   }
 }
 
-/// The target/rate line, then the saved note if there is one.
-Widget? _taskSubtitle(WorkerTask task) {
+/// The target/rate line, then the worker's current standing note, if any
+/// — read from `workers.note` (see WorkerTaskListViewModel.workerNote), not
+/// this task row's own `task_note` snapshot, so it always reflects the
+/// latest note even if this worker hasn't checked in since it last changed.
+Widget? _taskSubtitle(WorkerTask task, String? workerNote) {
   final targetRate = _targetRateText(task);
-  final note = task.taskNote?.trim();
+  final note = workerNote?.trim();
   final hasNote = note != null && note.isNotEmpty;
   if (targetRate == null && !hasNote) return null;
   return Column(

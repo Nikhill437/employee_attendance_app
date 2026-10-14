@@ -46,7 +46,7 @@ class CreateEmployeeViewModel extends BaseViewModel {
     required String number,
     required String employeeId,
     String? dateOfBirth,
-    Gender gender = Gender.other,
+    Gender gender = Gender.male,
     String? address,
     String? department,
     int? departmentId,

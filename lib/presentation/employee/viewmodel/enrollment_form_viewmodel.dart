@@ -266,8 +266,9 @@ class EnrollmentFormViewModel extends BaseViewModel {
   /// worker's existing `workers` row (never a new one) and queues the
   /// matching backend fields. updateWorkerEnrollment then marks the worker
   /// NOT SYNCED. The status is not touched, so a Pending worker stays Pending.
-  /// The ID photo is saved locally only: the backend update sends text
-  /// fields, not files.
+  /// A newly captured ID photo is queued too (see [WorkerSyncApi.updateWorker]
+  /// for how it's actually uploaded) — keeping the existing attachment never
+  /// queues anything for it, so the server-side photo is left alone.
   ///
   /// Returns an error message, or null on success or when nothing changed.
   Future<String?> saveEdits(
@@ -326,9 +327,27 @@ class EnrollmentFormViewModel extends BaseViewModel {
         dobChanged ||
         genderChanged ||
         imageChanged;
-    if (!anyChange) return null;
-    // A Rejected worker that's edited goes back to Pending, so it can be
-    // reviewed and synced again. The row is updated, not duplicated.
+
+    // The task/note can only be reassigned here for a Pending or Rejected
+    // worker — an Approved worker's task is changed through the dedicated
+    // Assign Task screen instead (see AssignTaskViewModel), which also
+    // knows to respect whether they've checked in/out today; this form has
+    // no such guard, so an Approved worker's task stays locked here, same
+    // as every other field (see enrollment_form_screen.dart's
+    // _detailsLocked).
+    final canEditTask = original.status != 'approved';
+    final task = _task;
+    final trimmedTaskNote = _taskNote.trim();
+    final taskOrNoteChanged =
+        canEditTask &&
+        task != null &&
+        (task.id != original.taskId ||
+            trimmedTaskNote != (original.note ?? ''));
+
+    if (!anyChange && !taskOrNoteChanged) return null;
+    // A Rejected worker that's edited — on any field, including just the
+    // task — goes back to Pending, so it can be reviewed and synced again.
+    // The row is updated, not duplicated.
     final resubmitting = original.status == 'rejected';
     // Only modified_date moves on an edit — created_date is never rewritten.
     final editedAt = AppTime.nowInUserZone().toIso8601String();
@@ -353,18 +372,33 @@ class EnrollmentFormViewModel extends BaseViewModel {
       if (addressChanged) 'address': trimmedAddress,
       if (dobChanged && newDob != null) 'birth_date': newDob,
       if (genderChanged) 'gender': newGender,
+      // Only ever reached when the supervisor captured a brand new local
+      // photo (see newImage above) — a save that leaves the attachment
+      // untouched has imageChanged false, so the existing server photo is
+      // never overwritten here. WorkerSyncApi.updateWorker uploads this as
+      // a multipart file rather than sending it as plain text.
+      if (imageChanged && newImage != null) 'national_id_image': newImage,
       if (departmentChanged) 'department_id': department.id.toString(),
     };
 
     _isSavingDepartment = true;
     safeNotify();
     try {
-      await _employeeRepository.updateEnrollment(
-        workerId: workerId,
-        columns: localColumns,
-        departmentChanged: departmentChanged,
-      );
-      await _editQueue.record(workerId, remoteChanges);
+      if (anyChange || resubmitting) {
+        await _employeeRepository.updateEnrollment(
+          workerId: workerId,
+          columns: localColumns,
+          departmentChanged: departmentChanged,
+        );
+        await _editQueue.record(workerId, remoteChanges);
+      }
+      if (taskOrNoteChanged) {
+        await _taskRepository.assignTask(
+          workerId: workerId,
+          taskId: task.id,
+          note: trimmedTaskNote.isEmpty ? null : trimmedTaskNote,
+        );
+      }
       return null;
     } catch (e) {
       return e.toString();

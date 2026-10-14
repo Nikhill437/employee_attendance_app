@@ -879,12 +879,7 @@ class _WorkerCard extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          // remoteEmployeeId (the backend's employee_id, distinct from
-          // National ID and from the local workerId) is only populated
-          // once this worker's been imported/synced from the server —
-          // shown as an em dash rather than left blank until then. Falls
-          // back to the placeholder role for records enrolled before the
-          // department field existed.
+          
           '${worker.remoteEmployeeId?.toString() ?? '—'} • ${worker.department?.isNotEmpty == true ? worker.department : worker.role}',
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
@@ -893,8 +888,13 @@ class _WorkerCard extends StatelessWidget {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 6),
-        if (worker.taskType != null) TaskTypeChip(taskType: worker.taskType!),
+        const SizedBox(height: 16),
+        // if (worker.taskType != null) TaskTypeChip(taskType: worker.taskType!),
+        Text('Employee Status:',
+            style: const TextStyle(
+              fontSize: 13.5,
+              color: AppColors.slate,
+            )),
       ],
     );
   }

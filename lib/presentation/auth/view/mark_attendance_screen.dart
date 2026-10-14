@@ -194,6 +194,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
         );
         return true;
       case WorkerScanOutcome.alreadyCheckedOut:
+      case WorkerScanOutcome.holiday:
       case null:
         return true;
     }
@@ -281,6 +282,9 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
       case WorkerScanOutcome.checkedIn:
         return 'Check In completed successfully';
       case WorkerScanOutcome.alreadyCheckedOut:
+        return 'Checkout has been already done for day';
+      case WorkerScanOutcome.holiday:
+        return 'Check-in is not allowed — today is a holiday';
       case null:
         return 'Attendance Marked Successfully';
     }

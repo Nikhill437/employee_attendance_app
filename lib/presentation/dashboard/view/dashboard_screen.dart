@@ -188,19 +188,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// next Check For New Data tap pulls both full lists again. Also drops
   /// any locally enrolled employee, or task reassignment/review, not yet
   /// pushed to the server — the view's confirmation dialog warns about
-  /// this before calling here.
+  /// this before calling here. Employee Attendance is cleared too:
+  /// `worker_attendance` rows key off the same local offline_worker_id as
+  /// `workers`, so clearing employees without it would leave attendance
+  /// rows pointing at ids a later re-fetch can reuse for a different
+  /// worker entirely.
   Future<void> _clearEmployeeListAndTasksData() => _confirmAndClear(
     title: 'Clear employee & task data?',
     message:
-        'This removes every employee and employee task assignment stored '
-        'on this device, including any not yet synced to the server. The '
-        'next Check For New Data tap will re-download both full lists.',
+        'This removes every employee, employee task assignment, and '
+        'attendance record stored on this device, including any not yet '
+        'synced to the server. The next Check For New Data tap will '
+        're-download all three full lists.',
     clear: () async {
       await _viewModel.clearEmployeeData();
       await _viewModel.clearWorkerTasksData();
+      await _viewModel.clearAttendanceData();
     },
-    successMessage: 'Employee & task data cleared',
-    failurePrefix: 'Could not clear employee & task data',
+    successMessage: 'Employee, task & attendance data cleared',
+    failurePrefix: 'Could not clear employee, task & attendance data',
+  );
+
+  /// The standalone Holiday card's Clear action: wipes the local holiday
+  /// cache. Holidays are pure server-reflected reference data, so nothing
+  /// local is ever lost here.
+  Future<void> _clearHolidaysData() => _confirmAndClear(
+    title: 'Clear holiday data?',
+    message:
+        'This removes every holiday stored on this device. The next Check '
+        'For New Data tap will re-download the full list.',
+    clear: _viewModel.clearHolidaysData,
+    successMessage: 'Holiday data cleared',
+    failurePrefix: 'Could not clear holiday data',
   );
 
   /// The standalone Employee Attendance card's Clear action: wipes every
@@ -297,6 +316,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _fetchDepartments();
     if (!mounted) return;
     await _fetchTasks();
+  }
+
+  /// No server-reported "changed count" exists for holidays either, and the
+  /// fetch itself is a single unpaginated call, so the sheet just shows its
+  /// indeterminate spinner while it runs.
+  Future<void> _fetchHolidays() async {
+    await showSyncBottomSheet(
+      context,
+      recordLabel: 'holiday',
+      download: (onProgress) => _viewModel.fetchHolidays(),
+    );
   }
 
   /// No server-reported "changed count" exists for attendance, so the
@@ -417,6 +447,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       _viewModel.updatedCounts.taskCount,
                   departmentsTotal: _viewModel.summary.departmentsTotal,
                   tasksTotal: _viewModel.summary.tasksCatalogTotal,
+                ),
+                const SizedBox(height: 14),
+                _HolidayCard(
+                  isFetching: _viewModel.isFetchingHolidays,
+                  isClearing: _viewModel.isClearingHolidays,
+                  onPressed: _fetchHolidays,
+                  onClear: _clearHolidaysData,
+                  total: _viewModel.summary.holidaysTotal,
+                  lastFetchedAt: _viewModel.summary.holidaysLastFetchedAt,
                 ),
                 const SizedBox(height: 14),
                 // _EmployeesPreviewCard(
@@ -968,6 +1007,65 @@ class _DepartmentsAndTasksCard extends StatelessWidget {
             isFetching: isFetching,
             isClearing: isClearing,
             onFetch: onFetch,
+            onClear: onClear,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The dashboard's standalone "Holiday" overview: how many admin-defined
+/// holidays are cached locally, when they were last fetched, and the
+/// actions to clear or refresh them. Fetches the full list
+/// (`GET attendance/holiday_data`) via [DashboardViewModel.fetchHolidays] —
+/// no server-reported "changed count" exists, so there's no badge here,
+/// same as [_FetchAttendanceCard].
+class _HolidayCard extends StatelessWidget {
+  final bool isFetching;
+  final bool isClearing;
+  final VoidCallback onPressed;
+  final VoidCallback onClear;
+  final int total;
+  final DateTime? lastFetchedAt;
+
+  const _HolidayCard({
+    required this.isFetching,
+    required this.isClearing,
+    required this.onPressed,
+    required this.onClear,
+    required this.total,
+    required this.lastFetchedAt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionLabel('HOLIDAYS'),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _StatBox(
+                  icon: Icons.beach_access_outlined,
+                  label: 'TOTAL HOLIDAYS',
+                  value: total,
+                  caption: 'ON THIS DEVICE',
+                  color: AppColors.success,
+                  background: const Color(0xFFE9F7EF),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _OverviewCardActions(
+            lastFetchedAt: lastFetchedAt,
+            isFetching: isFetching,
+            isClearing: isClearing,
+            onFetch: onPressed,
             onClear: onClear,
           ),
         ],

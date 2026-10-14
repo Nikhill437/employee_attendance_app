@@ -10,6 +10,10 @@ enum WorkerScanOutcome {
   /// A third-or-later scan on a day already checked in and out; the row is
   /// left as-is.
   alreadyCheckedOut,
+
+  /// A first scan of the day landed on a locally cached holiday — no row is
+  /// created; the worker isn't allowed to check in today.
+  holiday,
 }
 
 /// One day's check-in/check-out record for a worker — a `worker_attendance`

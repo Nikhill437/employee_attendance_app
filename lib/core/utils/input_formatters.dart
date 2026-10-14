@@ -16,4 +16,27 @@ class AppInputFormatters {
           newValue.copyWith(text: newValue.text.toUpperCase()),
     ),
   ];
+
+  /// Date of birth formatting: digits only as typed (any `/` the user types
+  /// is stripped first), auto-inserting `/` after the day and month digit
+  /// pairs so the result always reads DD/MM/YYYY — the same format
+  /// DateTimeFormatter.dateOfBirth produces when a date is picked instead
+  /// of typed, so the enrollment form's own parser can read either back.
+  static List<TextInputFormatter> get dateOfBirth => [
+    FilteringTextInputFormatter.digitsOnly,
+    LengthLimitingTextInputFormatter(8),
+    TextInputFormatter.withFunction((oldValue, newValue) {
+      final digits = newValue.text;
+      final buffer = StringBuffer();
+      for (var i = 0; i < digits.length; i++) {
+        if (i == 2 || i == 4) buffer.write('/');
+        buffer.write(digits[i]);
+      }
+      final formatted = buffer.toString();
+      return TextEditingValue(
+        text: formatted,
+        selection: TextSelection.collapsed(offset: formatted.length),
+      );
+    }),
+  ];
 }

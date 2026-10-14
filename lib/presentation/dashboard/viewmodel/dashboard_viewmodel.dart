@@ -67,6 +67,8 @@ class DashboardViewModel extends BaseViewModel {
   bool _isClearingDepartments = false;
   bool _isFetchingTasks = false;
   bool _isClearingTasks = false;
+  bool _isFetchingHolidays = false;
+  bool _isClearingHolidays = false;
   bool _isFetchingWorkerTasks = false;
   bool _isClearingWorkerTasks = false;
   bool _isFetchingAttendance = false;
@@ -82,6 +84,8 @@ class DashboardViewModel extends BaseViewModel {
   bool get isClearingDepartments => _isClearingDepartments;
   bool get isFetchingTasks => _isFetchingTasks;
   bool get isClearingTasks => _isClearingTasks;
+  bool get isFetchingHolidays => _isFetchingHolidays;
+  bool get isClearingHolidays => _isClearingHolidays;
   bool get isFetchingWorkerTasks => _isFetchingWorkerTasks;
   bool get isClearingWorkerTasks => _isClearingWorkerTasks;
   bool get isFetchingAttendance => _isFetchingAttendance;
@@ -156,6 +160,8 @@ class DashboardViewModel extends BaseViewModel {
       departmentsLastFetchedAt: await _lookup.departmentsLastSyncedAt(),
       tasksCatalogTotal: await _lookup.getTaskCatalogCount(),
       tasksCatalogLastFetchedAt: await _lookup.tasksLastSyncedAt(),
+      holidaysTotal: await _lookup.getHolidayCount(),
+      holidaysLastFetchedAt: await _lookup.holidaysLastSyncedAt(),
       workerTasksTotal: await _workerTaskImport.getWorkerTaskCount(),
       pendingWorkerTasks: await _workerTaskImport.getPendingWorkerTaskCount(),
       workerTasksLastFetchedAt: await _workerTaskImport.lastSyncedAt(),
@@ -303,6 +309,38 @@ class DashboardViewModel extends BaseViewModel {
       await load();
     } finally {
       _isClearingTasks = false;
+      safeNotify();
+    }
+  }
+
+  /// Refreshes the local `holiday` cache from the backend
+  /// (`GET attendance/holiday_data`) — the dashboard's "Check For New Data"
+  /// button for the Holiday card. Returns how many were fetched; lets any
+  /// failure propagate for the caller to surface.
+  Future<int> fetchHolidays() async {
+    _isFetchingHolidays = true;
+    safeNotify();
+    try {
+      final count = await _lookup.refreshHolidaysFromServerTime();
+      await load();
+      return count;
+    } finally {
+      _isFetchingHolidays = false;
+      safeNotify();
+    }
+  }
+
+  /// The Holiday card's Clear action: wipes the local cache and resets its
+  /// last-synced checkpoint. Holidays are pure server-reflected reference
+  /// data, so nothing local is ever lost here.
+  Future<void> clearHolidaysData() async {
+    _isClearingHolidays = true;
+    safeNotify();
+    try {
+      await _lookup.clearHolidays();
+      await load();
+    } finally {
+      _isClearingHolidays = false;
       safeNotify();
     }
   }

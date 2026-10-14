@@ -13,13 +13,26 @@ class AppFormField extends StatelessWidget {
   final IconData? icon;
   final TextEditingController controller;
   final FormFieldValidator<String>? validator;
+  final ValueChanged<String>? onChanged;
   final TextInputType? keyboardType;
   final int minLines;
   final int maxLines;
 
-  /// When set the field is read-only and taps run this instead of the
-  /// keyboard — used by the date picker.
+  /// Runs on every tap, regardless of [readOnly] — e.g. opening a date
+  /// picker alongside still-typable text (see [readOnly]'s own doc comment).
   final VoidCallback? onTap;
+
+  /// True blocks the keyboard entirely, so [onTap] (typically a picker) is
+  /// the only way to set the field. False (the default) leaves it typable
+  /// even when [onTap] is also set — e.g. Date of Birth, where the
+  /// supervisor can either type a date directly or tap the calendar
+  /// [suffixIcon] to pick one instead.
+  final bool readOnly;
+
+  /// An icon shown at the field's trailing edge, separate from the leading
+  /// [icon] — typically a tappable calendar/picker affordance that doesn't
+  /// block typing the way [readOnly] would.
+  final Widget? suffixIcon;
 
   /// Restricts what can be typed — e.g. letters-only for a name field —
   /// rather than just rejecting it after the fact on submit.
@@ -47,6 +60,9 @@ class AppFormField extends StatelessWidget {
     this.minLines = 1,
     this.maxLines = 1,
     this.onTap,
+    this.readOnly = false,
+    this.suffixIcon,
+    this.onChanged,
     this.inputFormatters,
     this.maxLength,
     this.isRequired = false,
@@ -82,10 +98,11 @@ class AppFormField extends StatelessWidget {
         TextFormField(
           controller: controller,
           validator: validator,
+          onChanged: onChanged,
           keyboardType: keyboardType,
           minLines: minLines,
           maxLines: maxLines,
-          readOnly: onTap != null,
+          readOnly: readOnly,
           enabled: enabled,
           onTap: onTap,
           inputFormatters: inputFormatters,
@@ -105,6 +122,7 @@ class AppFormField extends StatelessWidget {
                     padding: EdgeInsets.only(bottom: maxLines > 1 ? 44 : 0),
                     child: Icon(icon, size: 20, color: AppColors.muted),
                   ),
+            suffixIcon: suffixIcon,
             filled: true,
             fillColor: Colors.white,
             contentPadding: const EdgeInsets.symmetric(

@@ -222,12 +222,17 @@ class WorkerImportRepository {
   /// The Employee List Data card's Clear action: wipes the local worker
   /// roster (and their task assignments/attendance logs) and resets the
   /// "has fetched before" checkpoint, so the next [importWorkers] pulls the
-  /// full roster again instead of only what changed since the old one.
+  /// full roster again instead of only what changed since the old one. Also
+  /// resets [_lastUpdatedCountsServerTime] — left alone, the dashboard's
+  /// "new data available" badge would keep asking the server for changes
+  /// since the old (pre-clear) time and show a small stale delta (e.g. "1")
+  /// instead of reflecting that a full re-fetch is next.
   Future<void> clearLocal() async {
     await _dbHelper.clearAllWorkers();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_hasFetchedWorkersKey);
     await _lastSyncTime.clear();
+    await _lastUpdatedCountsServerTime.clear();
     await clearInterruptedImport();
   }
 }

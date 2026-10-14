@@ -3,8 +3,7 @@ import 'department_model.dart';
 /// A worker's gender, as recorded on the enrollment form.
 enum Gender {
   male('Male'),
-  female('Female'),
-  other('Other');
+  female('Female');
 
   const Gender(this.label);
 
