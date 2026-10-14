@@ -60,13 +60,28 @@ class SyncDataApi {
       };
 
       final photoPath = task.workPhoto;
-      if (photoPath != null && photoPath.isNotEmpty) {
+      // getUnsyncedWorkerTasks resubmits an already-synced day's row too
+      // (so the backend updates it in place instead of duplicating it) —
+      // for one of those, work_photo can already be the SERVER's own
+      // relative storage path (written back by the task-list import, see
+      // DatabaseHelper._upsertResolvedWorkerTask), not a local file at
+      // all. Only a path this app itself wrote (see
+      // AssignTaskViewModel._copyToPermanentStorage) is absolute — a
+      // relative one means the server already has this photo, so there's
+      // nothing to re-upload and nothing locally "missing" either.
+      final isLocalPath = photoPath != null && photoPath.startsWith('/');
+      if (isLocalPath) {
         // The photo is required once one's been captured for a task — never
         // silently sync without it. A missing local file (see
         // AssignTaskViewModel's photo-replace cleanup) must stop this sync
         // with a message the supervisor can act on, not a raw file error
         // that falls through to ApiException.messageFor's generic fallback.
-        if (!await File(photoPath).exists()) {
+        final exists = await File(photoPath).exists();
+        log(
+          'task_id=${task.taskId} work_photo=$photoPath exists=$exists',
+          name: 'SyncDataApi.submit',
+        );
+        if (!exists) {
           throw ApiException(
             'A task photo is missing on this device. Recapture it and save '
             'before syncing.',

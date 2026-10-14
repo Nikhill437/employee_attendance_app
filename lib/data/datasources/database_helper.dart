@@ -1311,11 +1311,16 @@ class DatabaseHelper {
     });
   }
 
-  /// [workerId]'s active task-assignment rows for every day that has a
-  /// local attendance row, oldest first — one row per `task_date` (see the
-  /// `task_date` column doc comment). Rows already on the backend are
-  /// included too, with their stored `worker_task_id`, so a sync updates
-  /// them in place instead of creating duplicates. See
+  /// [workerId]'s active task-assignment rows that haven't synced yet
+  /// (`worker_task_id IS NULL`), for every day that has a local attendance
+  /// row, oldest first — one row per `task_date` (see the `task_date`
+  /// column doc comment). `worker_task_id` is the same "is this synced"
+  /// signal used everywhere else a WorkerTask is checked (see
+  /// WorkerTask.realWorkerTaskId) — once it's set, nothing about that row
+  /// is resubmitted here again, so it never gets sent alongside a *later*
+  /// day's sync with no actual changes to report (and never requires a
+  /// `work_photo` that's since become the server's own relative path,
+  /// rather than a local file at all — see SyncDataApi.submit). See
   /// AttendanceSubmissionRepository.submitAttendance/
   /// submitAllUnsyncedAttendance, which push these alongside attendance
   /// data rather than resubmitting every assignment on every call the way
@@ -1336,6 +1341,7 @@ class DatabaseHelper {
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
       WHERE worker_tasks.worker_id = ? AND worker_tasks.status = 'active'
+        AND worker_tasks.worker_task_id IS NULL
         AND EXISTS (
           SELECT 1 FROM worker_attendance
           WHERE worker_attendance.worker_id = worker_tasks.worker_id
@@ -2052,14 +2058,10 @@ class DatabaseHelper {
 
         final checkIn = record.checkInTime == null
             ? null
-            : AppTime.toUserTime(
-                DateTime.parse(record.checkInTime!),
-              ).toIso8601String();
+            : AppTime.toUserIsoString(DateTime.parse(record.checkInTime!));
         final checkOut = record.checkOutTime == null
             ? null
-            : AppTime.toUserTime(
-                DateTime.parse(record.checkOutTime!),
-              ).toIso8601String();
+            : AppTime.toUserIsoString(DateTime.parse(record.checkOutTime!));
         final row = {
           'attendance_id': record.attendanceId,
           'worker_id': offlineWorkerId,
@@ -2180,9 +2182,7 @@ class DatabaseHelper {
     // midnight UTC on the wrong local calendar day.
     final assignedAt = record.assignedAt == null
         ? now
-        : AppTime.toUserTime(
-            DateTime.parse(record.assignedAt!),
-          ).toIso8601String();
+        : AppTime.toUserIsoString(DateTime.parse(record.assignedAt!));
     final existingId = await _findExistingWorkerTaskRow(
       txn,
       offlineWorkerId: offlineWorkerId,

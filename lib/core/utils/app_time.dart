@@ -125,6 +125,36 @@ class AppTime {
     return utc.toLocal();
   }
 
+  /// [toUserTime] converted straight to an ISO-8601 string, for storing a
+  /// backend timestamp locally as a wall-clock value — the same naive,
+  /// offset-free shape [nowInUserZone]'s own `.toIso8601String()` produces
+  /// (no trailing `Z`/`+02:00`/etc). [toUserTime] itself returns a
+  /// `TZDateTime` when an IANA zone is active, and `TZDateTime.
+  /// toIso8601String()` — unlike a plain [DateTime]'s — appends that zone's
+  /// offset; a value stored that way, read back anywhere else in the app via
+  /// a plain `DateTime.parse(...)` (every other stored wall-clock string is
+  /// read this way, expecting naive fields), gets silently reinterpreted
+  /// through the *device's* own timezone instead of being taken as-is — the
+  /// same wrong value as before, but for a different reason, whenever the
+  /// device's system zone differs from the user's configured one. Stripping
+  /// to a naive [DateTime] first (same as [nowInUserZone]) before
+  /// serializing keeps every stored wall-clock column in one consistent,
+  /// offset-free format regardless of whether it came from a local action
+  /// or a server import.
+  static String toUserIsoString(DateTime dt) {
+    final converted = toUserTime(dt);
+    return DateTime(
+      converted.year,
+      converted.month,
+      converted.day,
+      converted.hour,
+      converted.minute,
+      converted.second,
+      converted.millisecond,
+      converted.microsecond,
+    ).toIso8601String();
+  }
+
   /// The current wall-clock time in the user's IANA timezone, as a naive
   /// [DateTime] whose calendar fields are that zone's local time. Falls back to
   /// the device's local time when no timezone is set. Use this to seed date /

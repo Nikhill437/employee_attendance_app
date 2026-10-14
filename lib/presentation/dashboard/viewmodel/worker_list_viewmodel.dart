@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import '../../../core/base/base_view_model.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/utils/app_time.dart';
@@ -271,7 +273,18 @@ class WorkerListViewModel extends BaseViewModel {
             await _sync.syncWorker(employeeId);
           }
         }
-      } catch (e) {
+      } catch (e, stackTrace) {
+        // Logged with the real exception type/stack trace — the user-facing
+        // message below is deliberately generic for anything that isn't an
+        // ApiException, so this is the only place the actual cause is ever
+        // visible (adb logcat / `flutter logs`), not just "Something went
+        // wrong".
+        log(
+          'Sync failed for $employeeId: $e',
+          name: 'WorkerListViewModel.syncWorker',
+          error: e,
+          stackTrace: stackTrace,
+        );
         error = ApiException.messageFor(e);
       }
     }
