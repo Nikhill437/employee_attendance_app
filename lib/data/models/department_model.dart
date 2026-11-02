@@ -88,6 +88,13 @@ class Task {
   /// task type, or when the backend hasn't set one.
   final String? workingHours;
 
+  /// FK into the local `pricing_groups` table (`tasks.pricing_group_id`) —
+  /// what AssignTaskViewModel.save compares against the worker's current
+  /// task to decide whether reassigning to this task needs HR/Admin
+  /// approval (see TaskChangeRequestRepository). Null if the backend
+  /// hasn't set one.
+  final int? pricingGroupId;
+
   const Task({
     required this.id,
     required this.departmentId,
@@ -96,6 +103,7 @@ class Task {
     this.rate,
     this.taskType,
     this.workingHours,
+    this.pricingGroupId,
   });
 
   factory Task.fromRemote(Map<String, dynamic> json) {
@@ -107,6 +115,7 @@ class Task {
       rate: _asIntOrNull(json['rate']),
       taskType: _taskTypeOrNull(json['task_type']),
       workingHours: json['working_hours'] as String?,
+      pricingGroupId: _asIntOrNull(json['pricing_group_id']),
     );
   }
 
@@ -120,6 +129,7 @@ class Task {
       rate: map['rate'] as int?,
       taskType: _taskTypeOrNull(map['task_type']),
       workingHours: map['working_hours'] as String?,
+      pricingGroupId: map['pricing_group_id'] as int?,
     );
   }
 }
@@ -135,6 +145,11 @@ int _asInt(dynamic value) {
 int? _asIntOrNull(dynamic value) {
   if (value == null) return null;
   if (value is int) return value;
-  if (value is String) return int.tryParse(value);
+  // The confirmed `attendance/dept_task`/`task_data` response sends
+  // `rate`/`overtime` as decimals (e.g. `100.00`) even though they're
+  // whole currency amounts here — jsonDecode parses those as `double`,
+  // which fell through to null below before this case existed.
+  if (value is double) return value.round();
+  if (value is String) return int.tryParse(value) ?? double.tryParse(value)?.round();
   return null;
 }

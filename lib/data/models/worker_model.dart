@@ -95,6 +95,11 @@ class Worker {
   /// AssignTaskScreen), distinct from [department]'s display name.
   final int? departmentId;
 
+  /// The backend's division id for this worker (`workers.division_id`,
+  /// via [Employee.divisionId]) — what the worker list is scoped by
+  /// instead of [departmentId] (see WorkerListViewModel.workers).
+  final int? divisionId;
+
   /// The backend's raw approval status ('approved' / 'pending' /
   /// 'rejected') — what task-action gating actually checks, as opposed to
   /// [verification] which is the derived display label.
@@ -139,10 +144,35 @@ class Worker {
   /// approval state.
   final String? taskStatus;
 
+  /// This worker's own still-pending `task_pricing_change_requests` draft
+  /// (see TaskPricingChangeRequest/WorkerListViewModel.load) — its local
+  /// id (not a worker id; see that table's own doc comment), for
+  /// WorkerListViewModel.syncTaskChangeRequest to resubmit. Null when this
+  /// worker has none, which is also what hides the whole row on the
+  /// worker list card.
+  final int? pendingTaskChangeRequestId;
+
+  /// Whether [pendingTaskChangeRequestId]'s draft has already been
+  /// submitted (`POST attendance/request-task-change` succeeded) — true
+  /// shows a static "Pending Approval" status instead of a tappable Sync
+  /// button, since there's nothing left for the supervisor to do until the
+  /// backend's own admin workflow resolves it.
+  final bool pendingTaskChangeIsSynced;
+
+  /// [pendingTaskChangeRequestId]'s proposed task's name, joined in for
+  /// display — null unless [pendingTaskChangeRequestId] is also set.
+  final String? pendingTaskChangeTaskName;
+
+  /// Whether this worker has at least one enrolled face embedding
+  /// (`workers.face_detection`/[Employee.faceEmbeddings]) — false lets the
+  /// worker card's Edit icon show even once Approved, since there's no face
+  /// on file to re-enroll otherwise.
+  final bool hasFaceEnrollment;
+
   const Worker({
     required this.name,
     required this.employeeId,
-    this.role = 'Worker',
+    this.role = 'Employee',
     this.taskType,
     this.attendance = AttendanceStatus.absent,
     this.department,
@@ -154,6 +184,7 @@ class Worker {
     this.syncedAt,
     this.workerId,
     this.departmentId,
+    this.divisionId,
     this.status = 'pending',
     this.hasCheckedInToday = false,
     this.hasCheckedOutToday = false,
@@ -164,6 +195,10 @@ class Worker {
     this.remoteEmployeeId,
     this.remoteWorkerId,
     this.taskStatus,
+    this.pendingTaskChangeRequestId,
+    this.pendingTaskChangeIsSynced = false,
+    this.pendingTaskChangeTaskName,
+    this.hasFaceEnrollment = true,
   });
 
   bool get isPresent => attendance == AttendanceStatus.present;

@@ -5,7 +5,11 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/base/base_view_model.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/models/department_model.dart';
+import '../../../data/models/pricing_group_model.dart';
 import '../../../data/models/worker_task_model.dart';
+import '../../../data/repositories/pricing_group_repository.dart';
+import '../../../data/repositories/supervisor_session_repository.dart';
+import '../../../data/repositories/task_change_request_repository.dart';
 import '../../../data/repositories/task_repository.dart';
 
 /// Drives the Assign Task screen: the worker's (fixed, not editable here)
@@ -17,12 +21,22 @@ class AssignTaskViewModel extends BaseViewModel {
   final int workerId;
   final int? initialDepartmentId;
   final TaskRepository _taskRepository;
+  final TaskChangeRequestRepository _taskChangeRequests;
+  final SupervisorSessionRepository _session;
+  final PricingGroupRepository _pricingGroups;
 
   AssignTaskViewModel({
     required this.workerId,
     this.initialDepartmentId,
     TaskRepository? taskRepository,
-  }) : _taskRepository = taskRepository ?? TaskRepository();
+    TaskChangeRequestRepository? taskChangeRequests,
+    SupervisorSessionRepository? session,
+    PricingGroupRepository? pricingGroups,
+  }) : _taskRepository = taskRepository ?? TaskRepository(),
+       _taskChangeRequests =
+           taskChangeRequests ?? TaskChangeRequestRepository(),
+       _session = session ?? SupervisorSessionRepository(),
+       _pricingGroups = pricingGroups ?? PricingGroupRepository();
 
   bool _isLoadingTasks = true;
   bool _isSaving = false;
@@ -66,42 +80,69 @@ class AssignTaskViewModel extends BaseViewModel {
   bool get canPickNewTask => _pendingTask == null;
   bool get departmentTasksIsEmpty => _departmentTasks.isEmpty;
 
+  /// Whether assigning [pendingTask] would move the worker into a
+  /// different pricing group than their current assignment — [save] then
+  /// raises a task-change-request draft instead of assigning it outright
+  /// (see TaskChangeRequestRepository). False (the plain assignment flow)
+  /// whenever either side's pricing group isn't known, so incomplete
+  /// pricing data never blocks or redirects an otherwise-normal assignment.
+  bool get pendingTaskNeedsApproval {
+    final proposed = _pendingTask?.pricingGroupId;
+    final current = _assignedTask?.taskPricingGroupId;
+    return proposed != null && current != null && proposed != current;
+  }
+
+  /// True once [save] has actually raised a task-change-request draft
+  /// (rather than assigning the task outright) — the screen reads this
+  /// right after a successful [save] to show "submitted for approval"
+  /// instead of "task assigned".
+  bool _lastSaveWasApprovalRequest = false;
+  bool get lastSaveWasApprovalRequest => _lastSaveWasApprovalRequest;
+
+  /// The current/proposed pricing groups' own catalog rows (name, rate
+  /// range) — looked up locally once [pendingTaskNeedsApproval] is true
+  /// (see [addTask]), for the confirm dialog to name them instead of just
+  /// saying "a different pricing group". Null while the lookup hasn't
+  /// resolved yet (or isn't needed), in which case the dialog falls back
+  /// to that generic wording.
+  PricingGroup? _currentPricingGroup;
+  PricingGroup? _proposedPricingGroup;
+  PricingGroup? get currentPricingGroup => _currentPricingGroup;
+  PricingGroup? get proposedPricingGroup => _proposedPricingGroup;
+
   int? get entryNumericValue => _entryNumericValue;
 
-  /// The photo to show on the Worker Submission card — whatever was just
-  /// captured this session, falling back to the already-persisted
-  /// `work_photo` otherwise.
-  File? get entryPhoto => _entryPhoto ?? _persistedPhoto;
+  /// The photo to show on the Worker Submission card — only whatever was
+  /// just captured this session, deliberately never falling back to
+  /// `work_photo` the way [reviewPhoto] does: this card only ever appears
+  /// once, at that day's one checkout scan (see MarkAttendanceScreen
+  /// ._openFollowUpScreen's WorkerScanOutcome.checkedOut case — a later
+  /// scan the same day is WorkerScanOutcome.alreadyCheckedOut and never
+  /// reopens it), so there's no legitimate "resume where I left off" case
+  /// to prefill for — only ever a brand-new entry.
+  File? get entryPhoto => _entryPhoto;
 
   int? get reviewNumericValue => _reviewNumericValue;
 
-  /// The photo to show on the Supervisor Review card — same fallback as
-  /// [entryPhoto], since both start out showing whatever's already saved
-  /// to `work_photo` (the worker's own, until the supervisor overwrites it).
+  /// The photo to show on the Supervisor Review card — whatever's already
+  /// saved to `work_photo` (the worker's own submission), until the
+  /// supervisor captures their own to override it with. Unlike
+  /// [entryPhoto], this prefill is legitimate: the supervisor is reviewing
+  /// what the worker just submitted, not making a fresh entry.
   File? get reviewPhoto => _reviewPhoto ?? _persistedPhoto;
   String get reviewNote => _reviewNote;
   String get reviewTaskStatus => _reviewTaskStatus;
 
   /// Whether the assigned task's own type (`tasks.task_type`) is Task Based
-  /// or Hour Based — the only types the Supervisor Review's Completion
-  /// count/hours field applies to (Daily/Monthly tasks aren't counted or
-  /// timed per day, so there's nothing for the supervisor to enter there).
+  /// or Hour Based — the only types the Completion count/hours field
+  /// applies to, on both the worker's own Worker Submission card and the
+  /// Supervisor Review card (Daily/Monthly tasks aren't counted or timed
+  /// per day, so there's nothing for either of them to enter there).
   bool get reviewNeedsCompletionCount {
     final type = _assignedTask?.taskType;
     return type == TaskType.taskBased.name || type == TaskType.hourBased.name;
   }
 
-  /// Whether today's Supervisor Review has already synced to the backend
-  /// (`worker_tasks.worker_task_id` set on *today's* row — see
-  /// WorkerTask.realWorkerTaskId) — once true, the review for today is
-  /// done and the screen shows it read-only instead of editable. Flips
-  /// back to false on its own the moment a new day's row is created (see
-  /// DatabaseHelper.getWorkerTasks), since that fresh row always starts
-  /// with no real id yet.
-  /// The review is locked once it's been saved and synced: it has a
-  /// quantity and the worker's record is synced. After a save (or a check-in)
-  /// the worker is NOT SYNCED, so the review stays editable until the next
-  /// sync.
   /// Whether the shown assignment is today's record. An earlier day's
   /// persistent assignment is displayed, but nothing can be saved on it until
   /// the worker checks in and today's record is created.
@@ -114,8 +155,26 @@ class AssignTaskViewModel extends BaseViewModel {
         '${now.day.toString().padLeft(2, '0')}';
   }
 
-  bool get isReviewLocked =>
-      _workerSynced && _assignedTask?.completedTarget != null;
+  /// Whether today's Supervisor Review has already synced to the backend
+  /// (`worker_tasks.worker_task_id` set on *today's* row — see
+  /// WorkerTask.realWorkerTaskId) — once true, the review for today is
+  /// done and the screen shows it read-only instead of editable. Flips
+  /// back to false on its own the moment a new day's row is created (see
+  /// DatabaseHelper.getWorkerTasks), since that fresh row always starts
+  /// with no real id yet.
+  ///
+  /// For Task Based/Hourly tasks, synced alone isn't enough — a synced row
+  /// can still be sitting on its never-filled-in default completed_target,
+  /// so [reviewNeedsCompletionCount]'s own field being filled in is checked
+  /// too. Daily/Monthly tasks have no such field to check (it's hidden —
+  /// see [reviewNeedsCompletionCount]), so for them sync alone is the only
+  /// signal there is: otherwise they'd never lock at all, since
+  /// completed_target stays null forever for that task type.
+  bool get isReviewLocked {
+    if (!_workerSynced) return false;
+    if (reviewNeedsCompletionCount) return _assignedTask?.completedTarget != null;
+    return true;
+  }
 
   File? get _persistedPhoto {
     final path = _assignedTask?.workPhoto;
@@ -124,8 +183,11 @@ class AssignTaskViewModel extends BaseViewModel {
 
   /// Loads the worker's (fixed) department's task pool for the dropdown,
   /// then the worker's one active assignment (if any) — re-seeding the
-  /// entry/review fields from it, so a save doesn't lose what was already
-  /// there for the other role.
+  /// review fields from it, so a save doesn't lose what was already there
+  /// for the supervisor's side. The worker's own entry fields are never
+  /// re-seeded from it (see [entryPhoto]'s doc comment) — every call starts
+  /// them blank, since this screen's checkout mode only ever represents a
+  /// brand-new entry, never a resumed one.
   Future<void> loadTasks() async {
     _isLoadingTasks = true;
     safeNotify();
@@ -138,7 +200,7 @@ class AssignTaskViewModel extends BaseViewModel {
     _assignedTask = await _taskRepository.getCurrentAssignment(workerId);
     _workerSynced = await _taskRepository.isWorkerSynced(workerId);
 
-    _entryNumericValue = _assignedTask?.employeeTarget;
+    _entryNumericValue = null;
     _entryPhoto = null;
     // The review is prefilled from today's record, so values saved before
     // sync are still there. A persistent assignment from an earlier day, or a
@@ -154,6 +216,8 @@ class AssignTaskViewModel extends BaseViewModel {
       _reviewNote = '';
     }
     _reviewPhoto = null;
+    _currentPricingGroup = null;
+    _proposedPricingGroup = null;
 
     _isLoadingTasks = false;
     safeNotify();
@@ -161,9 +225,25 @@ class AssignTaskViewModel extends BaseViewModel {
 
   /// Picks [task] to assign next — called when the task dropdown picks a
   /// value. A no-op while a pick is already pending (see [canPickNewTask]).
+  /// Kicks off [_currentPricingGroup]/[_proposedPricingGroup]'s lookup
+  /// right away when this pick needs approval, so they're ready by the
+  /// time the confirm dialog opens.
   void addTask(Task task) {
     if (_pendingTask != null) return;
     _pendingTask = task;
+    safeNotify();
+    if (pendingTaskNeedsApproval) _loadPricingGroupNames();
+  }
+
+  Future<void> _loadPricingGroupNames() async {
+    final currentId = _assignedTask?.taskPricingGroupId;
+    final proposedId = _pendingTask?.pricingGroupId;
+    _currentPricingGroup = currentId == null
+        ? null
+        : await _pricingGroups.getById(currentId);
+    _proposedPricingGroup = proposedId == null
+        ? null
+        : await _pricingGroups.getById(proposedId);
     safeNotify();
   }
 
@@ -171,6 +251,8 @@ class AssignTaskViewModel extends BaseViewModel {
   void removePendingTask() {
     _pendingTask = null;
     _pendingNote = '';
+    _currentPricingGroup = null;
+    _proposedPricingGroup = null;
     safeNotify();
   }
 
@@ -186,22 +268,53 @@ class AssignTaskViewModel extends BaseViewModel {
 
   /// Assigns [pendingTask] as the worker's one active task — whatever was
   /// previously active for them is flipped inactive (see
-  /// DatabaseHelper.assignWorkerTask). Returns an error message on failed
-  /// validation, or null on success.
+  /// DatabaseHelper.assignWorkerTask) — unless [pendingTaskNeedsApproval],
+  /// in which case this instead raises a local, not-yet-submitted
+  /// task-change-request draft (see
+  /// TaskChangeRequestRepository.createLocalRequest) and leaves the
+  /// worker's actual assignment untouched until that request is approved
+  /// through the existing (separate) approval workflow. The draft is
+  /// deliberately **not** submitted here — the worker list's Not Synced/
+  /// Sync button is the only thing that calls `TaskChangeRequestApi.
+  /// assignTask` (see WorkerListViewModel.syncTaskChangeRequest), so this
+  /// never calls the API itself. The screen has no reason field for this
+  /// path (the confirm dialog is the only prompt), so [TaskPricingChangeRequest.
+  /// reason] is left null; a normal assignment's note stays optional and
+  /// unaffected. Returns an error message on failed validation, or null
+  /// on success — check [lastSaveWasApprovalRequest] afterward to tell
+  /// which path a successful save actually took.
   Future<String?> save() async {
     if (_isSaving) return null;
     final task = _pendingTask;
     if (task == null) return 'Select a task to assign';
 
+    final needsApproval = pendingTaskNeedsApproval;
+    final trimmedNote = _pendingNote.trim();
+
     _isSaving = true;
     safeNotify();
 
-    final trimmedNote = _pendingNote.trim();
-    await _taskRepository.assignTask(
-      workerId: workerId,
-      taskId: task.id,
-      note: trimmedNote.isEmpty ? null : trimmedNote,
-    );
+    if (needsApproval) {
+      final requestedBy = await _session.getSupervisorId();
+      await _taskChangeRequests.createLocalRequest(
+        workerId: workerId,
+        taskId: task.id,
+        currentPricingGroupId: _assignedTask?.taskPricingGroupId,
+        proposedPricingGroupId: task.pricingGroupId!,
+        oldRate: _assignedTask?.taskRate,
+        newRate: task.rate ?? 0,
+        reason: null,
+        requestedBy: requestedBy ?? 0,
+      );
+      _lastSaveWasApprovalRequest = true;
+    } else {
+      await _taskRepository.assignTask(
+        workerId: workerId,
+        taskId: task.id,
+        note: trimmedNote.isEmpty ? null : trimmedNote,
+      );
+      _lastSaveWasApprovalRequest = false;
+    }
     _pendingTask = null;
     _pendingNote = '';
     await loadTasks();
@@ -227,16 +340,15 @@ class AssignTaskViewModel extends BaseViewModel {
   }
 
   /// The worker's checkout-time Save — writes [entryNumericValue]/
-  /// [entryPhoto] into `worker_tasks.employee_target`/`work_photo`.
-  /// Quantity is required (the photo stays optional); saving updates the
-  /// worker's existing `worker_tasks` row by its own id rather than ever
-  /// inserting a new one, so checking out again for the same task never
-  /// creates a duplicate record.
+  /// [entryPhoto] into `worker_tasks.employee_target`/`work_photo`. Both are
+  /// optional — an empty form still saves. Saving updates the worker's
+  /// existing `worker_tasks` row by its own id rather than ever inserting a
+  /// new one, so checking out again for the same task never creates a
+  /// duplicate record.
   Future<String?> saveWorkerEntry() async {
     final task = _assignedTask;
     if (task == null) return 'No task assigned yet';
     if (!isAssignmentToday) return 'Check in today first';
-    if (_entryNumericValue == null) return 'Quantity is required';
     if (_isSubmittingEntry) return null;
 
     _isSubmittingEntry = true;
@@ -294,9 +406,6 @@ class AssignTaskViewModel extends BaseViewModel {
     if (task == null) return 'No task assigned yet';
     if (!isAssignmentToday) return 'Check in today first';
     if (isReviewLocked) return 'Already synced for today';
-    if (reviewNeedsCompletionCount && _reviewNumericValue == null) {
-      return 'Quantity is required';
-    }
     if (_isSavingReview) return null;
 
     _isSavingReview = true;

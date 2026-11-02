@@ -5,7 +5,8 @@ import '../../../core/theme/app_colors.dart';
 import '../../common/widgets/common_widgets.dart';
 import '../viewmodel/face_scan_viewmodel.dart';
 
-export '../viewmodel/face_scan_viewmodel.dart' show FaceScanMode;
+export '../viewmodel/face_scan_viewmodel.dart'
+    show FaceScanMode, FaceMatchCallback;
 
 /// Continuous live face-scanning screen backed by the front camera.
 ///

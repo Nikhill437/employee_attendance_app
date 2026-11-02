@@ -14,6 +14,7 @@ import '../../../data/repositories/attendance_submission_repository.dart';
 import '../../../data/repositories/employee_repository.dart';
 import '../../../data/repositories/worker_edit_queue.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
+import '../../../data/repositories/task_change_request_repository.dart';
 import '../../../data/repositories/task_repository.dart';
 import '../../../data/repositories/task_sync_repository.dart';
 import '../../../data/repositories/worker_attendance_repository.dart';
@@ -37,6 +38,7 @@ class WorkerListViewModel extends BaseViewModel {
   final WorkerSyncRepository _sync;
   final WorkerImportRepository _import;
   final TaskSyncRepository _taskSync;
+  final TaskChangeRequestRepository _taskChangeRequests;
   final SupervisorSessionRepository _session;
   final WorkerAttendanceRepository _workerAttendance;
   final AttendanceSubmissionRepository _attendanceSubmission;
@@ -49,6 +51,7 @@ class WorkerListViewModel extends BaseViewModel {
     WorkerSyncRepository? sync,
     WorkerImportRepository? import,
     TaskSyncRepository? taskSync,
+    TaskChangeRequestRepository? taskChangeRequests,
     SupervisorSessionRepository? session,
     WorkerAttendanceRepository? workerAttendance,
     AttendanceSubmissionRepository? attendanceSubmission,
@@ -59,6 +62,8 @@ class WorkerListViewModel extends BaseViewModel {
        _sync = sync ?? WorkerSyncRepository(),
        _import = import ?? WorkerImportRepository(),
        _taskSync = taskSync ?? TaskSyncRepository(),
+       _taskChangeRequests =
+           taskChangeRequests ?? TaskChangeRequestRepository(),
        _session = session ?? SupervisorSessionRepository(),
        _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
        _attendanceSubmission =
@@ -71,10 +76,12 @@ class WorkerListViewModel extends BaseViewModel {
   final Set<String> _syncingIds = {};
   final Set<String> _syncingTaskIds = {};
   final Set<String> _syncingAttendanceIds = {};
+  final Set<String> _syncingTaskChangeIds = {};
   List<Worker> _workers = const [];
   String _query = '';
   AttendanceFilter? _attendanceFilter;
   int? _supervisorDepartmentId;
+  int? _supervisorDivisionId;
 
   bool get isLoading => _isLoading;
   bool get isFetchingFromServer => _isFetchingFromServer;
@@ -107,27 +114,31 @@ class WorkerListViewModel extends BaseViewModel {
   bool isSyncingAttendance(String employeeId) =>
       _syncingAttendanceIds.contains(employeeId);
 
+  /// Whether [employeeId]'s task-change request is mid-submit — drives
+  /// that card's Sync button (see [syncTaskChangeRequest]).
+  bool isSyncingTaskChange(String employeeId) =>
+      _syncingTaskChangeIds.contains(employeeId);
+
   /// The list after the current search term and attendance filter, ordered:
   /// pending workers with no backend worker_id, then approved-but-unsynced
   /// workers, then everyone else — each group by worker_id descending.
-  /// Scoped to the supervisor's own department — a fetch stores every
-  /// department's workers locally (see WorkerImportRepository), but only
-  /// the supervisor's own are ever shown here, same as [canManageTasks]'s
-  /// task-action gating. Falls back to showing everyone when the
-  /// supervisor's department couldn't be determined, rather than an empty
-  /// list with no way to tell why.
+  /// Scoped to the supervisor's own division — a fetch stores every
+  /// division's workers locally (see WorkerImportRepository), but only the
+  /// supervisor's own are ever shown here. Falls back to showing everyone
+  /// when the supervisor's division couldn't be determined, rather than an
+  /// empty list with no way to tell why.
   ///
-  /// A worker enrolled under a different department is still shown here
-  /// — not hidden — as long as they haven't been pushed to the server yet
+  /// A worker enrolled under a different division is still shown here —
+  /// not hidden — as long as they haven't been pushed to the server yet
   /// ([Worker.isSynced] false), so the supervisor who enrolled them can
   /// still find and sync them. Once that sync succeeds, they drop out of
-  /// this list the same way any other-department worker would.
+  /// this list the same way any other-division worker would.
   List<Worker> get workers {
     final term = _query.toLowerCase();
     final filtered = _workers.where((worker) {
-      final matchesDepartment =
-          _supervisorDepartmentId == null ||
-          worker.departmentId == _supervisorDepartmentId ||
+      final matchesDivision =
+          _supervisorDivisionId == null ||
+          worker.divisionId == _supervisorDivisionId ||
           !worker.isSynced;
       final matchesFilter =
           _attendanceFilter == null ||
@@ -139,7 +150,7 @@ class WorkerListViewModel extends BaseViewModel {
           worker.name.toLowerCase().contains(term) ||
           worker.employeeId.toLowerCase().contains(term) ||
           (worker.remoteEmployeeId?.toString().contains(term) ?? false);
-      return matchesDepartment && matchesFilter && matchesTerm;
+      return matchesDivision && matchesFilter && matchesTerm;
     });
 
     // Priority 1: no backend worker_id yet and still pending approval.
@@ -318,6 +329,48 @@ class WorkerListViewModel extends BaseViewModel {
     }
   }
 
+  /// Submits [employeeId]'s still-local task-change-request draft (local
+  /// id [localRequestId] — see TaskPricingChangeRequest.localId) to the
+  /// backend (`POST attendance/request-task-change`). Returns null on
+  /// success, or an error message on failure — the draft stays Not Synced
+  /// either way the caller doesn't explicitly clear it on error, matching
+  /// TaskChangeRequestRepository.submit's own retry-friendly behavior.
+  /// Guards against a second tap while already submitting.
+  Future<String?> syncTaskChangeRequest(
+    String employeeId,
+    int localRequestId,
+  ) async {
+    if (_syncingTaskChangeIds.contains(employeeId)) return null;
+    _syncingTaskChangeIds.add(employeeId);
+    safeNotify();
+
+    String? error;
+    if (!await NetworkStatus.isOnline()) {
+      error =
+          'No internet connection. Please check your network and try again.';
+    } else {
+      try {
+        await _taskChangeRequests.submit(localRequestId);
+      } catch (e, stackTrace) {
+        log(
+          'Task change request sync failed for $employeeId: $e',
+          name: 'WorkerListViewModel.syncTaskChangeRequest',
+          error: e,
+          stackTrace: stackTrace,
+        );
+        error = ApiException.messageFor(e);
+      }
+    }
+
+    _syncingTaskChangeIds.remove(employeeId);
+    if (error == null) {
+      await load();
+    } else {
+      safeNotify();
+    }
+    return error;
+  }
+
   /// Pushes [employeeId]'s today's check-in/check-out record to the backend
   /// (`POST attendance/check-in`). Returns null on success, or an error
   /// message on failure. Guards against a second tap while already
@@ -386,7 +439,10 @@ class WorkerListViewModel extends BaseViewModel {
         .getTodayAttendanceByWorker();
     final assignedTaskWorkerIds = await _tasks.getWorkerIdsWithAssignedTasks();
     final taskStatusByWorker = await _tasks.getWorkerTaskStatusByWorker();
+    final pendingTaskChangeByWorker = await _taskChangeRequests
+        .getPendingRequestsByWorker();
     _supervisorDepartmentId = await _session.getSupervisorDepartmentId();
+    _supervisorDivisionId = await _session.getSupervisorDivisionId();
 
     // Workers whose department was edited and not synced.
     final pendingDepartmentOrType = <int>{};
@@ -417,6 +473,7 @@ class WorkerListViewModel extends BaseViewModel {
           syncedAt: employee.syncedAt,
           workerId: employee.id,
           departmentId: employee.departmentId,
+          divisionId: employee.divisionId,
           status: employee.status,
           verification: _verificationFor(employee),
           hasCheckedInToday:
@@ -433,6 +490,13 @@ class WorkerListViewModel extends BaseViewModel {
           hasPendingDepartmentOrTypeChange: pendingDepartmentOrType.contains(
             employee.id,
           ),
+          pendingTaskChangeRequestId:
+              pendingTaskChangeByWorker[employee.id]?.localId,
+          pendingTaskChangeIsSynced:
+              pendingTaskChangeByWorker[employee.id]?.isSynced ?? false,
+          pendingTaskChangeTaskName:
+              pendingTaskChangeByWorker[employee.id]?.taskName,
+          hasFaceEnrollment: employee.faceEmbeddings.isNotEmpty,
         ),
     ];
 

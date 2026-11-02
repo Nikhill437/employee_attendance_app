@@ -88,28 +88,22 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     super.dispose();
   }
 
-  /// On success, pops back to worker_list_screen.dart (this screen is only
-  /// ever reached from there — see WorkerListScreen._openAssignTask, which
-  /// reloads the list on a truthy pop so a department change shows). On
-  /// failure, stays put with an error so the supervisor can retry.
-  /// Asks before any save runs. "No" closes only the dialog, so nothing is
-  /// written and the entered data stays on screen.
-  Future<bool> _confirmSave() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => const _SaveConfirmDialog(),
-    );
-    return confirmed == true;
-  }
-
   /// Asks before assigning the pending task, naming its own type (Daily/
   /// Monthly/Task Based/Hour Based) so the supervisor knows what they're
-  /// confirming. "No" closes only the dialog, so nothing is written and the
-  /// pending pick stays on screen.
+  /// confirming — or, when [AssignTaskViewModel.pendingTaskNeedsApproval],
+  /// a distinct dialog making clear this submits a request for HR/Admin
+  /// approval instead of assigning the task outright. "No"/"Cancel" closes
+  /// only the dialog, so nothing is written and the pending pick stays on
+  /// screen.
   Future<bool> _confirmAssignTask(TaskType? taskType) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => _AssignTaskConfirmDialog(taskType: taskType),
+      builder: (dialogContext) => _AssignTaskConfirmDialog(
+        taskType: taskType,
+        needsApproval: _viewModel.pendingTaskNeedsApproval,
+        currentGroupLabel: _viewModel.currentPricingGroup?.rangeLabel,
+        proposedGroupLabel: _viewModel.proposedPricingGroup?.rangeLabel,
+      ),
     );
     return confirmed == true;
   }
@@ -124,6 +118,16 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
     final error = await _viewModel.save();
     if (!mounted) return;
     if (error == null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            _viewModel.lastSaveWasApprovalRequest
+                ? 'Task change request saved — sync it from the worker '
+                      'list to submit it for approval.'
+                : 'Task assigned',
+          ),
+        ),
+      );
       navigator.pop(true);
       return;
     }
@@ -161,7 +165,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
   /// MarkAttendanceScreen now does that redirect itself, after this pop
   /// has already resolved cleanly (see its _openFollowUpScreen).
   Future<void> _saveWorkerEntry() async {
-    if (!await _confirmSave() || !mounted) return;
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final error = await _viewModel.saveWorkerEntry();
@@ -170,11 +174,14 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       messenger.showSnackBar(SnackBar(content: Text(error)));
       return;
     }
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Checkout Successful')),
+    );
     navigator.pop(true);
   }
 
   Future<void> _saveSupervisorReview() async {
-    if (!await _confirmSave() || !mounted) return;
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final error = await _viewModel.saveSupervisorReview();
@@ -377,6 +384,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
           const SizedBox(height: 10),
           _WorkerSubmissionCard(
             numericValue: _viewModel.entryNumericValue,
+            showCompletionCount: _viewModel.reviewNeedsCompletionCount,
             photo: _viewModel.entryPhoto,
             isSaving: _viewModel.isSubmittingEntry,
             onNumericChanged: _viewModel.setEntryNumericValue,
@@ -419,7 +427,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
                 const Divider(height: 1, color: AppColors.cardBorder),
                 const SizedBox(height: 18),
                 if (_hasWorkerSubmission(assignedTask)) ...[
-                  const SectionLabel('WORKER SUBMISSION'),
+                  const SectionLabel('EMPLOYEE SUBMISSION'),
                   const SizedBox(height: 10),
                   _WorkerSubmissionReadOnlyCard(task: assignedTask),
                   const SizedBox(height: 18),
@@ -452,8 +460,18 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
 
   /// Whether [task] carries the worker's own checkout-time entry yet — the
   /// signal for whether the supervisor's Worker Submission card has
-  /// anything to show at all (see _buildSupervisorBody).
-  bool _hasWorkerSubmission(WorkerTask task) => task.employeeTarget != null;
+  /// anything to show at all (see _buildSupervisorBody). Always false for
+  /// Daily/Monthly tasks: the worker's checkout screen never even offers
+  /// that card for those types (see MarkAttendanceScreen
+  /// ._openFollowUpScreen's own `needsSubmission` check), so there's
+  /// nothing of theirs to show — a `work_photo` present on one of these
+  /// rows was captured by the *supervisor*, through this same Supervisor
+  /// Review further down, not submitted by the worker.
+  bool _hasWorkerSubmission(WorkerTask task) {
+    final type = _taskTypeFromName(task.taskType);
+    if (type == TaskType.daily || type == TaskType.monthly) return false;
+    return task.employeeTarget != null;
+  }
 
   Widget _buildDepartmentField() {
     return Column(
@@ -540,6 +558,7 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
   Widget _buildPendingTaskCard() {
     final pending = _viewModel.pendingTask;
     if (pending == null) return const SizedBox.shrink();
+    final needsApproval = _viewModel.pendingTaskNeedsApproval;
 
     return Column(
       children: [
@@ -550,24 +569,37 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
             _pendingNoteController.clear();
           },
         ),
-        const SizedBox(height: 15),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-          child: AppFormField(
-            label: 'Note',
-            hint: 'Add an optional note for this task',
-            icon: Icons.notes_outlined,
-            controller: _pendingNoteController,
-            minLines: 2,
-            maxLines: 3,
-            maxLength: 500,
+        if (needsApproval) ...[
+          const SizedBox(height: 10),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'This task is in a different pricing group — assigning it '
+              'will submit a request for HR/Admin approval instead.',
+              style: TextStyle(fontSize: 12.5, color: AppColors.warning),
+            ),
           ),
-        ),
+        ],
+        if (!needsApproval) ...[
+          const SizedBox(height: 15),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            child: AppFormField(
+              label: 'Note',
+              hint: 'Add an optional note for this task',
+              icon: Icons.notes_outlined,
+              controller: _pendingNoteController,
+              minLines: 2,
+              maxLines: 3,
+              maxLength: 500,
+            ),
+          ),
+        ],
         const SizedBox(height: 15),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
           child: AppPrimaryButton(
-            label: 'Assign Task',
+            label: needsApproval ? 'Request Approval' : 'Assign Task',
             isBusy: _viewModel.isSaving,
             onPressed: _save,
           ),
@@ -995,6 +1027,12 @@ class _ReadOnlyValueField extends StatelessWidget {
 /// `work_photo`.
 class _WorkerSubmissionCard extends StatefulWidget {
   final int? numericValue;
+
+  /// Whether the assigned task's own type is Task Based or Hour Based —
+  /// the only types the Completion count/hours field applies to (see
+  /// AssignTaskViewModel.reviewNeedsCompletionCount). Hidden, and not
+  /// required to save, for Daily/Monthly tasks.
+  final bool showCompletionCount;
   final File? photo;
   final bool isSaving;
   final ValueChanged<int?> onNumericChanged;
@@ -1003,6 +1041,7 @@ class _WorkerSubmissionCard extends StatefulWidget {
 
   const _WorkerSubmissionCard({
     required this.numericValue,
+    required this.showCompletionCount,
     required this.photo,
     required this.isSaving,
     required this.onNumericChanged,
@@ -1041,16 +1080,18 @@ class _WorkerSubmissionCardState extends State<_WorkerSubmissionCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          AppFormField(
-            label: 'Completion count/hours',
-            hint: 'Enter completed task/hours',
-            icon: Icons.numbers,
-            controller: _numericController,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            isRequired: true,
-          ),
-          const SizedBox(height: 14),
+          if (widget.showCompletionCount) ...[
+            AppFormField(
+              label: 'Completion count/hours',
+              hint: 'Enter completed task/hours',
+              icon: Icons.numbers,
+              controller: _numericController,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              isRequired: true,
+            ),
+            const SizedBox(height: 14),
+          ],
           AppImageCaptureField(
             label: 'Task Photo',
             hint: 'Tap to capture a photo for this task',
@@ -1060,9 +1101,7 @@ class _WorkerSubmissionCardState extends State<_WorkerSubmissionCard> {
           const SizedBox(height: 14),
           AppSecondaryButton(
             label: widget.isSaving ? 'Saving...' : 'Save',
-            onPressed: (widget.isSaving || widget.numericValue == null)
-                ? null
-                : widget.onSave,
+            onPressed: widget.isSaving ? null : widget.onSave,
           ),
         ],
       ),
@@ -1200,12 +1239,7 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
           const SizedBox(height: 14),
           AppSecondaryButton(
             label: widget.isSaving ? 'Saving...' : 'Save',
-            onPressed:
-                (widget.isSaving ||
-                    (widget.showCompletionCount &&
-                        widget.numericValue == null))
-                ? null
-                : widget.onSave,
+            onPressed: widget.isSaving ? null : widget.onSave,
           ),
         ],
       ),
@@ -1213,122 +1247,57 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
   }
 }
 
-/// The "Do you want to save the information?" prompt, styled like the rest
-/// of the app: a rounded card, a green icon badge, and deep green Yes.
-/// Yes resolves true, No resolves false, and dismissing the dialog counts
-/// as No, so nothing is saved unless the supervisor taps Yes.
-class _SaveConfirmDialog extends StatelessWidget {
-  const _SaveConfirmDialog();
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.white,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: AppColors.deepGreen.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.save_outlined,
-                size: 28,
-                color: AppColors.deepGreen,
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Save information',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppColors.ink,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Do you want to save the information?',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.4,
-                color: AppColors.muted,
-              ),
-            ),
-            const SizedBox(height: 22),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.slate,
-                      side: const BorderSide(color: AppColors.cardBorder),
-                      minimumSize: const Size(0, 46),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'No',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.deepGreen,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      minimumSize: const Size(0, 46),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Yes',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// Asks before assigning a task, naming its own [TaskType] (Daily/Monthly/
-/// Task Based/Hour Based) rather than the generic "Save information" —
-/// see _AssignTaskScreenState._confirmAssignTask. "Yes" updates
+/// Task Based/Hour Based) — see _AssignTaskScreenState._confirmAssignTask.
+/// "Yes" updates
 /// `workers.task_id` to this task right away (see DatabaseHelper.
 /// assignWorkerTask); the worker starts actually working it the next time
 /// they check in, same as any standing assignment.
+///
+/// When [needsApproval] (the picked task is outside the worker's current
+/// pricing group — see AssignTaskViewModel.pendingTaskNeedsApproval), the
+/// title/message/button instead make clear this submits a task-change
+/// request for HR/Admin approval, not an outright reassignment.
+/// [currentGroupLabel]/[proposedGroupLabel] (see AssignTaskViewModel.
+/// currentPricingGroup/proposedPricingGroup) name the two groups when
+/// known; the message still reads fine without them.
 class _AssignTaskConfirmDialog extends StatelessWidget {
   final TaskType? taskType;
+  final bool needsApproval;
+  final String? currentGroupLabel;
+  final String? proposedGroupLabel;
 
-  const _AssignTaskConfirmDialog({this.taskType});
+  const _AssignTaskConfirmDialog({
+    this.taskType,
+    this.needsApproval = false,
+    this.currentGroupLabel,
+    this.proposedGroupLabel,
+  });
+
+  /// " (currently Group A (₹100.00 - ₹500.00), requested Group B (₹501.00
+  /// - ₹1000.00))", or "" when neither group's name is known yet (see
+  /// AssignTaskViewModel._loadPricingGroupNames) — the message still reads
+  /// fine either way.
+  String _groupDetail() {
+    if (currentGroupLabel == null && proposedGroupLabel == null) return '';
+    final parts = [
+      if (currentGroupLabel != null) 'currently $currentGroupLabel',
+      if (proposedGroupLabel != null) 'requested $proposedGroupLabel',
+    ];
+    return ' (${parts.join(', ')})';
+  }
 
   @override
   Widget build(BuildContext context) {
     final type = taskType;
-    final message = type == null
-        ? 'Do you want to assign this task to the worker?'
-        : 'Do you want to assign this ${type.label} task to the worker?';
+    final message = needsApproval
+        ? 'The selected task belongs to a different pricing group than '
+              'the currently assigned task${_groupDetail()}. Do you want '
+              'to proceed and send this task change request for '
+              'approval?'
+        : type == null
+        ? 'Do you want to assign this task to the employee?'
+        : 'Do you want to assign this ${type.label} task to the employee?';
     return Dialog(
       backgroundColor: Colors.white,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24),
@@ -1352,10 +1321,10 @@ class _AssignTaskConfirmDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Assign task',
+            Text(
+              needsApproval ? 'Task Change Approval' : 'Assign task',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
                 color: AppColors.ink,

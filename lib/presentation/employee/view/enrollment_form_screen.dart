@@ -67,6 +67,15 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
 
   bool get _isEditing => widget.editingWorker != null;
 
+  /// Edit mode only: whether this worker already has a registered face —
+  /// starts from the record this screen was opened with, flips to true
+  /// only once [_captureMissingFace] actually saves one. A cancelled or
+  /// failed scan leaves this false, so nothing is marked captured that
+  /// wasn't.
+  late bool _hasFace = widget.editingWorker?.faceEmbeddings.isNotEmpty ?? true;
+
+  bool _isCapturingFace = false;
+
   /// The auth token, sent with a server-hosted National ID attachment.
   String? _authToken;
 
@@ -357,6 +366,33 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
   String _systemIdFor(int? rowId) =>
       'EMP-${(rowId ?? 0).toString().padLeft(3, '0')}';
 
+  /// Edit mode only: captures a face profile for a worker who doesn't have
+  /// one yet (see [_hasFace]) — the same [FaceCaptureScreen] new enrollment
+  /// uses, but saved onto this existing worker's own row instead of
+  /// creating a new one (see EnrollmentFormViewModel.saveFaceCapture).
+  Future<void> _captureMissingFace() async {
+    final workerId = widget.editingWorker?.id;
+    if (workerId == null || _isCapturingFace) return;
+
+    final embeddings = await Navigator.push<List<List<double>>>(
+      context,
+      MaterialPageRoute(builder: (context) => const FaceCaptureScreen()),
+    );
+    if (embeddings == null || !mounted) return;
+
+    setState(() => _isCapturingFace = true);
+    final error = await _formViewModel.saveFaceCapture(workerId, embeddings);
+    if (!mounted) return;
+    setState(() => _isCapturingFace = false);
+
+    if (error != null) {
+      _showSnackBar(error);
+      return;
+    }
+    setState(() => _hasFace = true);
+    _showSnackBar('Face captured');
+  }
+
   /// Edit mode's save: validates the form, then saves every changed field
   /// to the existing worker record (see EnrollmentFormViewModel.saveEdits)
   /// and returns to the caller.
@@ -418,6 +454,10 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
                       const SizedBox(height: 16),
                     ],
                     _buildDetailsCard(),
+                    if (_isEditing && !_hasFace) ...[
+                      const SizedBox(height: 18),
+                      _buildMissingFaceCard(),
+                    ],
                     const SizedBox(height: 20),
                     AppPrimaryButton(
                       label: _isEditing
@@ -434,6 +474,35 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Edit mode only, shown while [_hasFace] is false — this worker was
+  /// fetched from the server with no registered face, so there's nothing
+  /// to verify against yet. [_captureMissingFace] does the actual capture.
+  Widget _buildMissingFaceCard() {
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'No Face Registered',
+            style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.ink),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'This employee has no face on file. Capture one so they can '
+            'check in and be submitted.',
+            style: TextStyle(fontSize: 13, color: AppColors.muted),
+          ),
+          const SizedBox(height: 14),
+          AppSecondaryButton(
+            label: _isCapturingFace ? 'Saving...' : 'Capture Face',
+            onPressed: _isCapturingFace ? null : _captureMissingFace,
           ),
         ],
       ),

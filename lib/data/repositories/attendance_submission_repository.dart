@@ -1,3 +1,4 @@
+import '../../core/network/api_exception.dart';
 import '../../core/utils/app_time.dart';
 import '../datasources/attendance_submission_api.dart';
 import '../datasources/database_helper.dart';
@@ -26,14 +27,30 @@ class AttendanceSubmissionRepository {
        _syncDataApi = syncDataApi ?? SyncDataApi(),
        _workerSync = workerSync ?? WorkerSyncRepository();
 
+  /// Throws if [employeeId] has no registered face yet — checked before
+  /// either sync path does any other work, so nothing is sent before the
+  /// supervisor completes that scan (see
+  /// EnrollmentFormViewModel.saveFaceCapture for how one gets registered).
+  Future<void> _requireFaceRegistered(String employeeId) async {
+    final employee = await _dbHelper.getWorkerByNationalId(employeeId);
+    if (employee == null || employee.faceEmbeddings.isEmpty) {
+      throw ApiException(
+        "Please complete the worker's face scan before submitting.",
+      );
+    }
+  }
+
   /// Throws if there's no attendance recorded today for [workerId], if the
   /// worker can't be resolved to a real backend id (including if an
   /// automatic profile sync attempt fails), or lets the network call's
-  /// failure propagate. Local rows are only marked synced after the API
-  /// call succeeds AND the returned ids are written back successfully —
-  /// a failure at any point leaves everything as "not synced" so a retry
-  /// picks up right where it left off.
+  /// failure propagate — see [_requireFaceRegistered] for the face-scan
+  /// precondition checked first. Local rows are only marked synced after
+  /// the API call succeeds AND the returned ids are written back
+  /// successfully — a failure at any point leaves everything as "not
+  /// synced" so a retry picks up right where it left off.
   Future<void> submitAttendance(String employeeId, int workerId) async {
+    await _requireFaceRegistered(employeeId);
+
     var realWorkerId = await _dbHelper.getRemoteWorkerId(workerId);
     if (realWorkerId == null) {
       // This call needs a real worker_id to send — sync the worker's own
@@ -68,6 +85,7 @@ class AttendanceSubmissionRepository {
             'task_id': assignment.taskId,
             'status': assignment.status,
             'department_id': assignment.departmentId,
+            'employee_target': assignment.employeeTarget,
           },
         )
         .toList();
@@ -119,12 +137,15 @@ class AttendanceSubmissionRepository {
   /// go along with it). Throws if there's nothing unsynced to push, if the
   /// worker can't be resolved to a real backend id, or lets the network
   /// call's failure/an unsuccessful response propagate — exactly like
-  /// [submitAttendance], nothing is marked synced until the response
+  /// [submitAttendance] (including the same face-scan precondition, see
+  /// [_requireFaceRegistered]), nothing is marked synced until the response
   /// actually confirms it.
   Future<void> submitAllUnsyncedAttendance(
     String employeeId,
     int workerId,
   ) async {
+    await _requireFaceRegistered(employeeId);
+
     var realWorkerId = await _dbHelper.getRemoteWorkerId(workerId);
     if (realWorkerId == null) {
       await _workerSync.syncWorker(employeeId);

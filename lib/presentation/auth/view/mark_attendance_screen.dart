@@ -1,8 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/utils/input_formatters.dart';
 import '../../../data/models/auth/auth_user_model.dart';
 import '../../../data/models/department_model.dart';
 import '../../../data/models/worker_attendance_model.dart';
@@ -16,9 +17,13 @@ import '../../task/view/worker_task_list_screen.dart';
 import '../viewmodel/login_viewmodel.dart';
 
 class MarkAttendanceScreen extends StatefulWidget {
-  /// Non-null skips the National ID entry form and starts the scan for
-  /// this employeeId immediately — the "Mark Attendance" action on a
-  /// worker's card in worker_list_screen.dart.
+  /// Non-null: the "Mark Attendance" action on a specific worker's card in
+  /// worker_list_screen.dart — a supervisor has already picked this worker,
+  /// so the scan only needs to verify them (1:1), same as before.
+  ///
+  /// Null: the no-ID kiosk flow (splash screen's Check In/Check Out
+  /// button) — the scan identifies the worker by face alone, searched
+  /// against every enrolled worker (1:N).
   final String? initialEmployeeId;
 
   const MarkAttendanceScreen({super.key, this.initialEmployeeId});
@@ -30,8 +35,6 @@ class MarkAttendanceScreen extends StatefulWidget {
 class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   static const Duration _successPause = Duration(milliseconds: 1400);
 
-  final _formKey = GlobalKey<FormState>();
-  final _employeeIdController = TextEditingController();
   final LoginViewModel _viewModel = LoginViewModel();
   final WorkerAttendanceRepository _attendanceRepository =
       WorkerAttendanceRepository();
@@ -45,23 +48,31 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   /// row every time it's called) only ever runs once per scan.
   WorkerAttendanceRecord? _scanRecord;
 
+  /// Kiosk flow only: true once the worker has explicitly cancelled a scan,
+  /// showing a stable "tap to scan again" prompt instead of auto-reopening
+  /// the camera — there's no ID form to fall back to any more, so without
+  /// this the only way back from a Cancel Scan tap would be reopening the
+  /// camera immediately, with no real way to actually leave.
+  bool _isIdle = false;
+
   bool get _isSupervisorInitiated => widget.initialEmployeeId != null;
 
   @override
   void initState() {
     super.initState();
-    final initialId = widget.initialEmployeeId;
-    if (initialId != null) {
-      _employeeIdController.text = initialId;
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _runScanFlow(initialId),
-      );
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startScan());
+  }
+
+  /// Clears [_isIdle] (a no-op the first time, when it's already false) and
+  /// runs the scan — the one entry point into [_runScanFlow], so every
+  /// caller goes through the same "leave idle" step.
+  void _startScan() {
+    if (_isIdle) setState(() => _isIdle = false);
+    unawaited(_runScanFlow());
   }
 
   @override
   void dispose() {
-    _employeeIdController.dispose();
     _viewModel.dispose();
     super.dispose();
   }
@@ -72,25 +83,32 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _startScan() async {
-    if (!_formKey.currentState!.validate()) return;
-    await _runScanFlow(_employeeIdController.text.trim());
-  }
-
-  /// The actual lookup → scan → mark-attendance sequence, shared by both
-  /// the manual-entry path and the supervisor-initiated one.
-  Future<void> _runScanFlow(String employeeId) async {
-    if (!await _lookUpEmployee(employeeId)) return;
-
-    final user = await _scanFace(employeeId);
+  /// The lookup (supervisor path only) → scan → mark-attendance sequence.
+  Future<void> _runScanFlow() async {
+    final AuthUser? user;
+    final initialId = widget.initialEmployeeId;
+    if (initialId != null) {
+      if (!await _lookUpEmployee(initialId)) return;
+      user = await _scanFace(
+        onMatch: (embedding) => _viewModel.authenticate(initialId, embedding),
+      );
+    } else {
+      user = await _scanFace(onMatch: _viewModel.identify);
+    }
     if (!mounted) return;
     if (user == null) {
-      // The camera screen already popped itself (Cancel Scan). For the
-      // supervisor-initiated flow there's nothing left to show but the
-      // "Starting face verification..." loading state — with no camera left
-      // to cancel — so back out of this screen too instead of stranding the
-      // supervisor there for a second Cancel tap.
-      if (_isSupervisorInitiated) Navigator.pop(context);
+      // The camera screen already popped itself (Cancel Scan). The
+      // supervisor-initiated flow has nothing left to show but a loading
+      // state with no camera left to cancel, so back out of this screen too
+      // instead of stranding the supervisor there for a second Cancel tap.
+      // The kiosk flow has no ID form to fall back to any more, so it shows
+      // a stable "tap to scan again" prompt instead — auto-reopening the
+      // camera here would leave no reliable way to actually leave.
+      if (_isSupervisorInitiated) {
+        Navigator.pop(context);
+      } else {
+        setState(() => _isIdle = true);
+      }
       return;
     }
 
@@ -103,6 +121,14 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     // keeps the latest one.
     _scanRecord = await _recordAttendanceScan(user);
     if (!mounted) return;
+
+    // Blocked outright — never runs through the success view at all, just
+    // a snackbar, so it can't be mistaken for a completed check-in/checkout.
+    if (_scanRecord?.outcome == WorkerScanOutcome.holiday) {
+      _showSnackBar('Today is a holiday — check-in/checkout is not allowed');
+      _finish();
+      return;
+    }
 
     _viewModel.completeLogin(user);
     await Future.delayed(_successPause);
@@ -154,9 +180,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
         );
         return true;
       case WorkerScanOutcome.checkedOut:
-        final assignment = await _taskRepository.getCurrentAssignment(
-          workerId,
-        );
+        final assignment = await _taskRepository.getCurrentAssignment(workerId);
         if (!mounted) return false;
         // Daily/Monthly tasks have nothing for the worker to submit at
         // checkout (no per-day count/hours to record) — only Task Based/
@@ -212,15 +236,14 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     return false;
   }
 
-  Future<AuthUser?> _scanFace(String employeeId) {
+  Future<AuthUser?> _scanFace({required FaceMatchCallback onMatch}) {
     return Navigator.push<AuthUser>(
       context,
       MaterialPageRoute(
         builder: (context) => FaceScanScreen(
           mode: FaceScanMode.attendance,
           title: 'Face Verification',
-          onMatch: (embedding) =>
-              _viewModel.authenticate(employeeId, embedding),
+          onMatch: onMatch,
         ),
       ),
     );
@@ -258,14 +281,18 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
                     listenable: _viewModel,
                     builder: (context, _) => _viewModel.isAuthenticated
                         ? _buildSuccessView()
-                        : _isSupervisorInitiated
-                        ? _buildSupervisorLoadingState()
-                        : _buildScanPrompt(),
+                        : _isIdle
+                        ? _buildIdlePrompt()
+                        : _buildScanLoadingState(
+                            _isSupervisorInitiated
+                                ? 'Starting face verification...'
+                                : 'Starting face scan...',
+                          ),
                   ),
                 ),
               ),
               const SizedBox(height: 23),
-              const AppFooterImage(),
+              const AppVersionLabel(),
             ],
           ),
         ),
@@ -327,11 +354,54 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
     );
   }
 
-  /// Shown briefly while the supervisor-initiated flow looks the worker up
-  /// and opens the camera — there's no form to fill in since the worker is
-  /// already known. Keeps a way back out in case the lookup fails (e.g. no
-  /// enrolled face) before the camera ever opens.
-  Widget _buildSupervisorLoadingState() {
+  /// Shown while the worker is identified/verified and the camera opens —
+  /// both flows now auto-start the scan with no form to fill in: the
+  /// supervisor-initiated one because the worker is already known, the
+  /// kiosk one because identity comes from the face scan itself. Keeps a
+  /// way back out in case a pre-scan lookup fails (supervisor path only)
+  /// before the camera ever opens.
+  /// Kiosk flow only, shown after an explicit Cancel Scan tap — a stable
+  /// resting state with a real way to either retry ([_startScan]) or
+  /// actually leave (back to the splash screen), instead of the camera
+  /// reopening on its own with nothing to stop it.
+  Widget _buildIdlePrompt() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.15),
+        const BrandHeader(logoWidth: 220, logoHeight: 220, showTagline: false),
+        const SizedBox(height: 28),
+        const Text(
+          'Scan cancelled',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Tap below to scan your face again',
+          style: TextStyle(color: Colors.white70, fontSize: 14.5),
+        ),
+        const SizedBox(height: 24),
+        AppPrimaryButton(
+          label: 'Scan Face',
+          icon: Icons.face,
+          background: AppColors.lime,
+          onPressed: _startScan,
+        ),
+        const SizedBox(height: 16),
+        AppLinkText(
+          label: 'Back to Login',
+          fontSize: 16,
+          onTap: () => Navigator.maybePop(context),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScanLoadingState(String message) {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -340,9 +410,9 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
         const SizedBox(height: 28),
         const CircularProgressIndicator(color: Colors.white),
         const SizedBox(height: 16),
-        const Text(
-          'Starting face verification...',
-          style: TextStyle(color: Colors.white70, fontSize: 14.5),
+        Text(
+          message,
+          style: const TextStyle(color: Colors.white70, fontSize: 14.5),
         ),
         const SizedBox(height: 24),
         AppLinkText(
@@ -351,65 +421,6 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
           onTap: () => Navigator.maybePop(context),
         ),
       ],
-    );
-  }
-
-  Widget _buildScanPrompt() {
-    return Form(
-      key: _formKey,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(height: MediaQuery.of(context).size.height * 0.08),
-          const BrandHeader(
-            logoWidth: 220,
-            logoHeight: 220,
-            showTagline: false,
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Mark Attendance',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Enter the Employee ID your supervisor assigned you, to continue',
-            style: TextStyle(fontSize: 14.5, color: Colors.white70),
-          ),
-          const SizedBox(height: 32),
-          AppTextField(
-            label: 'Employee ID',
-            hint: 'eg. Employee ID Number',
-            icon: Icons.badge_outlined,
-            controller: _employeeIdController,
-            keyboardType: TextInputType.visiblePassword,
-            textInputAction: TextInputAction.done,
-            inputFormatters: AppInputFormatters.alphanumericUppercase,
-            onSubmitted: (_) => _startScan(),
-            validator: (v) => (v == null || v.trim().isEmpty)
-                ? 'Enter your Employee ID'
-                : null,
-          ),
-          const SizedBox(height: 28),
-          AppPrimaryButton(
-            label: _viewModel.isLookingUp ? 'Looking up...' : 'Continue',
-            icon: Icons.face,
-            isBusy: _viewModel.isLookingUp,
-            background: AppColors.lime,
-            onPressed: _startScan,
-          ),
-          AppLinkText(
-            label: 'Back to Login',
-            fontSize: 16,
-            onTap: () => Navigator.maybePop(context),
-          ),
-        ],
-      ),
     );
   }
 }

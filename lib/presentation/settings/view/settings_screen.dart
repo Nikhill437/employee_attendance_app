@@ -1,3 +1,4 @@
+import 'package:employee_attendance_app/core/dev_tools/database_explorer/database_explorer_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/app_routes.dart';
@@ -100,6 +101,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               )
                             : const Icon(Icons.chevron_right),
                         onTap: _viewModel.isLoggingOut ? null : _confirmLogout,
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: 10),
+                  AppCard(
+                    padding: EdgeInsets.zero,
+                    child: Material(
+                      color: Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      clipBehavior: Clip.antiAlias,
+                      child: ListTile(
+                        leading: const Icon(
+                          Icons.apartment,
+                          color: AppColors.ink,
+                        ),
+                        title: const Text(
+                          'Data Exploration',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.warning,
+                          ),
+                        ),
+                        trailing: _viewModel.isLoggingOut
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const DatabaseExplorerScreen(),
+                          ),
+                        ),
                       ),
                     ),
                   ),

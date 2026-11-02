@@ -10,7 +10,7 @@ class BrandHeader extends StatelessWidget {
 
   const BrandHeader({
     super.key,
-    this.logoWidth,
+    this.logoWidth = 220,
     this.logoHeight,
     this.showTagline = true,
   });
@@ -22,10 +22,13 @@ class BrandHeader extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Image(
-          image: AssetImage('assets/logo/logo.png'),
+          image: const AssetImage('assets/logo/logo.png'),
+          width: logoWidth,
+          height: logoHeight,
           fit: BoxFit.contain,
         ),
-        SizedBox(height: 10),
+        if (showTagline) ...[
+          const SizedBox(height: 10),
           const Text(
             'SMART ATTENDANCE SYSTEM',
             style: TextStyle(
@@ -34,6 +37,7 @@ class BrandHeader extends StatelessWidget {
               color: Colors.white70,
             ),
           ),
+        ],
       ],
     );
   }

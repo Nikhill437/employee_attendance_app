@@ -80,6 +80,13 @@ class WorkerTask {
   final String? taskType;
   final String? workingHours;
 
+  /// The assigned task's own `tasks.pricing_group_id`, joined in the same
+  /// way as [taskRate] — only populated by DatabaseHelper.
+  /// getCurrentAssignment (what AssignTaskViewModel.save compares a newly
+  /// picked [Task.pricingGroupId] against); null elsewhere, including when
+  /// the task itself has none set.
+  final int? taskPricingGroupId;
+
   const WorkerTask({
     required this.workerTaskId,
     required this.workerId,
@@ -101,6 +108,7 @@ class WorkerTask {
     this.taskRate,
     this.taskType,
     this.workingHours,
+    this.taskPricingGroupId,
   });
 
   factory WorkerTask.fromMap(Map<String, dynamic> map) {
@@ -125,6 +133,7 @@ class WorkerTask {
       taskRate: map['task_rate'] as int?,
       taskType: map['task_type'] as String?,
       workingHours: map['working_hours'] as String?,
+      taskPricingGroupId: map['task_pricing_group_id'] as int?,
     );
   }
 }

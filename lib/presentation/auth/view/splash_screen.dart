@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/routes/app_routes.dart';
+import '../../../data/repositories/lookup_repository.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../common/widgets/common_widgets.dart';
 
@@ -11,7 +12,10 @@ class SplashScreen extends StatelessWidget {
   /// access.
   final SupervisorSessionRepository? sessionRepository;
 
-  const SplashScreen({super.key, this.sessionRepository});
+  /// Overridable so tests can inject a fake, avoiding real database access.
+  final LookupRepository? lookupRepository;
+
+  const SplashScreen({super.key, this.sessionRepository, this.lookupRepository});
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +81,7 @@ class SplashScreen extends StatelessWidget {
           _EntryPointButton(
             label: 'Check In / Check Out',
             filled: true,
-            onTap: () => Navigator.pushNamed(context, AppRoutes.markAttendance),
+            onTap: () => _openMarkAttendance(context),
           ),
           const SizedBox(height: 20),
           _EntryPointButton(
@@ -96,6 +100,24 @@ class SplashScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Blocks the kiosk Check In/Check Out entry point outright on a locally
+  /// cached holiday — never even opens the camera/face-scan screen, so a
+  /// worker can't be scanned at all, let alone marked, on a holiday.
+  Future<void> _openMarkAttendance(BuildContext context) async {
+    final repository = lookupRepository ?? LookupRepository();
+    final isHoliday = await repository.isTodayHoliday();
+    if (!context.mounted) return;
+    if (isHoliday) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Today is a holiday. Attendance cannot be marked.'),
+        ),
+      );
+      return;
+    }
+    Navigator.pushNamed(context, AppRoutes.markAttendance);
   }
 
   /// A supervisor who's still logged in (e.g. landed back here from some

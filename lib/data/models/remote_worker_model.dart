@@ -21,7 +21,15 @@ class RemoteWorkerRecord {
   final String nationalId;
   final String? nationalIdImage;
   final String? phoneNumber;
-  final int departmentId;
+
+  /// Null when the response row's `department_id` is null — confirmed to
+  /// happen (division_id is superseding department_id backend-side; see
+  /// DatabaseHelper's workers.department_id migration to nullable).
+  final int? departmentId;
+
+  /// The backend's `division_id` for this worker — stored in
+  /// `workers.division_id`. Null if the response row didn't include one.
+  final int? divisionId;
 
   /// Null when the response row didn't include `department_name`. Never
   /// defaulted here, so an absent name can't overwrite a stored one (see
@@ -55,6 +63,7 @@ class RemoteWorkerRecord {
     required this.nationalIdImage,
     required this.phoneNumber,
     required this.departmentId,
+    this.divisionId,
     required this.departmentName,
     required this.address,
     required this.faceDetection,
@@ -86,7 +95,8 @@ class RemoteWorkerRecord {
       nationalId: json['national_id'] as String,
       nationalIdImage: json['national_id_image'] as String?,
       phoneNumber: json['phone_number'] as String?,
-      departmentId: json['department_id'] as int,
+      departmentId: _asIntOrNull(json['department_id']),
+      divisionId: _asIntOrNull(json['division_id']),
       departmentName: json['department_name'] as String?,
       address: json['address'] as String?,
       // Not real embeddings from this endpoint (can be a placeholder string

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/base/base_view_model.dart';
 import '../../../data/repositories/lookup_repository.dart';
+import '../../../data/repositories/pricing_group_repository.dart';
 import '../../../data/repositories/supervisor_auth_repository.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 
@@ -12,14 +13,17 @@ class SupervisorLoginViewModel extends BaseViewModel {
   final SupervisorAuthRepository _authRepository;
   final SupervisorSessionRepository _sessionRepository;
   final LookupRepository _lookupRepository;
+  final PricingGroupRepository _pricingGroups;
 
   SupervisorLoginViewModel({
     SupervisorAuthRepository? authRepository,
     SupervisorSessionRepository? sessionRepository,
     LookupRepository? lookupRepository,
+    PricingGroupRepository? pricingGroups,
   }) : _authRepository = authRepository ?? SupervisorAuthRepository(),
        _sessionRepository = sessionRepository ?? SupervisorSessionRepository(),
-       _lookupRepository = lookupRepository ?? LookupRepository();
+       _lookupRepository = lookupRepository ?? LookupRepository(),
+       _pricingGroups = pricingGroups ?? PricingGroupRepository();
 
   String? _errorMessage;
 
@@ -54,6 +58,17 @@ class SupervisorLoginViewModel extends BaseViewModel {
       unawaited(
         _lookupRepository.syncFromRemote().catchError((Object e) {
           debugPrint('LookupRepository.syncFromRemote failed: $e');
+        }),
+      );
+      // Same fire-and-forget treatment for the pricing-group catalog —
+      // AssignTaskViewModel's task-change-request dialog falls back to
+      // showing a group's bare id if this hasn't completed yet, so a
+      // failed/slow fetch here degrades gracefully rather than blocking
+      // login.
+      unawaited(
+        _pricingGroups.importPricingGroups().catchError((Object e) {
+          debugPrint('PricingGroupRepository.importPricingGroups failed: $e');
+          return 0;
         }),
       );
     } else {

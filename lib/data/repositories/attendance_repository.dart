@@ -25,10 +25,16 @@ class AttendanceRepository {
   }
 
   /// Distinct employees with at least one attendance log on [day].
-  Future<int> countPresentOn(DateTime day) async {
+  /// [employeeIds], when given, scopes the count to only those National
+  /// IDs — DashboardViewModel.load passes the supervisor's own division's
+  /// roster, the same way its employee-count tile is scoped.
+  Future<int> countPresentOn(DateTime day, {Set<String>? employeeIds}) async {
     final logs = await getAllLogs();
     final present = <String>{};
     for (final log in logs) {
+      if (employeeIds != null && !employeeIds.contains(log.employeeId)) {
+        continue;
+      }
       final loggedAt = DateTime.tryParse(log.loginTime);
       if (loggedAt != null && DateTimeFormatter.isSameDay(loggedAt, day)) {
         present.add(log.employeeId);

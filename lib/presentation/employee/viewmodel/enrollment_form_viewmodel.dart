@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
@@ -405,6 +406,33 @@ class EnrollmentFormViewModel extends BaseViewModel {
     } finally {
       _isSavingDepartment = false;
       safeNotify();
+    }
+  }
+
+  /// Captures a missing face scan for an already-enrolled worker — the
+  /// edit-mode counterpart to [CreateEmployeeViewModel.save]'s face capture
+  /// for a brand-new one. Writes straight to the existing `workers` row
+  /// (never a new one) via [EmployeeRepository.updateEnrollment] (which
+  /// marks the worker NOT SYNCED) and queues the field the same way
+  /// [saveEdits] queues every other changed field, so the next sync tap
+  /// pushes it. Returns an error message, or null on success.
+  Future<String?> saveFaceCapture(
+    int workerId,
+    List<List<double>> embeddings,
+  ) async {
+    final encoded = jsonEncode(embeddings);
+    try {
+      await _employeeRepository.updateEnrollment(
+        workerId: workerId,
+        columns: {
+          'face_detection': encoded,
+          'modified_date': AppTime.nowInUserZone().toIso8601String(),
+        },
+      );
+      await _editQueue.record(workerId, {'face_detection': encoded});
+      return null;
+    } catch (e) {
+      return e.toString();
     }
   }
 

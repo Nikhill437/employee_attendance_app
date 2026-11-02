@@ -28,4 +28,5 @@ class ApiRoutes {
   static const String submitAttendance = '/attendance/submit-attendance';
   static const String holidayData = '/attendance/holiday_data';
   static const String serverTimeHoliday = '/attendance/holiday_server_time';
+  static const String pricingGroupsList = '/pricing-groups/list';
 }

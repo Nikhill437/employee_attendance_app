@@ -1,3 +1,5 @@
+import 'dart:developer';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../../core/utils/app_time.dart';
@@ -6,8 +8,10 @@ import '../models/attendance_log_model.dart';
 import '../models/department_model.dart';
 import '../models/employee_model.dart';
 import '../models/holiday_model.dart';
+import '../models/pricing_group_model.dart';
 import '../models/remote_worker_model.dart';
 import '../models/remote_worker_task_model.dart';
+import '../models/task_pricing_change_request_model.dart';
 import '../models/worker_attendance_model.dart';
 import '../models/worker_model.dart';
 import '../models/worker_task_model.dart';
@@ -35,7 +39,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'attendance.db');
     return openDatabase(
       path,
-      version: 29,
+      version: 34,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE attendance_logs(
@@ -348,7 +352,69 @@ class DatabaseHelper {
           // keeps its assignment-time note distinct from its (separate)
           // supervisor_note once resolved — see
           // resolvePendingWorkerTasksForWorker/_upsertResolvedWorkerTask.
-          await _addColumnIfMissing(db, 'pending_worker_tasks', 'task_note', 'TEXT');
+          await _addColumnIfMissing(
+            db,
+            'pending_worker_tasks',
+            'task_note',
+            'TEXT',
+          );
+        }
+        if (oldVersion < 30) {
+          await _addColumnIfMissing(db, 'workers', 'division_id', 'INTEGER');
+        }
+        if (oldVersion < 31) {
+          // The `attendance/list` response can report a worker with
+          // division_id set but department_id null (divisions are
+          // superseding departments backend-side) — department_id was
+          // NOT NULL, which crashed the upsert on such a row. SQLite can't
+          // drop a NOT NULL constraint in place, so the table is rebuilt
+          // the same way the v25 step above rebuilt it.
+          await db.execute('ALTER TABLE workers RENAME TO workers_v30');
+          await _createWorkerTables(db);
+          await db.execute('''
+            INSERT INTO workers (
+              offline_worker_id, worker_id, full_name, birth_date, gender,
+              national_id, national_id_image, phone_number, department_id,
+              division_id, address, face_detection, status, rejection_reason,
+              created_by, approved_by, approved_at, employee_id, task_id,
+              note, created_date, modified_date, server_time, is_synced,
+              synced_at
+            )
+            SELECT
+              offline_worker_id, worker_id, full_name, birth_date, gender,
+              national_id, national_id_image, phone_number, department_id,
+              division_id, address, face_detection, status, rejection_reason,
+              created_by, approved_by, approved_at, employee_id, task_id,
+              note, created_date, modified_date, server_time, is_synced,
+              synced_at
+            FROM workers_v30
+          ''');
+          await db.execute('DROP TABLE workers_v30');
+        }
+        if (oldVersion < 32) {
+          // task_pricing_change_requests is a new standalone table — no
+          // existing column to rebuild, same as the v27/v28 steps above.
+          await _createWorkerTables(db);
+        }
+        if (oldVersion < 33) {
+          // pricing_groups is a new standalone table (created by
+          // _createWorkerTables, same as the v32 step above); tasks
+          // already exists, so its new pricing_group_id column needs its
+          // own ALTER TABLE.
+          await _createWorkerTables(db);
+          await _addColumnIfMissing(db, 'tasks', 'pricing_group_id', 'INTEGER');
+        }
+        if (oldVersion < 34) {
+          // Draft task-change requests (see createTaskChangeRequest) are
+          // created locally, before they're submitted — same offline-first
+          // shape as workers/worker_tasks/worker_attendance — so this table
+          // needs its own sync flag, same as workers.is_synced.
+          await _addColumnIfMissing(
+            db,
+            'task_pricing_change_requests',
+            'is_synced',
+            'INTEGER NOT NULL DEFAULT 0',
+          );
         }
       },
     );
@@ -393,6 +459,29 @@ class DatabaseHelper {
         server_time TEXT DEFAULT CURRENT_TIMESTAMP
       )
     ''');
+    // Mirrors the backend's own `pricing_groups` table — an admin-defined
+    // rate-range catalog (same read-only-from-this-app precedent as
+    // departments/holiday). created_by/modified_by aren't FK'd to a local
+    // admin-accounts table (none exists yet), same reasoning as every
+    // other table here. The backend's own secondary indexes
+    // (idx_pricing_rates/idx_pricing_status) aren't reproduced — nothing
+    // here queries by rate range or status yet, and no other table in
+    // this file declares a secondary index either.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pricing_groups(
+        pricing_group_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        min_rate REAL NOT NULL,
+        max_rate REAL NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        modified_date TEXT,
+        created_by INTEGER,
+        modified_by INTEGER,
+        server_time TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
     await db.execute('''
       CREATE TABLE IF NOT EXISTS tasks(
         task_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -405,6 +494,13 @@ class DatabaseHelper {
         created_by INTEGER,
         target INTEGER,
         rate INTEGER,
+        -- Mirrors the backend's `tasks.pricing_group_id` (added via ALTER
+        -- TABLE there). Not FK'd to pricing_groups, same as every other
+        -- id-shaped column in this file that doesn't already have one —
+        -- this app doesn't enforce FOREIGN KEY constraints at the SQLite
+        -- level (no PRAGMA foreign_keys = ON), so a declared FK here would
+        -- be documentation only, same as workers.division_id.
+        pricing_group_id INTEGER,
         overtime INTEGER,
         task_type TEXT,
         working_hours TEXT,
@@ -424,7 +520,8 @@ class DatabaseHelper {
         national_id TEXT NOT NULL UNIQUE,
         national_id_image TEXT,
         phone_number TEXT,
-        department_id INTEGER NOT NULL,
+        department_id INTEGER,
+        division_id INTEGER,
         address TEXT,
         face_detection TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
@@ -537,6 +634,57 @@ class DatabaseHelper {
         server_time TEXT DEFAULT CURRENT_TIMESTAMP
       )
     ''');
+    // Mirrors the backend's own `task_pricing_change_requests` table — an
+    // admin approval workflow raised when a supervisor reassigns a worker
+    // to a task outside their current pricing group (see
+    // TaskChangeRequestRepository), pending/approved/rejected. Like
+    // `workers`/`worker_tasks`/`worker_attendance` (see the class doc
+    // comment above), it gets its own local-only `offline_worker_id`
+    // autoincrement PK, so a request raised from this app can be created
+    // before it's submitted (`is_synced = 0`, same meaning as
+    // `workers.is_synced`); `request_id` is the old PK column, now a plain
+    // nullable `UNIQUE` column holding the backend's own id once known.
+    // `proposed_worker_id` — despite its name mirroring the backend's own
+    // column — holds the worker's *local* `offline_worker_id` here (same
+    // convention as `worker_tasks.worker_id`/`worker_attendance.worker_id`;
+    // see the class doc comment's "every local FK reference... is backed
+    // by offline_worker_id"), resolved to the backend's real worker_id only
+    // at submit time (TaskChangeRequestRepository.submit, same pattern as
+    // TaskSyncRepository.syncWorkerTasks). `current_worker_id` is unused by
+    // this app (always null) — it exists only to mirror the backend
+    // column. None of current_worker_id/proposed_worker_id/current_
+    // pricing_group_id/proposed_pricing_group_id are FK'd — same reasoning
+    // as requested_by/actioned_by (which mirror created_by/modified_by
+    // elsewhere in not FK-ing to a local admin-accounts table), and this
+    // app doesn't enforce FOREIGN KEY constraints at the SQLite level
+    // anyway (no PRAGMA foreign_keys = ON), so even pricing_group_id's
+    // FK-shaped relationship to the now-existing `pricing_groups` table is
+    // left undeclared, same as tasks.pricing_group_id. Only task_id is
+    // FK'd — task ids are already shared 1:1 between the backend and this
+    // app's local `tasks` table.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS task_pricing_change_requests(
+        offline_worker_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id INTEGER UNIQUE,
+        task_id INTEGER NOT NULL,
+        current_worker_id INTEGER,
+        proposed_worker_id INTEGER NOT NULL,
+        current_pricing_group_id INTEGER,
+        proposed_pricing_group_id INTEGER NOT NULL,
+        old_rate REAL,
+        new_rate REAL NOT NULL,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        requested_by INTEGER NOT NULL,
+        requested_date TEXT NOT NULL,
+        actioned_by INTEGER,
+        actioned_date TEXT,
+        rejection_reason TEXT,
+        server_time TEXT DEFAULT CURRENT_TIMESTAMP,
+        is_synced INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE CASCADE
+      )
+    ''');
   }
 
   // --- Worker (enrollment) methods ---
@@ -603,6 +751,7 @@ class DatabaseHelper {
         'rate': task.rate,
         'task_type': task.taskType?.name,
         'working_hours': task.workingHours,
+        'pricing_group_id': task.pricingGroupId,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -628,6 +777,61 @@ class DatabaseHelper {
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
+  }
+
+  /// Replaces/updates the local `pricing_groups` cache from the backend's
+  /// `GET pricing-groups/list` (see PricingGroupRepository.
+  /// importPricingGroups) — rows are upserted by the backend's own
+  /// `pricing_group_id`, same as [replaceDepartments]/[replaceTasks], so a
+  /// group whose rate range or name changed server-side is overwritten in
+  /// place rather than duplicated.
+  Future<void> upsertPricingGroups(List<PricingGroup> groups) async {
+    final db = await database;
+    final now = AppTime.nowInUserZone().toIso8601String();
+    final batch = db.batch();
+    for (final group in groups) {
+      batch.insert('pricing_groups', {
+        'pricing_group_id': group.id,
+        'group_name': group.groupName,
+        'min_rate': group.minRate,
+        'max_rate': group.maxRate,
+        'description': group.description,
+        'status': group.status,
+        'created_date': group.createdDate ?? now,
+        'modified_date': group.modifiedDate,
+        'created_by': group.createdBy,
+        'modified_by': group.modifiedBy,
+        'server_time': now,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// The cached pricing groups, alphabetical — see
+  /// PricingGroupRepository.getAll.
+  Future<List<PricingGroup>> getPricingGroups() async {
+    final db = await database;
+    final maps = await db.query(
+      'pricing_groups',
+      orderBy: 'group_name COLLATE NOCASE',
+    );
+    return List.generate(maps.length, (i) => PricingGroup.fromMap(maps[i]));
+  }
+
+  /// One pricing group by id, for AssignTaskViewModel's task-change-request
+  /// dialog (the current/proposed group names it shows) — null if it's not
+  /// in the local cache yet (e.g. [importPricingGroups] hasn't run, or a
+  /// task references a group id not present in the fetched catalog).
+  Future<PricingGroup?> getPricingGroupById(int id) async {
+    final db = await database;
+    final rows = await db.query(
+      'pricing_groups',
+      where: 'pricing_group_id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return PricingGroup.fromMap(rows.first);
   }
 
   /// The cached departments, alphabetical — for the enrollment form's
@@ -983,11 +1187,7 @@ class DatabaseHelper {
         startLocal.month,
         startLocal.day,
       );
-      final endDateOnly = DateTime(
-        endLocal.year,
-        endLocal.month,
-        endLocal.day,
-      );
+      final endDateOnly = DateTime(endLocal.year, endLocal.month, endLocal.day);
       if (!todayDateOnly.isBefore(startDateOnly) &&
           !todayDateOnly.isAfter(endDateOnly)) {
         return true;
@@ -1070,6 +1270,7 @@ class DatabaseHelper {
              worker_tasks.task_status, worker_tasks.task_date,
              worker_tasks.worker_task_id AS real_worker_task_id,
              tasks.target AS task_target, tasks.rate AS task_rate,
+             tasks.pricing_group_id AS task_pricing_group_id,
              tasks.task_type AS task_type, tasks.working_hours AS working_hours
       FROM worker_tasks
       JOIN tasks ON tasks.task_id = worker_tasks.task_id
@@ -1079,11 +1280,17 @@ class DatabaseHelper {
     ''',
       [workerId, _todayDateKey()],
     );
+    log(
+      'getCurrentAssignment($workerId): todayDate=${_todayDateKey()} '
+      'todayRowFound=${today.isNotEmpty} '
+      'todayRow=${today.isNotEmpty ? today.first : null}',
+      name: 'DatabaseHelper.getCurrentAssignment',
+    );
     if (today.isNotEmpty) {
       final todayRow = today.first;
       final workerRows = await db.query(
         'workers',
-        columns: ['task_id'],
+        columns: ['task_id', 'department_id'],
         where: 'offline_worker_id = ?',
         whereArgs: [workerId],
         limit: 1,
@@ -1091,11 +1298,23 @@ class DatabaseHelper {
       final standingTaskId = workerRows.isNotEmpty
           ? workerRows.first['task_id'] as int?
           : null;
+      log(
+        'getCurrentAssignment($workerId): standingTaskId=$standingTaskId '
+        'workerDepartmentId=${workerRows.isNotEmpty ? workerRows.first['department_id'] : null} '
+        "todayRow.task_id=${todayRow['task_id']} (${todayRow['task_id'].runtimeType}) "
+        'match=${standingTaskId == null || standingTaskId == todayRow['task_id']}',
+        name: 'DatabaseHelper.getCurrentAssignment',
+      );
       if (standingTaskId == null || standingTaskId == todayRow['task_id']) {
         return WorkerTask.fromMap(todayRow);
       }
     }
 
+    log(
+      'getCurrentAssignment($workerId): falling back to persistent assignment '
+      '(no matching today row)',
+      name: 'DatabaseHelper.getCurrentAssignment',
+    );
     final assigned = await db.rawQuery(
       '''
       SELECT ? AS worker_id, tasks.task_id, tasks.task_name, tasks.department_id,
@@ -1103,15 +1322,23 @@ class DatabaseHelper {
              workers.note AS task_note, NULL AS supervisor_note,
              'pending' AS task_status, '' AS task_date, 0 AS worker_task_id,
              NULL AS real_worker_task_id, tasks.target AS task_target,
-             tasks.rate AS task_rate, tasks.task_type AS task_type,
+             tasks.rate AS task_rate,
+             tasks.pricing_group_id AS task_pricing_group_id,
+             tasks.task_type AS task_type,
              tasks.working_hours AS working_hours
       FROM workers
       JOIN tasks ON tasks.task_id = workers.task_id
       WHERE workers.offline_worker_id = ?
-        AND tasks.department_id = workers.department_id
+        AND (workers.department_id IS NULL
+          OR tasks.department_id = workers.department_id)
       LIMIT 1
     ''',
       [workerId, workerId],
+    );
+    log(
+      'getCurrentAssignment($workerId): persistentAssignmentFound=${assigned.isNotEmpty} '
+      'row=${assigned.isNotEmpty ? assigned.first : null}',
+      name: 'DatabaseHelper.getCurrentAssignment',
     );
     if (assigned.isEmpty) return null;
     return WorkerTask.fromMap(assigned.first);
@@ -1222,7 +1449,11 @@ class DatabaseHelper {
     DatabaseExecutor db,
     int workerId,
   ) async {
-    if (await _isRejectedWorker(db, workerId)) return;
+    const logName = 'DatabaseHelper._ensureTodaysWorkerTaskRow';
+    if (await _isRejectedWorker(db, workerId)) {
+      log('($workerId): skipped — rejected worker', name: logName);
+      return;
+    }
 
     final alreadyToday = await db.query(
       'worker_tasks',
@@ -1231,7 +1462,13 @@ class DatabaseHelper {
       whereArgs: [workerId, _todayDateKey()],
       limit: 1,
     );
-    if (alreadyToday.isNotEmpty) return;
+    if (alreadyToday.isNotEmpty) {
+      log(
+        '($workerId): skipped — already has an active row for today',
+        name: logName,
+      );
+      return;
+    }
 
     final workerRows = await db.query(
       'workers',
@@ -1240,9 +1477,15 @@ class DatabaseHelper {
       whereArgs: [workerId],
       limit: 1,
     );
-    if (workerRows.isEmpty) return;
+    if (workerRows.isEmpty) {
+      log('($workerId): skipped — no workers row found', name: logName);
+      return;
+    }
     final taskId = workerRows.first['task_id'] as int?;
-    if (taskId == null) return;
+    if (taskId == null) {
+      log('($workerId): skipped — workers.task_id is null', name: logName);
+      return;
+    }
     final taskRows = await db.query(
       'tasks',
       columns: ['department_id'],
@@ -1250,11 +1493,41 @@ class DatabaseHelper {
       whereArgs: [taskId],
       limit: 1,
     );
-    if (taskRows.isEmpty ||
-        taskRows.first['department_id'] != workerRows.first['department_id']) {
+    if (taskRows.isEmpty) {
+      log(
+        '($workerId): skipped — task $taskId not found in tasks table',
+        name: logName,
+      );
+      return;
+    }
+    // Only enforced when the worker's own department_id is actually known —
+    // it's routinely null now that division_id supersedes it (see
+    // RemoteWorker.departmentId's doc comment), and null would otherwise
+    // never equal the task's real department_id, silently skipping this
+    // materialization for every such worker (they'd check in and out fine,
+    // but never get today's worker_tasks row, so the Supervisor Review
+    // would wrongly report "Check in today first" on save).
+    final workerDepartmentId = workerRows.first['department_id'] as int?;
+    log(
+      '($workerId): taskId=$taskId workerDepartmentId=$workerDepartmentId '
+      "taskDepartmentId=${taskRows.first['department_id']}",
+      name: logName,
+    );
+    if (workerDepartmentId != null &&
+        taskRows.first['department_id'] != workerDepartmentId) {
+      log(
+        '($workerId): skipped — department_id mismatch '
+        '(worker=$workerDepartmentId, task=${taskRows.first['department_id']})',
+        name: logName,
+      );
       return;
     }
     final note = workerRows.first['note'] as String?;
+    log(
+      '($workerId): materializing today\'s worker_tasks row for task '
+      '$taskId with note=$note',
+      name: logName,
+    );
     await _applyTodaysTaskAssignment(db, workerId, taskId, note);
   }
 
@@ -1308,7 +1581,31 @@ class DatabaseHelper {
       'updated_at': now,
       'task_date': today,
       'task_note': note,
+      // Daily/Monthly tasks have no supervisor-entered completion count to
+      // gate approval on (see AssignTaskViewModel.reviewNeedsCompletionCount)
+      // — defaulting to 'approved' rather than the column's own 'pending'
+      // default means this day's assignment doesn't sit "awaiting review"
+      // for a review it was never going to get. Task Based/Hourly tasks
+      // keep the column default by leaving task_status out entirely here.
+      if (await _isDailyOrMonthlyTask(db, taskId)) 'task_status': 'approved',
     });
+  }
+
+  /// Whether [taskId]'s own `tasks.task_type` is Daily or Monthly — see
+  /// [_applyTodaysTaskAssignment] and [_assignMatchingTasks], the two
+  /// places a fresh `worker_tasks` row is created and needs to pick the
+  /// right default `task_status`.
+  Future<bool> _isDailyOrMonthlyTask(DatabaseExecutor db, int taskId) async {
+    final rows = await db.query(
+      'tasks',
+      columns: ['task_type'],
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return false;
+    final type = rows.first['task_type'] as String?;
+    return type == TaskType.daily.name || type == TaskType.monthly.name;
   }
 
   /// [workerId]'s active task-assignment rows that haven't synced yet
@@ -1421,14 +1718,22 @@ class DatabaseHelper {
     required int taskId,
     String? note,
   }) async {
+    const logName = 'DatabaseHelper.assignWorkerTask';
     final db = await database;
-    if (await _isRejectedWorker(db, workerId)) return;
+    if (await _isRejectedWorker(db, workerId)) {
+      log('($workerId): skipped — rejected worker', name: logName);
+      return;
+    }
     await db.transaction((txn) async {
       await txn.update(
         'workers',
         {'task_id': taskId, 'note': note},
         where: 'offline_worker_id = ?',
         whereArgs: [workerId],
+      );
+      log(
+        '($workerId): workers.task_id/note set to taskId=$taskId note=$note',
+        name: logName,
       );
 
       final todaysRow = await txn.query(
@@ -1438,7 +1743,14 @@ class DatabaseHelper {
         whereArgs: [workerId, _todayDateKey()],
         limit: 1,
       );
-      if (todaysRow.isEmpty) return;
+      if (todaysRow.isEmpty) {
+        log(
+          '($workerId): no active row for today yet — task_note will only '
+          'be written at this worker\'s next check-in',
+          name: logName,
+        );
+        return;
+      }
 
       final todaysAttendance = await txn.query(
         'worker_attendance',
@@ -1450,10 +1762,159 @@ class DatabaseHelper {
       final alreadyCheckedOut =
           todaysAttendance.isNotEmpty &&
           todaysAttendance.first['status'] == 'checked_out';
-      if (alreadyCheckedOut) return;
+      if (alreadyCheckedOut) {
+        log(
+          '($workerId): already checked out today — today\'s row left '
+          'untouched, task_note will only be written at the next check-in',
+          name: logName,
+        );
+        return;
+      }
 
+      log(
+        '($workerId): has an open row for today — applying task_note=$note '
+        'to it now',
+        name: logName,
+      );
       await _applyTodaysTaskAssignment(txn, workerId, taskId, note);
     });
+  }
+
+  /// A single task by id, for resolving [TaskChangeRequestRepository.
+  /// submit]'s `department_id` from the request's stored `task_id` — null
+  /// if it doesn't exist (shouldn't happen given the FK, but this app
+  /// doesn't enforce it at the SQLite level — see
+  /// _createWorkerTables's doc comment).
+  Future<Task?> getTaskById(int taskId) async {
+    final db = await database;
+    final rows = await db.query(
+      'tasks',
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return Task.fromMap(rows.first);
+  }
+
+  /// [workerId]'s own `division_id`, for resolving [TaskChangeRequestRepository
+  /// .submit]'s `division_id` — null if unset.
+  Future<int?> getWorkerDivisionId(int workerId) async {
+    final db = await database;
+    final rows = await db.query(
+      'workers',
+      columns: ['division_id'],
+      where: 'offline_worker_id = ?',
+      whereArgs: [workerId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['division_id'] as int?;
+  }
+
+  /// Creates a local, not-yet-submitted task-change-request draft (Scenario
+  /// B of AssignTaskViewModel.save — the proposed task is outside
+  /// [workerId]'s current pricing group). Returns the new row's own local
+  /// id ([TaskPricingChangeRequest.localId]), for
+  /// [TaskChangeRequestRepository.submit] to resubmit later.
+  Future<int> createTaskChangeRequest({
+    required int workerId,
+    required int taskId,
+    int? currentPricingGroupId,
+    required int proposedPricingGroupId,
+    num? oldRate,
+    required num newRate,
+    String? reason,
+    required int requestedBy,
+  }) async {
+    final db = await database;
+    return db.insert('task_pricing_change_requests', {
+      'task_id': taskId,
+      'proposed_worker_id': workerId,
+      'current_pricing_group_id': currentPricingGroupId,
+      'proposed_pricing_group_id': proposedPricingGroupId,
+      'old_rate': oldRate,
+      'new_rate': newRate,
+      'reason': reason,
+      'status': 'pending',
+      'requested_by': requestedBy,
+      'requested_date': AppTime.nowInUserZone().toIso8601String(),
+      'is_synced': 0,
+    });
+  }
+
+  /// The task-change-request draft at local id [localId] (see
+  /// [createTaskChangeRequest]), or null if it doesn't exist — read back
+  /// by [TaskChangeRequestRepository.submit] right before posting it.
+  Future<TaskPricingChangeRequest?> getTaskChangeRequestById(
+    int localId,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'task_pricing_change_requests',
+      where: 'offline_worker_id = ?',
+      whereArgs: [localId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return TaskPricingChangeRequest.fromMap(rows.first);
+  }
+
+  /// Every worker's still-**pending** task-change request (any that's been
+  /// rejected or approved by the backend's own admin workflow drops out —
+  /// this app doesn't implement that workflow itself, only reads its
+  /// outcome via a later fetch), keyed by [TaskPricingChangeRequest.
+  /// proposedWorkerId] — the worker list's "Not Synced"/"Pending Approval"
+  /// row (see WorkerListViewModel.load) shows one *or the other* of those,
+  /// never neither, for exactly the workers present here. One row per
+  /// worker (the latest, if a worker somehow has more than one).
+  Future<Map<int, TaskPricingChangeRequest>>
+  getPendingTaskChangeRequestsByWorker() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT task_pricing_change_requests.*, tasks.task_name AS task_name
+      FROM task_pricing_change_requests
+      JOIN tasks ON tasks.task_id = task_pricing_change_requests.task_id
+      WHERE task_pricing_change_requests.status = 'pending'
+      ORDER BY task_pricing_change_requests.offline_worker_id DESC
+    ''');
+    final byWorker = <int, TaskPricingChangeRequest>{};
+    for (final row in rows) {
+      final request = TaskPricingChangeRequest.fromMap(row);
+      // Rows are ordered newest-first, so the first one seen per worker
+      // (via putIfAbsent) is already the latest.
+      byWorker.putIfAbsent(request.proposedWorkerId, () => request);
+    }
+    return byWorker;
+  }
+
+  /// Marks the task-change-request draft at local id [localId] as
+  /// submitted — called by [TaskChangeRequestRepository.submit] right
+  /// after `POST attendance/request-task-change` succeeds.
+  Future<void> markTaskChangeRequestSynced({
+    required int localId,
+    // Null when the backend applied the change immediately instead of
+    // creating an approval request (no `request_id` in that response
+    // shape — see TaskChangeRequestRepository.submit) — left out of the
+    // update entirely rather than writing a fabricated placeholder,
+    // since `request_id` is UNIQUE and a made-up value (e.g. 0) would
+    // collide across rows the same way a real duplicate id would.
+    int? requestId,
+    required String status,
+    String? requestedDate,
+  }) async {
+    final db = await database;
+    await db.update(
+      'task_pricing_change_requests',
+      {
+        'request_id': ?requestId,
+        'status': status,
+        'is_synced': 1,
+        'requested_date': ?requestedDate,
+      },
+      where: 'offline_worker_id = ?',
+      whereArgs: [localId],
+    );
   }
 
   /// The worker's own checkout-time entry for [workerTaskId] (the
@@ -1596,14 +2057,27 @@ class DatabaseHelper {
   /// MarkAttendanceScreen._showTaskScreenIfNeeded), so an unverified scan
   /// never makes it this far.
   ///
-  /// A first scan of the day on a locally cached holiday (see
-  /// [isTodayHoliday]) is blocked — no row is inserted, and the
-  /// [WorkerScanOutcome.holiday] outcome is returned instead. A worker who
-  /// already checked in before the holiday was synced is unaffected, since
-  /// their row already exists and this only guards the check-in branch.
+  /// Every scan — check-in or checkout — on a locally cached holiday (see
+  /// [isTodayHoliday]) is blocked: no row is inserted and no existing row
+  /// is updated, and the [WorkerScanOutcome.holiday] outcome is returned
+  /// instead so the caller can surface it as a plain "today is a holiday"
+  /// message rather than running it through the normal success flow.
   Future<WorkerAttendanceRecord> recordWorkerScan(int workerId) async {
     final db = await database;
     final today = _todayDateKey();
+
+    if (await isTodayHoliday()) {
+      return WorkerAttendanceRecord(
+        attendanceId: -1,
+        workerId: workerId,
+        attendanceDate: today,
+        checkInTime: null,
+        checkOutTime: null,
+        status: 'holiday',
+        outcome: WorkerScanOutcome.holiday,
+      );
+    }
+
     final existing = await db.query(
       'worker_attendance',
       where: 'worker_id = ? AND attendance_date = ?',
@@ -1612,22 +2086,6 @@ class DatabaseHelper {
     );
 
     if (existing.isEmpty) {
-      // A worker who hasn't checked in yet today cannot check in on a
-      // locally cached holiday — a worker already checked in before the
-      // holiday was synced is unaffected, since that row already exists
-      // and this branch is never reached for them.
-      if (await isTodayHoliday()) {
-        return WorkerAttendanceRecord(
-          attendanceId: -1,
-          workerId: workerId,
-          attendanceDate: today,
-          checkInTime: null,
-          checkOutTime: null,
-          status: 'holiday',
-          outcome: WorkerScanOutcome.holiday,
-        );
-      }
-
       final now = AppTime.nowInUserZone().toIso8601String();
       final row = {
         'worker_id': workerId,
@@ -1802,9 +2260,11 @@ class DatabaseHelper {
       // without one keeps the stored name instead of overwriting it.
       final departmentNamesById = <int, String>{};
       for (final worker in workers) {
+        final departmentId = worker.departmentId;
+        if (departmentId == null) continue;
         final name = worker.departmentName;
         if (name != null && name.trim().isNotEmpty) {
-          departmentNamesById[worker.departmentId] = name;
+          departmentNamesById[departmentId] = name;
         }
       }
       for (final entry in departmentNamesById.entries) {
@@ -1817,10 +2277,12 @@ class DatabaseHelper {
       // still needs a row for the FK. A placeholder is inserted only then,
       // and ignored if the row exists, so it never overwrites a real name.
       for (final worker in workers) {
-        if (departmentNamesById.containsKey(worker.departmentId)) continue;
+        final departmentId = worker.departmentId;
+        if (departmentId == null) continue;
+        if (departmentNamesById.containsKey(departmentId)) continue;
         await txn.insert('departments', {
-          'department_id': worker.departmentId,
-          'department_name': 'Department ${worker.departmentId}',
+          'department_id': departmentId,
+          'department_name': 'Department $departmentId',
         }, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
 
@@ -1841,6 +2303,7 @@ class DatabaseHelper {
           'national_id_image': worker.nationalIdImage,
           'phone_number': worker.phoneNumber,
           'department_id': worker.departmentId,
+          'division_id': worker.divisionId,
           'address': worker.address,
           'face_detection': worker.faceDetection,
           'status': worker.status,
@@ -1856,7 +2319,7 @@ class DatabaseHelper {
 
         final existing = await txn.query(
           'workers',
-          columns: ['offline_worker_id'],
+          columns: ['offline_worker_id', 'face_detection'],
           where: 'national_id = ?',
           whereArgs: [worker.nationalId],
           limit: 1,
@@ -1874,9 +2337,20 @@ class DatabaseHelper {
           });
         } else {
           offlineWorkerId = existing.first['offline_worker_id'] as int;
+          // The server never sends real embeddings over this endpoint (see
+          // Employee.decodeFaceEmbeddings) — only a real local face capture
+          // does. A re-fetch must not clobber an already-captured profile
+          // back to the server's placeholder, so face_detection is left out
+          // of this update entirely once the existing row already has one.
+          final hasLocalFace = Employee.decodeFaceEmbeddings(
+            existing.first['face_detection'],
+          ).isNotEmpty;
+          final updateRow = hasLocalFace
+              ? (Map<String, Object?>.from(row)..remove('face_detection'))
+              : row;
           await txn.update(
             'workers',
-            row,
+            updateRow,
             where: 'offline_worker_id = ?',
             whereArgs: [offlineWorkerId],
           );
@@ -1955,16 +2429,35 @@ class DatabaseHelper {
     final placeholders = List.filled(taskIds.length, '?').join(',');
     final knownTasks = await txn.query(
       'tasks',
-      columns: ['task_id'],
+      columns: ['task_id', 'task_type'],
       where: 'task_id IN ($placeholders)',
       whereArgs: taskIds,
     );
     if (knownTasks.isEmpty) return;
 
+    // This row is created here (import time), not at check-in via
+    // _applyTodaysTaskAssignment — carry the note across the same way that
+    // path does, or it's stuck permanently null for today: once this row
+    // exists, _ensureTodaysWorkerTaskRow's "already has a row for today"
+    // check finds it and skips its own note-writing logic entirely.
+    final workerRows = await txn.query(
+      'workers',
+      columns: ['note'],
+      where: 'offline_worker_id = ?',
+      whereArgs: [offlineWorkerId],
+      limit: 1,
+    );
+    final note = workerRows.isNotEmpty
+        ? workerRows.first['note'] as String?
+        : null;
+
     final now = AppTime.nowInUserZone().toIso8601String();
     final today = _todayDateKey();
     final batch = txn.batch();
     for (final task in knownTasks) {
+      final taskType = task['task_type'] as String?;
+      final isDailyOrMonthly =
+          taskType == TaskType.daily.name || taskType == TaskType.monthly.name;
       batch.insert('worker_tasks', {
         'worker_id': offlineWorkerId,
         'task_id': task['task_id'] as int,
@@ -1972,6 +2465,10 @@ class DatabaseHelper {
         'created_at': now,
         'updated_at': now,
         'task_date': today,
+        'task_note': note,
+        // Same default as _applyTodaysTaskAssignment — see its own doc
+        // comment for why Daily/Monthly skip the column's 'pending' default.
+        if (isDailyOrMonthly) 'task_status': 'approved',
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
@@ -2290,8 +2787,15 @@ class DatabaseHelper {
   /// never gets two rows:
   /// 1. the row already holding the server's `worker_task_id`;
   /// 2. the worker's row for this task on the same task_date;
-  /// 3. the worker's most recent row for this task that has no server id yet
-  ///    (a locally assigned task the server has now confirmed).
+  /// 3. the worker's most recent row for this task, no newer than [taskDate],
+  ///    that has no server id yet (a locally assigned task the server has
+  ///    now confirmed, whose own local task_date doesn't exactly match the
+  ///    server's — e.g. a timezone rounding difference). Capped at
+  ///    [taskDate] so a record confirming an *older* day's assignment can
+  ///    never match a *newer*, still-unrelated local row instead — e.g.
+  ///    today's fresh check-in row getting silently overwritten with
+  ///    yesterday's already-reviewed task_status/supervisor_note/photo
+  ///    just because it was the most recent unsynced row for that task.
   Future<int?> _findExistingWorkerTaskRow(
     DatabaseExecutor txn, {
     required int offlineWorkerId,
@@ -2324,8 +2828,10 @@ class DatabaseHelper {
     final unsynced = await txn.query(
       'worker_tasks',
       columns: ['offline_worker_id'],
-      where: 'worker_id = ? AND task_id = ? AND worker_task_id IS NULL',
-      whereArgs: [offlineWorkerId, taskId],
+      where:
+          'worker_id = ? AND task_id = ? AND worker_task_id IS NULL '
+          'AND task_date <= ?',
+      whereArgs: [offlineWorkerId, taskId, taskDate],
       orderBy: 'task_date DESC',
       limit: 1,
     );

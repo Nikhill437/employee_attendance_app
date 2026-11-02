@@ -3,8 +3,10 @@ import '../../../data/models/auth/auth_user_model.dart';
 import '../../../data/models/auth/login_request_model.dart';
 import '../../../data/repositories/auth_repository.dart';
 
-/// Drives the login screen: employee-ID lookup, then face verification for
-/// that one claimed identity.
+/// Drives the login screen: either employee-ID lookup then face
+/// verification for that one claimed identity ([authenticate]), or face
+/// identification across every enrolled worker with no ID at all
+/// ([identify]).
 class LoginViewModel extends BaseViewModel {
   final AuthRepository _authRepository;
 
@@ -50,6 +52,24 @@ class LoginViewModel extends BaseViewModel {
     final result = await _authRepository.login(
       LoginRequest(employeeId: employeeId, faceEmbedding: embedding),
     );
+
+    if (!result.isSuccess) {
+      _errorMessage = result.errorMessage;
+      safeNotify();
+      return null;
+    }
+
+    _authenticatedUser = result.user;
+    safeNotify();
+    return result.user;
+  }
+
+  /// Identifies a captured embedding against every enrolled worker (1:N)
+  /// and, on success, marks attendance — the no-ID kiosk counterpart to
+  /// [authenticate]'s single-claimed-identity verification. Returns the
+  /// authenticated user, or null so the scan screen keeps scanning.
+  Future<AuthUser?> identify(List<double> embedding) async {
+    final result = await _authRepository.identify(embedding);
 
     if (!result.isSuccess) {
       _errorMessage = result.errorMessage;

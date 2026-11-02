@@ -125,9 +125,6 @@ class DashboardViewModel extends BaseViewModel {
     _setupCompleted = await _setupStore.completedSteps();
 
     final enrolled = await _employees.getUnique();
-    final presentToday = await _attendance.countPresentOn(
-      AppTime.nowInUserZone(),
-    );
     // Today's check-ins and check-outs, from the local worker_attendance rows.
     final todayAttendance = await _workerAttendance
         .getTodayAttendanceByWorker();
@@ -138,23 +135,41 @@ class DashboardViewModel extends BaseViewModel {
       _pendingNoticeDue = await _workerAttendance.hasUnsyncedData();
     }
 
-    // The server response for a fetch includes every department's workers,
+    // The server response for a fetch includes every division's workers,
     // and all of them are stored locally (see WorkerImportRepository) — but
-    // the Employee List Data card's own counts only cover the supervisor's
-    // own department, same as worker_list_screen.dart's list. Falls back to
-    // the unfiltered count when the supervisor's department couldn't be
-    // determined, rather than showing a confusingly empty 0.
-    final supervisorDepartmentId = await _session.getSupervisorDepartmentId();
-    final departmentEnrolled = supervisorDepartmentId == null
+    // the Employee List Data and Employee Attendance cards' own counts only
+    // cover the supervisor's own division, same as worker_list_screen.
+    // dart's list (scoped by division, not department — see
+    // WorkerListViewModel.workers). Falls back to the unfiltered counts
+    // when the supervisor's division couldn't be determined, rather than
+    // showing a confusingly empty 0.
+    final supervisorDivisionId = await _session.getSupervisorDivisionId();
+    final divisionEnrolled = supervisorDivisionId == null
         ? enrolled
-        : enrolled
-              .where((e) => e.departmentId == supervisorDepartmentId)
-              .toList();
+        : enrolled.where((e) => e.divisionId == supervisorDivisionId).toList();
+
+    final presentToday = await _attendance.countPresentOn(
+      AppTime.nowInUserZone(),
+      employeeIds: supervisorDivisionId == null
+          ? null
+          : divisionEnrolled.map((e) => e.employeeId).toSet(),
+    );
+    // worker_attendance is keyed by the local offline_worker_id (same as
+    // Employee.id), so today's check-in/check-out counts are scoped the
+    // same way by restricting to the division roster's own ids.
+    final divisionWorkerIds = supervisorDivisionId == null
+        ? null
+        : divisionEnrolled.map((e) => e.id).whereType<int>().toSet();
+    final divisionTodayAttendance = divisionWorkerIds == null
+        ? todayAttendance.values
+        : todayAttendance.entries
+              .where((entry) => divisionWorkerIds.contains(entry.key))
+              .map((entry) => entry.value);
 
     _roster = enrolled;
     _summary = DashboardSummary(
-      totalEmployees: departmentEnrolled.length,
-      offlineEmployees: departmentEnrolled.where((e) => !e.isSynced).length,
+      totalEmployees: divisionEnrolled.length,
+      offlineEmployees: divisionEnrolled.where((e) => !e.isSynced).length,
       employeesLastFetchedAt: await _workerImport.lastSyncedAt(),
       departmentsTotal: await _lookup.getDepartmentCount(),
       departmentsLastFetchedAt: await _lookup.departmentsLastSyncedAt(),
@@ -169,8 +184,8 @@ class DashboardViewModel extends BaseViewModel {
       unsyncedAttendance: await _workerAttendance.getUnsyncedAttendanceCount(),
       attendanceLastFetchedAt: await _workerAttendance.lastSyncedAt(),
       presentToday: presentToday,
-      checkedIn: todayAttendance.values.where((a) => a.hasCheckedIn).length,
-      checkedOut: todayAttendance.values.where((a) => a.hasCheckedOut).length,
+      checkedIn: divisionTodayAttendance.where((a) => a.hasCheckedIn).length,
+      checkedOut: divisionTodayAttendance.where((a) => a.hasCheckedOut).length,
     );
 
     _isLoading = false;

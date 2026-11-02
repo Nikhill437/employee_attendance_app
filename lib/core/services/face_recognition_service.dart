@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
+import '../../data/models/employee_model.dart';
 import '../../data/models/face_analysis_model.dart';
 import 'inspireface_bridge.dart';
 
@@ -17,6 +18,16 @@ class FaceRecognitionService {
   // recommended threshold; validate against actual enrollment photos before
   // trusting this default).
   static const double matchThreshold = 0.65;
+
+  // Minimum lead the best candidate must have over the runner-up for a 1:N
+  // (walk-up) identification to accept it — on top of matchThreshold, not
+  // instead of it. verify()'s single threshold is enough for 1:1 (there's
+  // only one candidate), but identify() compares against every enrolled
+  // worker, so two similar-looking people can both clear matchThreshold;
+  // this margin is what stops that from picking one of them at random.
+  // Same caveat as matchThreshold: needs validation against real enrollment
+  // photos at production roster size before being trusted.
+  static const double identifyMargin = 0.08;
 
   // Below this, a detected face is treated as a spoof attempt (photo/video)
   // rather than a live person. InspireFace-specific; needs validation
@@ -84,6 +95,37 @@ class FaceRecognitionService {
       '(threshold=$matchThreshold)',
     );
     return score >= matchThreshold;
+  }
+
+  /// Identifies which of [candidates] (every enrolled worker, each with one
+  /// or more pose embeddings) [embedding] belongs to — 1:N, searched across
+  /// everyone rather than verified against one claimed identity. Returns
+  /// null when no candidate clears [matchThreshold], or the best candidate
+  /// doesn't lead the runner-up by at least [identifyMargin] (too close to
+  /// call safely). A candidate with no enrolled embeddings is skipped
+  /// rather than scored.
+  Employee? identify(List<double> embedding, List<Employee> candidates) {
+    Employee? best;
+    double bestScore = -1;
+    double secondScore = -1;
+    for (final candidate in candidates) {
+      if (candidate.faceEmbeddings.isEmpty) continue;
+      final score = bestSimilarity(embedding, candidate.faceEmbeddings);
+      if (score > bestScore) {
+        secondScore = bestScore;
+        bestScore = score;
+        best = candidate;
+      } else if (score > secondScore) {
+        secondScore = score;
+      }
+    }
+    debugPrint(
+      'FaceRecognitionService: identify best=$bestScore second=$secondScore '
+      '(threshold=$matchThreshold, margin=$identifyMargin)',
+    );
+    if (best == null || bestScore < matchThreshold) return null;
+    if (bestScore - secondScore < identifyMargin) return null;
+    return best;
   }
 
   void dispose() {}

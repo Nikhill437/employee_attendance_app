@@ -33,6 +33,14 @@ class Employee {
   /// a selection.
   final int? departmentId;
 
+  /// FK-ish id into the backend's divisions (mirrors `workers.division_id`)
+  /// — superseding [departmentId] as the backend's scoping dimension for
+  /// which supervisor a worker belongs to (a synced/imported worker can
+  /// have this set with [departmentId] null; see
+  /// DatabaseHelper.upsertRemoteWorkers). Not set by the enrollment form —
+  /// only ever populated from a server response.
+  final int? divisionId;
+
   /// Local file path of the captured National ID photo (see
   /// AppImageCaptureField / EnrollmentFormViewModel), copied into permanent
   /// app storage at capture time. Required at enrollment — null only for
@@ -106,6 +114,7 @@ class Employee {
     this.address,
     this.department,
     this.departmentId,
+    this.divisionId,
     this.nationalIdImage,
     this.isSynced = false,
     this.syncedAt,
@@ -206,7 +215,7 @@ class Employee {
   /// been synced or imported) — see the class doc comment above
   /// DatabaseHelper._createWorkerTables.
   factory Employee.fromMap(Map<String, dynamic> map) {
-    final embeddings = _decodeEmbeddings(map['face_detection']);
+    final embeddings = decodeFaceEmbeddings(map['face_detection']);
     return Employee(
       id: map['offline_worker_id'] as int?,
       name: map['full_name'] as String,
@@ -225,6 +234,7 @@ class Employee {
       address: map['address'] as String?,
       department: map['department_name'] as String?,
       departmentId: map['department_id'] as int?,
+      divisionId: map['division_id'] as int?,
       nationalIdImage: map['national_id_image'] as String?,
       isSynced: (map['is_synced'] as int? ?? 0) == 1,
       syncedAt: DateTime.tryParse((map['synced_at'] as String?) ?? ''),
@@ -247,7 +257,12 @@ class Employee {
   /// here (instead of letting jsonDecode throw) is correct either way: a
   /// worker without a real, usable face profile should read as
   /// unverified/not face-matchable, not crash the app.
-  static List<List<double>> _decodeEmbeddings(Object? raw) {
+  ///
+  /// Public so DatabaseHelper.upsertRemoteWorkers can check an existing
+  /// row's own stored value before deciding whether a server re-fetch is
+  /// allowed to overwrite it (a placeholder must never clobber a real,
+  /// already-captured profile).
+  static List<List<double>> decodeFaceEmbeddings(Object? raw) {
     if (raw is! String) return const [];
     try {
       final decoded = jsonDecode(raw);

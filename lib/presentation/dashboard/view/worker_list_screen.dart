@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/network/api_exception.dart';
-import '../../../core/routes/app_routes.dart';
+// import '../../../core/routes/app_routes.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../core/utils/date_time_formatter.dart';
 import '../../../data/models/worker_model.dart';
+import '../../../data/repositories/lookup_repository.dart';
 import '../../auth/view/mark_attendance_screen.dart';
 import '../../employee/view/enrollment_form_screen.dart';
 import '../../common/widgets/common_widgets.dart';
@@ -27,6 +28,7 @@ class WorkerListScreen extends StatefulWidget {
 class _WorkerListScreenState extends State<WorkerListScreen> {
   late final WorkerListViewModel _viewModel;
   late final bool _ownsViewModel;
+  final LookupRepository _lookupRepository = LookupRepository();
 
   bool _isSearching = false;
 
@@ -59,10 +61,10 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   }
 
   /// Opens enrollment, reloading the roster if a worker was added.
-  Future<void> _enrollWorker() async {
-    await Navigator.pushNamed(context, AppRoutes.enrollmentForm);
-    await _viewModel.load();
-  }
+  // Future<void> _enrollWorker() async {
+  //   await Navigator.pushNamed(context, AppRoutes.enrollmentForm);
+  //   await _viewModel.load();
+  // }
 
   /// Confirms before removing a worker — deletion also clears their
   /// attendance history, so it isn't reversible.
@@ -70,7 +72,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete worker?'),
+        title: const Text('Delete employee?'),
         content: Text(
           'This removes ${worker.name} and their attendance history. '
           'This cannot be undone.',
@@ -104,22 +106,32 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   }
 
   /// Whether this tap should send only the worker's profile change. That
-  /// applies to a non-Pending worker with a pending department or type change
-  /// whose attendance can't go yet (not checked out, or the task isn't
-  /// Approved/Rejected).
+  /// applies to a non-Pending worker with a pending department or type
+  /// change whose attendance can't go yet (not checked out today) —
+  /// whether today's task has been reviewed (Approved/Rejected) or is still
+  /// Pending doesn't affect whether the attendance itself is eligible.
   bool _isProfileOnlySync(Worker worker) {
     if (worker.status == 'pending') return false;
     if (!worker.hasPendingDepartmentOrTypeChange) return false;
-    final attendanceReady =
-        worker.hasCheckedOutToday &&
-        (worker.taskStatus == 'approved' || worker.taskStatus == 'rejected');
-    return !attendanceReady;
+    return !worker.hasCheckedOutToday;
   }
 
   /// Pushes a single worker to the backend — the sync endpoint only takes
   /// one worker per call, so this runs per-card rather than as a bulk
   /// "sync everyone" action.
+  /// The card's single Not Synced/Sync button, for either of two jobs —
+  /// never both — decided here by [worker]'s own local state, not by a
+  /// second button: a pending, not-yet-submitted task-change-request
+  /// draft (see Worker.pendingTaskChangeRequestId) takes over the button
+  /// until it's submitted, falling back to the worker's own normal
+  /// profile/attendance sync otherwise.
   Future<void> _syncWorker(Worker worker) async {
+    final localRequestId = worker.pendingTaskChangeRequestId;
+    if (localRequestId != null && !worker.pendingTaskChangeIsSynced) {
+      await _syncTaskChange(worker, localRequestId);
+      return;
+    }
+
     final messenger = ScaffoldMessenger.of(context);
     final error = await _viewModel.syncWorker(
       worker.employeeId,
@@ -134,6 +146,28 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
           error == null
               ? '${worker.name} synced'
               : 'Could not sync ${worker.name}: $error',
+        ),
+      ),
+    );
+  }
+
+  /// Submits [worker]'s pending task-change-request draft at local id
+  /// [localRequestId] (see WorkerListViewModel.syncTaskChangeRequest's own
+  /// doc comment) — the button's job while [_syncWorker] finds one still
+  /// unsubmitted.
+  Future<void> _syncTaskChange(Worker worker, int localRequestId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final error = await _viewModel.syncTaskChangeRequest(
+      worker.employeeId,
+      localRequestId,
+    );
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? 'Task change request submitted for approval'
+              : 'Could not submit task change request: $error',
         ),
       ),
     );
@@ -188,6 +222,19 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       );
       return;
     }
+    // Blocked outright on a locally cached holiday — never even opens the
+    // camera/face-scan screen, so this worker can't be scanned at all, let
+    // alone marked, on a holiday.
+    if (await _lookupRepository.isTodayHoliday()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Today is a holiday. Attendance cannot be marked.'),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
     await Navigator.push<bool>(
       context,
       MaterialPageRoute(
@@ -264,7 +311,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       messenger.showSnackBar(
         SnackBar(
           content: Text(
-            'Could not fetch workers: ${ApiException.messageFor(e)}',
+            'Could not fetch employee: ${ApiException.messageFor(e)}',
           ),
         ),
       );
@@ -277,11 +324,11 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
       subtitle: 'Today, ${DateTimeFormatter.dayLabel(AppTime.nowInUserZone())}',
       titleOverride: _isSearching ? _buildSearchField() : null,
       actions: [
-        CircleHeaderAction(
-          icon: Icons.add,
-          onPressed: _enrollWorker,
-          tooltip: 'Enroll employee',
-        ),
+        // CircleHeaderAction(
+        //   icon: Icons.add,
+        //   onPressed: _enrollWorker,
+        //   tooltip: 'Enroll employee',
+        // ),
         CircleHeaderAction(
           icon: _isSearching ? Icons.close : Icons.search,
           onPressed: _toggleSearch,
@@ -307,7 +354,7 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
             : CircleHeaderAction(
                 icon: Icons.cloud_download_outlined,
                 onPressed: _fetchFromServer,
-                tooltip: 'Fetch workers from server',
+                tooltip: 'Fetch employee from server',
               ),
       ],
     );
@@ -393,7 +440,14 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
               background: _buildDeleteBackground(),
               child: _WorkerCard(
                 worker: worker,
-                isSyncing: _viewModel.isSyncing(worker.employeeId),
+                // The button's one job for this worker right now — see
+                // _syncWorker's own doc comment — so only the matching
+                // in-flight flag drives its spinner.
+                isSyncing:
+                    worker.pendingTaskChangeRequestId != null &&
+                        !worker.pendingTaskChangeIsSynced
+                    ? _viewModel.isSyncingTaskChange(worker.employeeId)
+                    : _viewModel.isSyncing(worker.employeeId),
                 onSync: () => _syncWorker(worker),
                 onViewTasks: () => _openTasks(worker),
                 onMarkAttendance: () => _openMarkAttendance(worker),
@@ -550,9 +604,25 @@ class _WorkerCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: worker.status == 'pending' || !worker.hasFaceEnrollment
+            ? Colors.orange.withOpacity(0.05)
+            : worker.status == 'rejected'
+            ? Colors.red.withOpacity(0.05)
+            : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.cardBorder),
+        border: Border.all(
+          color: worker.status == 'pending' || !worker.hasFaceEnrollment
+              ? Colors.orange.withOpacity(0.7)
+              : worker.status == 'rejected'
+              ? Colors.red.withOpacity(0.7)
+              : Colors.white,
+          width:
+              worker.status == 'pending' ||
+                  worker.status == 'rejected' ||
+                  !worker.hasFaceEnrollment
+              ? 3
+              : 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: AppColors.ink.withValues(alpha: 0.04),
@@ -571,11 +641,13 @@ class _WorkerCard extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(child: _buildIdentity()),
               const SizedBox(width: 8),
-              // Edit is offered only while the worker is Pending and not yet
-              // synced (s_sync 0). Approved and Rejected workers' details are
-              // locked, and a synced Pending worker can't be edited.
-              if ((worker.status == 'pending' && !worker.isSynced) ||
-                  worker.status == 'rejected')
+              // Edit is offered for Pending and Rejected workers; once a
+              // worker is Approved their details are locked — unless they
+              // have no face enrolled at all, in which case Edit stays
+              // available so one can be added.
+              if (worker.status == 'pending' ||
+                  worker.status == 'rejected' ||
+                  !worker.hasFaceEnrollment)
                 IconButton(
                   tooltip: 'Edit worker',
                   visualDensity: VisualDensity.compact,
@@ -586,6 +658,21 @@ class _WorkerCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+          const Divider(height: 1, color: AppColors.cardBorder),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _StatusText(prefix: 'Employee Status: '),
+              _StatusText(
+                label: _workerStatusLabel,
+                color: _workerStatusColor,
+                showDot: true,
+                alignEnd: true,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
           const Divider(height: 1, color: AppColors.cardBorder),
           const SizedBox(height: 10),
           Row(
@@ -621,11 +708,22 @@ class _WorkerCard extends StatelessWidget {
   /// unsynced checkout sitting in `worker_attendance`.
   bool get _effectiveSynced => worker.isFullySynced;
 
-  /// The NOT SYNCED / SYNCED button is tappable only when the worker isn't
-  /// synced yet, today's checkout is recorded, and today's task status is
-  /// Approved or Rejected. A Pending task status (or no task row today)
-  /// keeps it disabled.
+  /// The NOT SYNCED / SYNCED button is tappable whenever the worker isn't
+  /// synced yet and today's checkout is recorded — the supervisor reviewing
+  /// today's task (setting it to Approved/Rejected) is optional, not a
+  /// precondition: a task left Pending still has whatever attendance/task
+  /// data is actually eligible to sync, and that shouldn't wait on a review
+  /// the supervisor may never make.
   bool get _canTapSync {
+    // A pending, not-yet-submitted task-change-request draft (see
+    // Worker.pendingTaskChangeRequestId) always makes the button tappable
+    // — tapping it submits that instead of the worker's own profile/
+    // attendance sync (see _WorkerListScreenState._syncWorker) — on top
+    // of, not instead of, every condition below.
+    if (worker.pendingTaskChangeRequestId != null &&
+        !worker.pendingTaskChangeIsSynced) {
+      return true;
+    }
     if (_effectiveSynced) return false;
     // A Pending worker can sync without a checkout or task status.
     if (worker.status == 'pending') return true;
@@ -644,9 +742,7 @@ class _WorkerCard extends StatelessWidget {
     // record is still pending, and the Approved sync path below already
     // pushes every unsynced day, not just today's.
     if (worker.status == 'approved' && !worker.hasCheckedInToday) return true;
-    final taskStatus = worker.taskStatus;
-    return worker.hasCheckedOutToday &&
-        (taskStatus == 'approved' || taskStatus == 'rejected');
+    return worker.hasCheckedOutToday;
   }
 
   /// Once today's attendance has both a check-in and a check-out, there's
@@ -656,8 +752,17 @@ class _WorkerCard extends StatelessWidget {
   bool get _hideMarkAttendance =>
       worker.hasCheckedInToday && worker.hasCheckedOutToday;
 
+  /// The card's one Not Synced/Sync row, unchanged in appearance — see
+  /// [_canTapSync] and _WorkerListScreenState._syncWorker's own doc
+  /// comments for how a pending, not-yet-submitted task-change-request
+  /// draft (see Worker.pendingTaskChangeRequestId) takes over what
+  /// tapping the same button does, without this row ever looking any
+  /// different for it.
   Widget _buildSyncRow() {
-    final effectiveSynced = _effectiveSynced;
+    final hasUnsyncedTaskChange =
+        worker.pendingTaskChangeRequestId != null &&
+        !worker.pendingTaskChangeIsSynced;
+    final effectiveSynced = hasUnsyncedTaskChange ? false : _effectiveSynced;
     return Row(
       children: [
         Icon(
@@ -879,7 +984,6 @@ class _WorkerCard extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          
           '${worker.remoteEmployeeId?.toString() ?? '—'} • ${worker.department?.isNotEmpty == true ? worker.department : worker.role}',
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
@@ -888,13 +992,9 @@ class _WorkerCard extends StatelessWidget {
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 16),
+
+        // const SizedBox(height: 16),
         // if (worker.taskType != null) TaskTypeChip(taskType: worker.taskType!),
-        Text('Employee Status:',
-            style: const TextStyle(
-              fontSize: 13.5,
-              color: AppColors.slate,
-            )),
       ],
     );
   }
@@ -938,13 +1038,6 @@ class _WorkerCard extends StatelessWidget {
               style: const TextStyle(fontSize: 12.5, color: AppColors.muted),
             ),
           ],
-        ),
-        const SizedBox(height: 8),
-        _StatusText(
-          label: _workerStatusLabel,
-          color: _workerStatusColor,
-          showDot: worker.status != 'approved',
-          alignEnd: true,
         ),
       ],
     );

@@ -54,12 +54,28 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
   late final WorkerReportViewModel _viewModel;
   final EmployeeRepository _employees = EmployeeRepository();
 
+  /// `workers.note` — the standing task note set from the enrollment form
+  /// or the last task assignment (see DatabaseHelper.assignWorkerTask),
+  /// distinct from a specific day's `worker_tasks.task_note` shown on the
+  /// Day Details screen. Null until [_loadWorkerNote] resolves, or if
+  /// there's none set.
+  String? _workerNote;
+
   @override
   void initState() {
     super.initState();
     _viewModel =
         widget.viewModel ?? WorkerReportViewModel(workerId: widget.workerId);
     _viewModel.load();
+    _loadWorkerNote();
+  }
+
+  Future<void> _loadWorkerNote() async {
+    final employeeId = widget.employeeId;
+    if (employeeId == null) return;
+    final employee = await _employees.findByEmployeeId(employeeId);
+    if (!mounted) return;
+    setState(() => _workerNote = employee?.note);
   }
 
   @override
@@ -268,6 +284,12 @@ class _WorkerReportScreenState extends State<WorkerReportScreen> {
           daysPresent: _viewModel.daysPresent,
           daysSynced: _viewModel.daysSynced,
         ),
+        // if (_workerNote != null && _workerNote!.trim().isNotEmpty) ...[
+        //   const SizedBox(height: 14),
+        //   AppCard(
+        //     child: _TaskDetailLine(label: 'Note', value: _workerNote!.trim()),
+        //   ),
+        // ],
         const SizedBox(height: 20),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -535,7 +557,9 @@ class _DayCard extends StatelessWidget {
   List<WorkerTask> get _visibleTasks {
     final active = day.tasks.where((task) => task.status == 'active').toList();
     if (active.isNotEmpty) return active;
-    final synced = day.tasks.where((task) => task.realWorkerTaskId != null).toList();
+    final synced = day.tasks
+        .where((task) => task.realWorkerTaskId != null)
+        .toList();
     if (synced.isNotEmpty) {
       synced.sort((a, b) => a.workerTaskId.compareTo(b.workerTaskId));
       return [synced.last];

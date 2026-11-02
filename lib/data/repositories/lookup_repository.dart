@@ -132,6 +132,13 @@ class LookupRepository {
   Future<int> getTaskCatalogCount() => _dbHelper.getTaskCatalogCount();
   Future<int> getHolidayCount() => _dbHelper.getHolidayCount();
 
+  /// Whether today falls within any locally cached holiday — the pre-check
+  /// before even opening the camera/face-scan screen for a check-in or
+  /// checkout attempt (see MarkAttendanceScreen, which also re-checks this
+  /// itself once the scan completes, since a holiday can be synced down
+  /// mid-scan).
+  Future<bool> isTodayHoliday() => _dbHelper.isTodayHoliday();
+
   /// The last successful department/task sync's start time, in the
   /// supervisor's own timezone (see AppTime) — null if none has run yet.
   Future<DateTime?> departmentsLastSyncedAt() async {

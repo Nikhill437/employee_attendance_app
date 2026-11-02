@@ -85,7 +85,8 @@ class _FakeAttendanceRepository extends AttendanceRepository {
   Future<List<AttendanceLog>> getAllLogs() async => const [];
 
   @override
-  Future<int> countPresentOn(DateTime day) async => present;
+  Future<int> countPresentOn(DateTime day, {Set<String>? employeeIds}) async =>
+      present;
 }
 
 class _FakeTaskRepository extends TaskRepository {

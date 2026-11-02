@@ -1,7 +1,6 @@
 import 'package:employee_attendance_app/presentation/settings/view/settings_screen.dart';
 import 'package:flutter/material.dart';
 
-import '../../../core/routes/app_routes.dart';
 import '../../../core/routes/section_navigation.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/app_time.dart';
@@ -388,13 +387,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 const _DashboardHeader(),
                 const SizedBox(height: 24),
-                _QuickActions(
-                  onEnroll: () =>
-                      Navigator.pushNamed(context, AppRoutes.enrollmentForm),
-                  onViewWorkers: () =>
-                      Navigator.pushNamed(context, AppRoutes.workerList),
-                ),
-                const SizedBox(height: 14),
+                // _QuickActions(
+                //   onViewWorkers: () =>
+                //       Navigator.pushNamed(context, AppRoutes.workerList),
+                // ),
+                // const SizedBox(height: 14),
                 _EmployeeListAndTasksCard(
                   isFetching:
                       _viewModel.isImportingWorkers ||
@@ -625,7 +622,6 @@ class _DashboardHeader extends StatelessWidget {
 //     );
 //   }
 // }
-
 
 /// A small pill showing how many changed records the server reports for
 /// one of Workers/Departments/Tasks (`attendance/updated-counts`) — hidden
@@ -1452,7 +1448,6 @@ class _MiniStat extends StatelessWidget {
 //   }
 // }
 
-
 /// "Last synced: 10:30 AM", or an em dash while nothing has synced yet.
 class _LastSynced extends StatelessWidget {
   final DateTime? syncedAt;
@@ -1497,37 +1492,21 @@ class _LastSynced extends StatelessWidget {
   }
 }
 
-/// The two things a supervisor most often does from the dashboard.
+/// The one thing a supervisor most often does from the dashboard — worker
+/// registration itself now happens on the web app, not here.
 class _QuickActions extends StatelessWidget {
-  final VoidCallback onEnroll;
   final VoidCallback onViewWorkers;
 
-  const _QuickActions({required this.onEnroll, required this.onViewWorkers});
+  const _QuickActions({required this.onViewWorkers});
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _QuickAction(
-            icon: Icons.person_add_alt_1,
-            label: 'Enroll Employee',
-            background: AppColors.deepGreen,
-            foreground: Colors.white,
-            onTap: onEnroll,
-          ),
-        ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: _QuickAction(
-            icon: Icons.groups_outlined,
-            label: 'Employee List',
-            background: Colors.white,
-            foreground: AppColors.deepGreen,
-            onTap: onViewWorkers,
-          ),
-        ),
-      ],
+    return _QuickAction(
+      icon: Icons.groups_outlined,
+      label: 'Employee List',
+      background: AppColors.deepGreen,
+      foreground: Colors.white,
+      onTap: onViewWorkers,
     );
   }
 }

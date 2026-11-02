@@ -8,8 +8,10 @@ import '../models/employee_model.dart';
 import 'attendance_repository.dart';
 import 'employee_repository.dart';
 
-/// Face-based authentication: 1:1 verification of a claimed employeeId, and
-/// the attendance log written when it succeeds.
+/// Face-based authentication: 1:1 verification of a claimed employeeId
+/// ([login], the supervisor-initiated flow) or 1:N identification across
+/// every enrolled worker ([identify], the no-ID kiosk flow), and the
+/// attendance log written when either succeeds.
 class AuthRepository {
   final EmployeeRepository _employees;
   final AttendanceRepository _attendance;
@@ -70,6 +72,36 @@ class AuthRepository {
     if (!matched) return const LoginResult.faceNotMatched();
 
     final user = AuthUser.fromEmployee(employee);
+    await _attendance.log(
+      AttendanceLog(
+        employeeId: user.employeeId,
+        employeeName: user.name,
+        loginTime: user.authenticatedAt,
+      ),
+    );
+
+    _session = AuthSession.signedIn(user);
+    return LoginResult.success(user);
+  }
+
+  /// Identifies the captured embedding against every enrolled **approved**
+  /// worker (1:N), rather than verifying a single claimed employeeId — the
+  /// walk-up kiosk flow reached with no ID entered (see
+  /// mark_attendance_screen.dart). Restricted to approved workers: unlike
+  /// 1:1 [login] (where the supervisor already named a specific worker to
+  /// verify against), walk-up identification has no claimed identity to
+  /// vouch for a pending/rejected worker being who they say they are, so
+  /// it doesn't let one check in just because they have a captured face.
+  /// On a confident, unambiguous match, records the attendance log and
+  /// opens the session exactly as [login] does for 1:1.
+  Future<LoginResult> identify(List<double> embedding) async {
+    final candidates = (await _employees.getAll())
+        .where((employee) => employee.status == 'approved')
+        .toList();
+    final matched = _faceService.identify(embedding, candidates);
+    if (matched == null) return const LoginResult.faceNotMatched();
+
+    final user = AuthUser.fromEmployee(matched);
     await _attendance.log(
       AttendanceLog(
         employeeId: user.employeeId,

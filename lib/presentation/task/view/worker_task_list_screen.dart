@@ -69,7 +69,7 @@ class _WorkerTaskListScreenState extends State<WorkerTaskListScreen> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: AppSecondaryButton(
-                label: 'Go Back',
+                label: 'Done',
                 onPressed: () => Navigator.maybePop(context),
               ),
             ),

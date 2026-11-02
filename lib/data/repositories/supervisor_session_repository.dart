@@ -85,4 +85,59 @@ class SupervisorSessionRepository {
     }
     return null;
   }
+
+  /// The supervisor's division id from the stored login response, for
+  /// scoping the worker list (a worker's division must match the
+  /// supervisor's own — see WorkerListViewModel.workers). Same defensive
+  /// multi-key-path approach as [getSupervisorDepartmentId], since the
+  /// field's exact placement in the login response isn't confirmed beyond
+  /// a `division_id` key reported alongside worker rows from a different
+  /// endpoint (`attendance/list`) — adjust here if the login response
+  /// turns out to place it elsewhere.
+  Future<int?> getSupervisorDivisionId() async {
+    final session = await getSession();
+    if (session == null) return null;
+    final user = session['user'];
+
+    final candidates = <Object?>[
+      session['division_id'],
+      session['divisionId'],
+      if (user is Map) user['division_id'],
+      if (user is Map) user['divisionId'],
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate is int) return candidate;
+      if (candidate is String) {
+        final parsed = int.tryParse(candidate);
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
+
+  /// The signed-in supervisor's own id (`user.id` in the confirmed login
+  /// response — see [getSupervisorDepartmentId]'s doc comment), for
+  /// `task_pricing_change_requests.requested_by` (see
+  /// TaskChangeRequestRepository). Null only if nothing is signed in, or
+  /// the stored session predates this field.
+  Future<int?> getSupervisorId() async {
+    final session = await getSession();
+    if (session == null) return null;
+    final user = session['user'];
+
+    final candidates = <Object?>[
+      session['id'],
+      if (user is Map) user['id'],
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate is int) return candidate;
+      if (candidate is String) {
+        final parsed = int.tryParse(candidate);
+        if (parsed != null) return parsed;
+      }
+    }
+    return null;
+  }
 }
