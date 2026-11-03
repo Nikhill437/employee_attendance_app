@@ -28,7 +28,7 @@ class BrandHeader extends StatelessWidget {
           fit: BoxFit.contain,
         ),
         if (showTagline) ...[
-          const SizedBox(height: 10),
+          // const SizedBox(height: 10),
           const Text(
             'SMART ATTENDANCE SYSTEM',
             style: TextStyle(

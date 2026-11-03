@@ -105,8 +105,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 23),
                 Text(
                   'v$_appVersion',
-                  style: const TextStyle(letterSpacing: 1.2,
-              color: Colors.white70,),
+                  style: const TextStyle(
+                    letterSpacing: 1.2,
+                    color: Colors.white70,
+                  ),
                 ),
                 const SizedBox(height: 20),
               ],
@@ -128,11 +130,11 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             SizedBox(height: MediaQuery.of(context).size.height * 0.08),
             const BrandHeader(
-              logoWidth: 320,
-              logoHeight: 220,
+              logoWidth: 220,
+              // logoHeight: 220,
               showTagline: true,
             ),
-            const SizedBox(height: 60),
+            SizedBox(height: MediaQuery.of(context).size.height * 0.1),
             AppTextField(
               label: 'Username or Email',
               hint: 'Enter your username',
@@ -164,10 +166,18 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 28),
             AppPrimaryButton(label: 'Login', onPressed: _login),
             SizedBox(height: 4),
-            TextButton(onPressed: ()=> Navigator.pop(context), child: Text(
-                    'Back to Home',
-                    style: TextStyle(fontSize: 16, color: Colors.white,  decoration: TextDecoration.underline,
-            decorationColor: Colors.white,),)),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(
+                'Back to Home',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.white,
+                  decoration: TextDecoration.underline,
+                  decorationColor: Colors.white,
+                ),
+              ),
+            ),
           ],
         ),
       ),

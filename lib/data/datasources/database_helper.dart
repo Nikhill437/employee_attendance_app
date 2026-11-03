@@ -1320,7 +1320,9 @@ class DatabaseHelper {
       SELECT ? AS worker_id, tasks.task_id, tasks.task_name, tasks.department_id,
              'active' AS status,
              workers.note AS task_note, NULL AS supervisor_note,
-             'pending' AS task_status, '' AS task_date, 0 AS worker_task_id,
+             CASE WHEN tasks.task_type IN ('daily', 'monthly') THEN 'approved'
+                  ELSE 'pending' END AS task_status,
+             '' AS task_date, 0 AS worker_task_id,
              NULL AS real_worker_task_id, tasks.target AS task_target,
              tasks.rate AS task_rate,
              tasks.pricing_group_id AS task_pricing_group_id,
@@ -1396,9 +1398,9 @@ class DatabaseHelper {
 
   /// Every distinct `task_date` [workerId] has a `worker_tasks` row for —
   /// for the worker report's day list, so a day with task records but no
-  /// `worker_attendance` row (see _assignMatchingTasks/assignWorkerTask's
-  /// own doc comments for how that can happen) still gets a day card
-  /// instead of being silently dropped.
+  /// `worker_attendance` row (see assignWorkerTask's own doc comment for
+  /// how that can happen) still gets a day card instead of being silently
+  /// dropped.
   Future<List<String>> getTaskDatesForWorker(int workerId) async {
     final db = await database;
     final rows = await db.query(
@@ -1592,9 +1594,8 @@ class DatabaseHelper {
   }
 
   /// Whether [taskId]'s own `tasks.task_type` is Daily or Monthly — see
-  /// [_applyTodaysTaskAssignment] and [_assignMatchingTasks], the two
-  /// places a fresh `worker_tasks` row is created and needs to pick the
-  /// right default `task_status`.
+  /// [_applyTodaysTaskAssignment], where a fresh `worker_tasks` row is
+  /// created and needs to pick the right default `task_status`.
   Future<bool> _isDailyOrMonthlyTask(DatabaseExecutor db, int taskId) async {
     final rows = await db.query(
       'tasks',
@@ -1975,41 +1976,54 @@ class DatabaseHelper {
     await markWorkerUnsynced(workerId);
   }
 
-  /// Every worker_id (local `offline_worker_id`) with at least one active
-  /// task assignment, on any day — one query for the whole worker list, so
-  /// its "View Tasks" button can disable itself for a worker with nothing
-  /// assigned without a query per card. Deliberately not scoped to today's
-  /// `task_date`: this is about whether the *standing assignment* exists,
-  /// which it does from the moment it's first assigned regardless of
-  /// whether anyone's opened a screen today to materialize today's row yet
-  /// (see [getWorkerTasks]).
+  /// Every worker_id (local `offline_worker_id`) with a standing task
+  /// assignment — one query for the whole worker list, so its "View Tasks"
+  /// button can disable itself for a worker with nothing assigned without a
+  /// query per card. Reads `workers.task_id` directly rather than
+  /// `worker_tasks`: a standing assignment exists from the moment it's set
+  /// there, regardless of whether a `worker_tasks` row has ever been
+  /// materialized for it yet (that only happens at check-in — see
+  /// [_ensureTodaysWorkerTaskRow] — so a worker who's never checked in can
+  /// have no `worker_tasks` row at all despite having a real assignment).
   Future<Set<int>> getWorkerIdsWithAssignedTasks() async {
     final db = await database;
     final rows = await db.rawQuery(
-      "SELECT DISTINCT worker_id FROM worker_tasks WHERE status = 'active'",
+      'SELECT offline_worker_id AS worker_id FROM workers WHERE task_id IS NOT NULL',
     );
     return {for (final row in rows) row['worker_id'] as int};
   }
 
-  /// Every worker_id's *today's* active task record's `task_status` — the
-  /// worker list's Task Status row, one query for the whole list rather
-  /// than a [getWorkerTasks] per card. Scoped to `task_date = today`
-  /// (unlike [getWorkerIdsWithAssignedTasks]) so a worker whose standing
-  /// assignment hasn't had its row for today created yet simply has no
-  /// entry here — [Worker.taskStatus] already reads a missing entry as
-  /// 'Pending', which is exactly right for "nothing recorded yet today".
+  /// Every worker_id's *today's* task status — the worker list's Task
+  /// Status row, one query for the whole list rather than a
+  /// [getWorkerTasks] per card. A worker whose standing assignment hasn't
+  /// had its row for today materialized yet (see
+  /// [getWorkerIdsWithAssignedTasks]'s doc comment) falls back to the same
+  /// type-based default [_applyTodaysTaskAssignment] would give that row
+  /// once check-in actually creates it — 'approved' for Daily/Monthly,
+  /// 'pending' otherwise — rather than always showing 'pending' until then.
   Future<Map<int, String>> getWorkerTaskStatusByWorker() async {
     final db = await database;
     final rows = await db.rawQuery(
       '''
-      SELECT worker_id, task_status FROM worker_tasks
-      WHERE status = 'active' AND task_date = ?
+      SELECT workers.offline_worker_id AS worker_id,
+             worker_tasks.task_status AS today_task_status,
+             tasks.task_type AS task_type
+      FROM workers
+      JOIN tasks ON tasks.task_id = workers.task_id
+      LEFT JOIN worker_tasks ON worker_tasks.worker_id = workers.offline_worker_id
+        AND worker_tasks.status = 'active' AND worker_tasks.task_date = ?
+      WHERE workers.task_id IS NOT NULL
     ''',
       [_todayDateKey()],
     );
     return {
       for (final row in rows)
-        row['worker_id'] as int: row['task_status'] as String? ?? 'pending',
+        row['worker_id'] as int:
+            (row['today_task_status'] as String?) ??
+            (row['task_type'] == TaskType.daily.name ||
+                    row['task_type'] == TaskType.monthly.name
+                ? 'approved'
+                : 'pending'),
     };
   }
 
@@ -2368,35 +2382,15 @@ class DatabaseHelper {
           rejected: worker.status == 'rejected',
         );
 
-        // Task assignment only happens once the backend confirms this
-        // worker as approved (verified) — a rejected (or still-pending)
-        // worker gets none of this, regardless of what the response
-        // reported, since there's nothing to actually assign them to yet.
-        if (worker.status == 'approved') {
-          final current = await txn.query(
-            'workers',
-            columns: ['task_id'],
-            where: 'offline_worker_id = ?',
-            whereArgs: [offlineWorkerId],
-            limit: 1,
-          );
-          final localTaskId = current.isEmpty
-              ? null
-              : current.first['task_id'] as int?;
-
-          // Both sources — whatever the response itself reported already
-          // assigned server-side, plus whichever task was picked locally
-          // at enrollment time (`workers.task_id`, untouched by `row`
-          // above, so still whatever it was — see Employee.taskId).
-          final taskIdsToAssign = <int>{?worker.taskId, ?localTaskId};
-          if (taskIdsToAssign.isNotEmpty) {
-            await _assignMatchingTasks(
-              txn,
-              offlineWorkerId,
-              taskIdsToAssign.toList(),
-            );
-          }
-        }
+        // No `worker_tasks` row is created here any more — this used to
+        // eagerly insert one dated today for every approved worker with a
+        // task_id, even if they never checked in that day, leaving a
+        // permanently empty row behind. `workers.task_id` (set in `row`
+        // above) is the only source of truth for "what's assigned" until
+        // check-in actually materializes today's row (see
+        // _ensureTodaysWorkerTaskRow) — getCurrentAssignment,
+        // getWorkerTaskStatusByWorker and getWorkerIdsWithAssignedTasks all
+        // read `workers.task_id` directly for a worker with no row yet.
       }
     });
   }
@@ -2413,65 +2407,6 @@ class DatabaseHelper {
       'SELECT MAX(server_time) AS server_time FROM workers',
     );
     return rows.isEmpty ? null : rows.first['server_time'] as String?;
-  }
-
-  /// Assigns [offlineWorkerId] to whichever of [taskIds] (the backend's
-  /// `tasks.task_id`) exist in the local `tasks` cache — a task id the
-  /// backend sent that hasn't synced into `tasks` locally yet (see
-  /// [replaceTasks]) is skipped rather than inserted as a dangling FK.
-  /// A task already assigned today is left alone via `worker_tasks`' own
-  /// UNIQUE(worker_id, task_id, task_date), same as [assignWorkerTasks].
-  Future<void> _assignMatchingTasks(
-    DatabaseExecutor txn,
-    int offlineWorkerId,
-    List<int> taskIds,
-  ) async {
-    final placeholders = List.filled(taskIds.length, '?').join(',');
-    final knownTasks = await txn.query(
-      'tasks',
-      columns: ['task_id', 'task_type'],
-      where: 'task_id IN ($placeholders)',
-      whereArgs: taskIds,
-    );
-    if (knownTasks.isEmpty) return;
-
-    // This row is created here (import time), not at check-in via
-    // _applyTodaysTaskAssignment — carry the note across the same way that
-    // path does, or it's stuck permanently null for today: once this row
-    // exists, _ensureTodaysWorkerTaskRow's "already has a row for today"
-    // check finds it and skips its own note-writing logic entirely.
-    final workerRows = await txn.query(
-      'workers',
-      columns: ['note'],
-      where: 'offline_worker_id = ?',
-      whereArgs: [offlineWorkerId],
-      limit: 1,
-    );
-    final note = workerRows.isNotEmpty
-        ? workerRows.first['note'] as String?
-        : null;
-
-    final now = AppTime.nowInUserZone().toIso8601String();
-    final today = _todayDateKey();
-    final batch = txn.batch();
-    for (final task in knownTasks) {
-      final taskType = task['task_type'] as String?;
-      final isDailyOrMonthly =
-          taskType == TaskType.daily.name || taskType == TaskType.monthly.name;
-      batch.insert('worker_tasks', {
-        'worker_id': offlineWorkerId,
-        'task_id': task['task_id'] as int,
-        'assigned_at': now,
-        'created_at': now,
-        'updated_at': now,
-        'task_date': today,
-        'task_note': note,
-        // Same default as _applyTodaysTaskAssignment — see its own doc
-        // comment for why Daily/Monthly skip the column's 'pending' default.
-        if (isDailyOrMonthly) 'task_status': 'approved',
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
-    }
-    await batch.commit(noResult: true);
   }
 
   /// Whether the worker's local `is_synced` flag is set (their last change
@@ -2600,8 +2535,7 @@ class DatabaseHelper {
   /// [RemoteWorkerTaskRecord.workerId] is the backend's real worker id —
   /// resolved to the local `offline_worker_id` via `workers.worker_id`
   /// first; a record for a worker not yet known locally (not imported/
-  /// synced) is skipped rather than inserted as a dangling FK, same as
-  /// [_assignMatchingTasks] does for an unknown task.
+  /// synced) is skipped rather than inserted as a dangling FK.
   /// Upserts every fetched assignment whose worker is already known
   /// locally; one whose server `worker_id` isn't is stashed in
   /// `pending_worker_tasks` instead (see _queuePendingWorkerTask) rather
