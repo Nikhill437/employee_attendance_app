@@ -168,6 +168,14 @@ class FaceScanViewModel extends BaseViewModel {
   Future<void> init() async {
     try {
       final cameras = await availableCameras();
+      // The screen can already be gone by the time this resolves (e.g. the
+      // user backs out immediately) — bail out before creating a camera
+      // session nobody is left to dispose. Without this, the controller
+      // created below would be left open: dispose() already ran while
+      // _controller was still null, so it never gets torn down, and the
+      // leaked session keeps holding the camera hardware (surfacing as
+      // "camera access denied" the next time the camera is opened).
+      if (isDisposed) return;
       _camera = cameras.firstWhere(
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
@@ -183,7 +191,7 @@ class FaceScanViewModel extends BaseViewModel {
       _setStatus(ScanStatus.noFace);
       await startStream();
     } catch (e) {
-      _fail('Camera error: $e');
+      if (!isDisposed) _fail('Camera error: $e');
     }
   }
 
@@ -628,8 +636,12 @@ class FaceScanViewModel extends BaseViewModel {
 
   @override
   void dispose() {
-    stopStream();
-    _controller?.dispose();
+    // Fire-and-forget: the screen is already gone, so any teardown error
+    // here (e.g. the stream already stopping on its own) is expected and
+    // must never surface as an unhandled exception during plain back
+    // navigation.
+    unawaited(stopStream().catchError((_) {}));
+    unawaited(_controller?.dispose().catchError((_) {}) ?? Future.value());
     _liveDetector.dispose();
     _captureDetector.close();
     super.dispose();
