@@ -380,6 +380,7 @@ class EnrollmentFormViewModel extends BaseViewModel {
       // a multipart file rather than sending it as plain text.
       if (imageChanged && newImage != null) 'national_id_image': newImage,
       if (departmentChanged) 'department_id': department.id.toString(),
+      if (taskOrNoteChanged) 'task_id': task.id.toString(),
     };
 
     _isSavingDepartment = true;
@@ -391,7 +392,6 @@ class EnrollmentFormViewModel extends BaseViewModel {
           columns: localColumns,
           departmentChanged: departmentChanged,
         );
-        await _editQueue.record(workerId, remoteChanges);
       }
       if (taskOrNoteChanged) {
         await _taskRepository.assignTask(
@@ -399,6 +399,9 @@ class EnrollmentFormViewModel extends BaseViewModel {
           taskId: task.id,
           note: trimmedTaskNote.isEmpty ? null : trimmedTaskNote,
         );
+      }
+      if (anyChange || resubmitting || taskOrNoteChanged) {
+        await _editQueue.record(workerId, remoteChanges);
       }
       return null;
     } catch (e) {

@@ -101,8 +101,6 @@ class _AssignTaskScreenState extends State<AssignTaskScreen> {
       builder: (dialogContext) => _AssignTaskConfirmDialog(
         taskType: taskType,
         needsApproval: _viewModel.pendingTaskNeedsApproval,
-        currentGroupLabel: _viewModel.currentPricingGroup?.rangeLabel,
-        proposedGroupLabel: _viewModel.proposedPricingGroup?.rangeLabel,
       ),
     );
     return confirmed == true;
@@ -796,7 +794,7 @@ String? _formatTargetRate(int? target, int? rate, TaskType? taskType) {
       taskType == TaskType.taskBased || taskType == TaskType.hourBased;
   final parts = [
     if (showsTarget && target != null) 'Target: $target',
-    if (rate != null) 'Rate: $rate',
+    // if (rate != null) 'Rate: $rate',
   ];
   return parts.isEmpty ? null : parts.join(' · ');
 }
@@ -1257,44 +1255,21 @@ class _SupervisorReviewCardState extends State<_SupervisorReviewCard> {
 /// When [needsApproval] (the picked task is outside the worker's current
 /// pricing group — see AssignTaskViewModel.pendingTaskNeedsApproval), the
 /// title/message/button instead make clear this submits a task-change
-/// request for HR/Admin approval, not an outright reassignment.
-/// [currentGroupLabel]/[proposedGroupLabel] (see AssignTaskViewModel.
-/// currentPricingGroup/proposedPricingGroup) name the two groups when
-/// known; the message still reads fine without them.
+/// request for HR/Admin approval, not an outright reassignment — without
+/// naming either pricing group.
 class _AssignTaskConfirmDialog extends StatelessWidget {
   final TaskType? taskType;
   final bool needsApproval;
-  final String? currentGroupLabel;
-  final String? proposedGroupLabel;
 
-  const _AssignTaskConfirmDialog({
-    this.taskType,
-    this.needsApproval = false,
-    this.currentGroupLabel,
-    this.proposedGroupLabel,
-  });
-
-  /// " (currently Group A (₹100.00 - ₹500.00), requested Group B (₹501.00
-  /// - ₹1000.00))", or "" when neither group's name is known yet (see
-  /// AssignTaskViewModel._loadPricingGroupNames) — the message still reads
-  /// fine either way.
-  String _groupDetail() {
-    if (currentGroupLabel == null && proposedGroupLabel == null) return '';
-    final parts = [
-      if (currentGroupLabel != null) 'currently $currentGroupLabel',
-      if (proposedGroupLabel != null) 'requested $proposedGroupLabel',
-    ];
-    return ' (${parts.join(', ')})';
-  }
+  const _AssignTaskConfirmDialog({this.taskType, this.needsApproval = false});
 
   @override
   Widget build(BuildContext context) {
     final type = taskType;
     final message = needsApproval
         ? 'The selected task belongs to a different pricing group than '
-              'the currently assigned task${_groupDetail()}. Do you want '
-              'to proceed and send this task change request for '
-              'approval?'
+              'the currently assigned task. Do you want to proceed and '
+              'send this task change request for approval?'
         : type == null
         ? 'Do you want to assign this task to the employee?'
         : 'Do you want to assign this ${type.label} task to the employee?';

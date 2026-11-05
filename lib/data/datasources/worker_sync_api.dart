@@ -27,6 +27,7 @@ class WorkerSyncApi {
   /// "status": true}` — returns that `worker_id`, or null if the response
   /// doesn't have the expected shape.
   Future<int?> syncWorker(Employee worker) async {
+    log(worker.toString());
     final formData = await _toFormData(worker);
     log('Syncing worker ${worker.employeeId} to backend');
     final response = await _client.post(ApiRoutes.syncWorker, data: formData);
@@ -133,6 +134,8 @@ class WorkerSyncApi {
   /// UTC value round-tripped from the server.
   String? _formatTimestamp(String? isoString) {
     if (isoString == null) return null;
-    return AppTime.userWallTimeToUtc(DateTime.parse(isoString)).toIso8601String();
+    return AppTime.userWallTimeToUtc(
+      DateTime.parse(isoString),
+    ).toIso8601String();
   }
 }

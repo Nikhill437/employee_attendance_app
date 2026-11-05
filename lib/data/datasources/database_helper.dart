@@ -2589,10 +2589,31 @@ class DatabaseHelper {
     required RemoteWorkerTaskRecord record,
     required String now,
   }) async {
+    // The backend has no concept of this app's own "Daily/Monthly skips
+    // review" rule, so this assignment's task_status here is just its
+    // generic unreviewed default ('pending' or absent) — same as a fresh
+    // row created locally (_applyTodaysTaskAssignment) gets overridden to
+    // 'approved' for those two types, so a sync can never leave (or put) a
+    // Daily/Monthly row showing "Pending". An explicit non-pending verdict
+    // already recorded server-side (approved/rejected) is trusted as-is,
+    // never overridden.
+    final isDailyOrMonthly = await _isDailyOrMonthlyTask(txn, record.taskId);
+    final taskStatus =
+        isDailyOrMonthly &&
+            (record.taskStatus == null || record.taskStatus == 'pending')
+        ? 'approved'
+        : record.taskStatus;
+
     final row = {
       // Only set when the server sent one, so a record without it never
       // wipes an id already stored locally.
       'worker_task_id': ?record.workerTaskId,
+      // The row matched above is found by its server worker_task_id (see
+      // _findExistingWorkerTaskRow step 1), which stays fixed even when the
+      // supervisor reassigns that same assignment to a different task on
+      // the backend — so task_id must be part of the update, not just the
+      // initial insert, or the local row would keep showing the old task.
+      'task_id': record.taskId,
       'target': record.target,
       'status': record.status,
       'task_note': record.taskNote,
@@ -2601,7 +2622,7 @@ class DatabaseHelper {
       'overtime': record.overtime,
       'employee_target': record.employeeTarget,
       'completed_target': record.completedTarget,
-      'task_status': ?record.taskStatus,
+      'task_status': ?taskStatus,
       'updated_at': now,
     };
 
@@ -2627,7 +2648,6 @@ class DatabaseHelper {
       await txn.insert('worker_tasks', {
         ...row,
         'worker_id': offlineWorkerId,
-        'task_id': record.taskId,
         'assigned_at': assignedAt,
         'created_at': now,
         'task_date': assignedAt.substring(0, 10),
@@ -2638,6 +2658,25 @@ class DatabaseHelper {
         row,
         where: 'offline_worker_id = ?',
         whereArgs: [existingId],
+      );
+    }
+
+    // Keeps `workers.task_id` — the standing-assignment fallback
+    // getCurrentAssignment/getWorkerTaskStatusByWorker/
+    // getWorkerIdsWithAssignedTasks all read when no `worker_tasks` row
+    // exists for *today* — in step with this endpoint, the authoritative
+    // source for "what is this worker currently assigned". Without this,
+    // a worker whose local data was cleared and re-imported would show no
+    // task at all: `attendance/list`'s own `task_id` isn't reliably
+    // present on a fresh full re-fetch (see upsertRemoteWorkers), and this
+    // assignment's own `worker_tasks` row is dated to when it was first
+    // assigned, not today, so it's invisible to that fallback otherwise.
+    if (!rejected) {
+      await txn.update(
+        'workers',
+        {'task_id': record.taskId},
+        where: 'offline_worker_id = ?',
+        whereArgs: [offlineWorkerId],
       );
     }
   }

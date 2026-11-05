@@ -5,9 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../../core/base/base_view_model.dart';
 import '../../../core/utils/app_time.dart';
 import '../../../data/models/department_model.dart';
-import '../../../data/models/pricing_group_model.dart';
 import '../../../data/models/worker_task_model.dart';
-import '../../../data/repositories/pricing_group_repository.dart';
 import '../../../data/repositories/supervisor_session_repository.dart';
 import '../../../data/repositories/task_change_request_repository.dart';
 import '../../../data/repositories/task_repository.dart';
@@ -23,7 +21,6 @@ class AssignTaskViewModel extends BaseViewModel {
   final TaskRepository _taskRepository;
   final TaskChangeRequestRepository _taskChangeRequests;
   final SupervisorSessionRepository _session;
-  final PricingGroupRepository _pricingGroups;
 
   AssignTaskViewModel({
     required this.workerId,
@@ -31,12 +28,10 @@ class AssignTaskViewModel extends BaseViewModel {
     TaskRepository? taskRepository,
     TaskChangeRequestRepository? taskChangeRequests,
     SupervisorSessionRepository? session,
-    PricingGroupRepository? pricingGroups,
   }) : _taskRepository = taskRepository ?? TaskRepository(),
        _taskChangeRequests =
            taskChangeRequests ?? TaskChangeRequestRepository(),
-       _session = session ?? SupervisorSessionRepository(),
-       _pricingGroups = pricingGroups ?? PricingGroupRepository();
+       _session = session ?? SupervisorSessionRepository();
 
   bool _isLoadingTasks = true;
   bool _isSaving = false;
@@ -98,17 +93,6 @@ class AssignTaskViewModel extends BaseViewModel {
   /// instead of "task assigned".
   bool _lastSaveWasApprovalRequest = false;
   bool get lastSaveWasApprovalRequest => _lastSaveWasApprovalRequest;
-
-  /// The current/proposed pricing groups' own catalog rows (name, rate
-  /// range) — looked up locally once [pendingTaskNeedsApproval] is true
-  /// (see [addTask]), for the confirm dialog to name them instead of just
-  /// saying "a different pricing group". Null while the lookup hasn't
-  /// resolved yet (or isn't needed), in which case the dialog falls back
-  /// to that generic wording.
-  PricingGroup? _currentPricingGroup;
-  PricingGroup? _proposedPricingGroup;
-  PricingGroup? get currentPricingGroup => _currentPricingGroup;
-  PricingGroup? get proposedPricingGroup => _proposedPricingGroup;
 
   int? get entryNumericValue => _entryNumericValue;
 
@@ -216,8 +200,6 @@ class AssignTaskViewModel extends BaseViewModel {
       _reviewNote = '';
     }
     _reviewPhoto = null;
-    _currentPricingGroup = null;
-    _proposedPricingGroup = null;
 
     _isLoadingTasks = false;
     safeNotify();
@@ -225,25 +207,9 @@ class AssignTaskViewModel extends BaseViewModel {
 
   /// Picks [task] to assign next — called when the task dropdown picks a
   /// value. A no-op while a pick is already pending (see [canPickNewTask]).
-  /// Kicks off [_currentPricingGroup]/[_proposedPricingGroup]'s lookup
-  /// right away when this pick needs approval, so they're ready by the
-  /// time the confirm dialog opens.
   void addTask(Task task) {
     if (_pendingTask != null) return;
     _pendingTask = task;
-    safeNotify();
-    if (pendingTaskNeedsApproval) _loadPricingGroupNames();
-  }
-
-  Future<void> _loadPricingGroupNames() async {
-    final currentId = _assignedTask?.taskPricingGroupId;
-    final proposedId = _pendingTask?.pricingGroupId;
-    _currentPricingGroup = currentId == null
-        ? null
-        : await _pricingGroups.getById(currentId);
-    _proposedPricingGroup = proposedId == null
-        ? null
-        : await _pricingGroups.getById(proposedId);
     safeNotify();
   }
 
@@ -251,8 +217,6 @@ class AssignTaskViewModel extends BaseViewModel {
   void removePendingTask() {
     _pendingTask = null;
     _pendingNote = '';
-    _currentPricingGroup = null;
-    _proposedPricingGroup = null;
     safeNotify();
   }
 

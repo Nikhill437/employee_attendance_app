@@ -278,10 +278,11 @@ class _EnrollmentFormScreenState extends State<EnrollmentFormScreen> {
     final task = _formViewModel.task;
     if (task == null) return null;
     final showsTarget =
-        task.taskType == TaskType.taskBased || task.taskType == TaskType.hourBased;
+        task.taskType == TaskType.taskBased ||
+        task.taskType == TaskType.hourBased;
     final parts = [
       if (showsTarget && task.target != null) 'Target: ${task.target}',
-      if (task.rate != null) 'Rate: ${task.rate}',
+      // if (task.rate != null) 'Rate: ${task.rate}',
     ];
     return parts.isEmpty ? null : parts.join(' · ');
   }

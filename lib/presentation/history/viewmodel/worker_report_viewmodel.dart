@@ -42,8 +42,8 @@ class WorkerReportViewModel extends BaseViewModel {
   }) : _workerAttendance = workerAttendance ?? WorkerAttendanceRepository(),
        _tasks = tasks ?? TaskRepository() {
     final today = _dateOnly(AppTime.nowInUserZone());
-    _rangeStart = today.subtract(const Duration(days: 29));
-    _rangeEnd = today;
+    _rangeStart = _billingCycleStartFor(today);
+    _rangeEnd = DateTime(_rangeStart.year, _rangeStart.month + 1, 25);
   }
 
   bool _isLoading = true;
@@ -109,4 +109,14 @@ class WorkerReportViewModel extends BaseViewModel {
 
   static DateTime _dateOnly(DateTime date) =>
       DateTime(date.year, date.month, date.day);
+
+  /// The current billing cycle's start — the 26th of [today]'s own month
+  /// once [today] is on or past the 26th, otherwise the 26th of the
+  /// previous month (the cycle [today] still falls in). Paired with
+  /// `DateTime(start.year, start.month + 1, 25)` for the cycle's end, so
+  /// the default range reads e.g. "26 Oct – 25 Nov" through the 25th, then
+  /// rolls over to "26 Nov – 25 Dec" the moment the 26th starts.
+  static DateTime _billingCycleStartFor(DateTime today) => today.day >= 26
+      ? DateTime(today.year, today.month, 26)
+      : DateTime(today.year, today.month - 1, 26);
 }
