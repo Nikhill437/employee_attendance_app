@@ -14,6 +14,10 @@ enum WorkerScanOutcome {
   /// A first scan of the day landed on a locally cached holiday — no row is
   /// created; the worker isn't allowed to check in today.
   holiday,
+
+  /// An explicit Check Out (see DatabaseHelper.recordWorkerCheckOut) with
+  /// no open check-in for today to close — no row is created or changed.
+  notCheckedIn,
 }
 
 /// One day's check-in/check-out record for a worker — a `worker_attendance`

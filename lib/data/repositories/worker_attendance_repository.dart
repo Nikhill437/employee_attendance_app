@@ -73,6 +73,17 @@ class WorkerAttendanceRepository {
   Future<WorkerAttendanceRecord> recordScan(int workerId) =>
       _dbHelper.recordWorkerScan(workerId);
 
+  /// worker_list_screen.dart's explicit Check In button — always a
+  /// check-in, any number of times a day, unlike [recordScan].
+  Future<WorkerAttendanceRecord> recordCheckIn(int workerId) =>
+      _dbHelper.recordWorkerCheckIn(workerId);
+
+  /// worker_list_screen.dart's explicit Check Out button — requires an
+  /// open check-in for today (see [WorkerScanOutcome.notCheckedIn]),
+  /// unlike [recordScan]'s "not the day's first scan" inference.
+  Future<WorkerAttendanceRecord> recordCheckOut(int workerId) =>
+      _dbHelper.recordWorkerCheckOut(workerId);
+
   /// Today's check-in/check-out row for [workerId], or null if they haven't
   /// been scanned yet today.
   Future<WorkerAttendanceRecord?> getTodayAttendance(int workerId) =>

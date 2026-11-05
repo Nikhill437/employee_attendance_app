@@ -210,7 +210,33 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
   /// types it themselves on the public kiosk screen. The button that calls
   /// this is already hidden until `remoteEmployeeId` is set (see the
   /// `_WorkerCard` construction below), so this is just a safety net.
-  Future<void> _openMarkAttendance(Worker worker) async {
+  Future<void> _openMarkAttendance(Worker worker) =>
+      _openAttendanceAction(worker, AttendanceAction.auto);
+
+  /// The dedicated Check In button on a worker's card — always records a
+  /// check-in, any number of times a day (see
+  /// WorkerAttendanceRepository.recordCheckIn).
+  Future<void> _openCheckIn(Worker worker) =>
+      _openAttendanceAction(worker, AttendanceAction.checkIn);
+
+  /// The dedicated Check Out button on a worker's card — requires an open
+  /// check-in for today first (see WorkerScanOutcome.notCheckedIn).
+  Future<void> _openCheckOut(Worker worker) =>
+      _openAttendanceAction(worker, AttendanceAction.checkOut);
+
+  /// Shared guard + navigation behind [_openMarkAttendance]/[_openCheckIn]/
+  /// [_openCheckOut] — only [action] differs between them.
+  ///
+  /// Passes [Worker.remoteEmployeeId] (the numeric `employee_id`), not
+  /// [Worker.employeeId] (their National ID) — the attendance login flow
+  /// (see AuthRepository) matches on `employee_id`, same as when a worker
+  /// types it themselves on the public kiosk screen. The buttons that call
+  /// this are already hidden until `remoteEmployeeId` is set (see the
+  /// `_WorkerCard` construction below), so this is just a safety net.
+  Future<void> _openAttendanceAction(
+    Worker worker,
+    AttendanceAction action,
+  ) async {
     final employeeId = worker.remoteEmployeeId;
     if (employeeId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -238,12 +264,14 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
     await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            MarkAttendanceScreen(initialEmployeeId: employeeId.toString()),
+        builder: (context) => MarkAttendanceScreen(
+          initialEmployeeId: employeeId.toString(),
+          action: action,
+        ),
       ),
     );
     // Reload however the screen was left, so the card's Check In/Check Out
-    // button reflects today's attendance right away.
+    // buttons reflect today's attendance right away.
     if (mounted) await _viewModel.load();
   }
 
@@ -451,6 +479,8 @@ class _WorkerListScreenState extends State<WorkerListScreen> {
                 onSync: () => _syncWorker(worker),
                 onViewTasks: () => _openTasks(worker),
                 onMarkAttendance: () => _openMarkAttendance(worker),
+                onCheckIn: () => _openCheckIn(worker),
+                onCheckOut: () => _openCheckOut(worker),
                 onOpenWorkerReport: () => _openWorkerReport(worker),
                 onEdit: () => _openEditWorker(worker),
               ),
@@ -582,6 +612,8 @@ class _WorkerCard extends StatelessWidget {
   final VoidCallback onSync;
   final VoidCallback onViewTasks;
   final VoidCallback onMarkAttendance;
+  final VoidCallback onCheckIn;
+  final VoidCallback onCheckOut;
   final VoidCallback onOpenWorkerReport;
   final VoidCallback onEdit;
 
@@ -591,6 +623,8 @@ class _WorkerCard extends StatelessWidget {
     required this.onSync,
     required this.onViewTasks,
     required this.onMarkAttendance,
+    required this.onCheckIn,
+    required this.onCheckOut,
     required this.onOpenWorkerReport,
     required this.onEdit,
   });
@@ -745,12 +779,13 @@ class _WorkerCard extends StatelessWidget {
     return worker.hasCheckedOutToday;
   }
 
-  /// Once today's attendance has both a check-in and a check-out, there's
-  /// nothing left for this button to do today, so it's hidden. A worker who
-  /// has only checked in still sees "Check out". Both flags come from
-  /// today's `worker_attendance` record (see WorkerListViewModel.load).
-  bool get _hideMarkAttendance =>
-      worker.hasCheckedInToday && worker.hasCheckedOutToday;
+  // Only used by the commented-out single-button flow above
+  // (_buildMarkAttendanceButton) — once today's attendance had both a
+  // check-in and a check-out, there was nothing left for that button to do
+  // today, so it hid itself. Not needed by the explicit Check In/Check Out
+  // buttons, which stay available regardless of today's state.
+  // bool get _hideMarkAttendance =>
+  //     worker.hasCheckedInToday && worker.hasCheckedOutToday;
 
   /// The card's one Not Synced/Sync row, unchanged in appearance — see
   /// [_canTapSync] and _WorkerListScreenState._syncWorker's own doc
@@ -833,28 +868,31 @@ class _WorkerCard extends StatelessWidget {
     );
   }
 
-  /// The three actions every card offers. The middle button shows "Check
-  /// in" before the worker's first scan, then "Check out" from then on,
-  /// including after they've already checked out once — a worker can be
-  /// checked out multiple times in a day (see
-  /// DatabaseHelper.recordWorkerScan, which always re-stamps
-  /// `check_out_time` on every scan after the first), so it never disables
-  /// just because today's attendance is already "complete". It does
-  /// disappear once that complete day has actually been pushed to the
-  /// backend, though — see [_hideMarkAttendance].
+  /// The four actions every card offers: View tasks, the explicit Check In
+  /// and Check Out buttons below, and Employee report.
   ///
-  /// When the Check In/Check Out button is hidden, it's left out of the row
-  /// entirely (no empty slot or spacing), so View tasks and Employee report
-  /// share the full width.
+  /// Replaces the single auto-toggling Check In/Check Out button this used
+  /// to show (kept below, commented, as [_buildMarkAttendanceButton]/
+  /// [_hideMarkAttendance]) — that button inferred check-in vs. checkout
+  /// from "is this the worker's first scan today", which only ever allowed
+  /// one check-in a day. These two buttons are explicit instead: Check In
+  /// always records a check-in, any number of times a day (see
+  /// WorkerAttendanceRepository.recordCheckIn), and Check Out requires an
+  /// open check-in first (see WorkerScanOutcome.notCheckedIn) rather than
+  /// being inferred.
   Widget _buildActionButtons() {
     return Row(
       children: [
         Expanded(child: _buildViewTasksButton()),
         const SizedBox(width: 8),
-        if (!_hideMarkAttendance) ...[
-          Expanded(child: _buildMarkAttendanceButton()),
-          const SizedBox(width: 8),
-        ],
+        // if (!_hideMarkAttendance) ...[
+        //   Expanded(child: _buildMarkAttendanceButton()),
+        //   const SizedBox(width: 8),
+        // ],
+        Expanded(child: _buildCheckInButton()),
+        const SizedBox(width: 8),
+        Expanded(child: _buildCheckOutButton()),
+        const SizedBox(width: 8),
         Expanded(child: _buildWorkerReportButton()),
       ],
     );
@@ -907,11 +945,45 @@ class _WorkerCard extends StatelessWidget {
     );
   }
 
-  Widget _buildMarkAttendanceButton() {
-    final label = worker.hasCheckedInToday ? 'Check out' : 'Check in';
-    final icon = worker.hasCheckedInToday ? Icons.logout : Icons.login;
+  // Widget _buildMarkAttendanceButton() {
+  //   final label = worker.hasCheckedInToday ? 'Check out' : 'Check in';
+  //   final icon = worker.hasCheckedInToday ? Icons.logout : Icons.login;
+  //   return OutlinedButton(
+  //     onPressed: _isApproved ? onMarkAttendance : null,
+  //     style: OutlinedButton.styleFrom(
+  //       backgroundColor: const Color(0xFFE7F6EC),
+  //       foregroundColor: AppColors.deepGreen,
+  //       disabledBackgroundColor: const Color(0xFFF2F3F2),
+  //       disabledForegroundColor: AppColors.muted,
+  //       side: BorderSide.none,
+  //       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+  //       padding: _actionButtonPadding,
+  //       textStyle: _actionButtonTextStyle,
+  //     ),
+  //     child: Column(
+  //       mainAxisSize: MainAxisSize.min,
+  //       mainAxisAlignment: MainAxisAlignment.center,
+  //       crossAxisAlignment: CrossAxisAlignment.center,
+  //       children: [
+  //         Icon(icon, size: 16),
+  //         SizedBox(height: 4),
+  //         Text(
+  //           label,
+  //           textAlign: TextAlign.center,
+  //           overflow: TextOverflow.ellipsis,
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
+
+  /// Always "Check in" — tapping it is always a check-in, any number of
+  /// times a day (see WorkerAttendanceRepository.recordCheckIn), unlike the
+  /// commented-out [_buildMarkAttendanceButton] above which only allowed
+  /// one.
+  Widget _buildCheckInButton() {
     return OutlinedButton(
-      onPressed: _isApproved ? onMarkAttendance : null,
+      onPressed: _isApproved ? onCheckIn : null,
       style: OutlinedButton.styleFrom(
         backgroundColor: const Color(0xFFE7F6EC),
         foregroundColor: AppColors.deepGreen,
@@ -922,15 +994,49 @@ class _WorkerCard extends StatelessWidget {
         padding: _actionButtonPadding,
         textStyle: _actionButtonTextStyle,
       ),
-      child: Column(
+      child: const Column(
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(icon, size: 16),
+          Icon(Icons.login, size: 16),
           SizedBox(height: 4),
           Text(
-            label,
+            'Check in',
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Always "Check out" — requires an open check-in for today first (see
+  /// WorkerScanOutcome.notCheckedIn); the screen surfaces that as a plain
+  /// snackbar rather than this button disabling itself, since whether
+  /// today's check-in is still open isn't worth a second local query here.
+  Widget _buildCheckOutButton() {
+    return OutlinedButton(
+      onPressed: _isApproved ? onCheckOut : null,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: const Color(0xFFE7F6EC),
+        foregroundColor: AppColors.deepGreen,
+        disabledBackgroundColor: const Color(0xFFF2F3F2),
+        disabledForegroundColor: AppColors.muted,
+        side: BorderSide.none,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: _actionButtonPadding,
+        textStyle: _actionButtonTextStyle,
+      ),
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(Icons.logout, size: 16),
+          SizedBox(height: 4),
+          Text(
+            'Check out',
             textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
           ),

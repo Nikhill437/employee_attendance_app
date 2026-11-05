@@ -16,6 +16,22 @@ import '../../task/view/assign_task_screen.dart';
 import '../../task/view/worker_task_list_screen.dart';
 import '../viewmodel/login_viewmodel.dart';
 
+/// Which attendance action a scan on this screen should record.
+enum AttendanceAction {
+  /// The kiosk flow's single auto-toggling scan (see
+  /// DatabaseHelper.recordWorkerScan) — check-in on the day's first scan,
+  /// checkout on every scan after that.
+  auto,
+
+  /// worker_list_screen.dart's explicit Check In button — always records a
+  /// check-in, any number of times a day.
+  checkIn,
+
+  /// worker_list_screen.dart's explicit Check Out button — requires an
+  /// open check-in for today; see WorkerScanOutcome.notCheckedIn.
+  checkOut,
+}
+
 class MarkAttendanceScreen extends StatefulWidget {
   /// Non-null: the "Mark Attendance" action on a specific worker's card in
   /// worker_list_screen.dart — a supervisor has already picked this worker,
@@ -26,7 +42,16 @@ class MarkAttendanceScreen extends StatefulWidget {
   /// against every enrolled worker (1:N).
   final String? initialEmployeeId;
 
-  const MarkAttendanceScreen({super.key, this.initialEmployeeId});
+  /// Which attendance action the scan should record — [AttendanceAction.auto]
+  /// (the kiosk flow's single toggling scan) unless worker_list_screen.dart's
+  /// explicit Check In/Check Out button opened this screen.
+  final AttendanceAction action;
+
+  const MarkAttendanceScreen({
+    super.key,
+    this.initialEmployeeId,
+    this.action = AttendanceAction.auto,
+  });
 
   @override
   State<MarkAttendanceScreen> createState() => _MarkAttendanceScreenState();
@@ -129,6 +154,14 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
       _finish();
       return;
     }
+    // The explicit Check Out button (see AttendanceAction.checkOut) has no
+    // earlier scan to infer a check-in from, unlike the kiosk's single
+    // auto-toggling scan — surfaced as a plain snackbar, same as holiday.
+    if (_scanRecord?.outcome == WorkerScanOutcome.notCheckedIn) {
+      _showSnackBar('Please check in before checking out');
+      _finish();
+      return;
+    }
 
     _viewModel.completeLogin(user);
     await Future.delayed(_successPause);
@@ -142,7 +175,14 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
   Future<WorkerAttendanceRecord?> _recordAttendanceScan(AuthUser user) async {
     final workerId = user.id;
     if (workerId == null) return null;
-    return _attendanceRepository.recordScan(workerId);
+    switch (widget.action) {
+      case AttendanceAction.checkIn:
+        return _attendanceRepository.recordCheckIn(workerId);
+      case AttendanceAction.checkOut:
+        return _attendanceRepository.recordCheckOut(workerId);
+      case AttendanceAction.auto:
+        return _attendanceRepository.recordScan(workerId);
+    }
   }
 
   /// After attendance is marked, additionally shows the worker's assigned
@@ -219,6 +259,7 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
         return true;
       case WorkerScanOutcome.alreadyCheckedOut:
       case WorkerScanOutcome.holiday:
+      case WorkerScanOutcome.notCheckedIn:
       case null:
         return true;
     }
@@ -312,6 +353,8 @@ class _MarkAttendanceScreenState extends State<MarkAttendanceScreen> {
         return 'Checkout has been already done for day';
       case WorkerScanOutcome.holiday:
         return 'Check-in is not allowed — today is a holiday';
+      case WorkerScanOutcome.notCheckedIn:
+        return 'Please check in before checking out';
       case null:
         return 'Attendance Marked Successfully';
     }

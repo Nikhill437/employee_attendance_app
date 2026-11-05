@@ -2154,6 +2154,154 @@ class DatabaseHelper {
     }, outcome: WorkerScanOutcome.checkedOut);
   }
 
+  /// worker_list_screen.dart's explicit Check In button — unlike
+  /// [recordWorkerScan] (which only ever treats the day's *first* scan as a
+  /// check-in), this always records a check-in, any number of times a day:
+  /// the worker can leave and come back, and each tap just re-stamps
+  /// `check_in_time` with the latest scan. Reopens the day if it was
+  /// already checked out (clearing `check_out_time`), so the explicit
+  /// Check Out button's "was there an open check-in?" guard stays
+  /// meaningful instead of seeing a stale checkout from earlier.
+  Future<WorkerAttendanceRecord> recordWorkerCheckIn(int workerId) async {
+    final db = await database;
+    final today = _todayDateKey();
+
+    if (await isTodayHoliday()) {
+      return WorkerAttendanceRecord(
+        attendanceId: -1,
+        workerId: workerId,
+        attendanceDate: today,
+        checkInTime: null,
+        checkOutTime: null,
+        status: 'holiday',
+        outcome: WorkerScanOutcome.holiday,
+      );
+    }
+
+    final existing = await db.query(
+      'worker_attendance',
+      where: 'worker_id = ? AND attendance_date = ?',
+      whereArgs: [workerId, today],
+      limit: 1,
+    );
+    final now = AppTime.nowInUserZone().toIso8601String();
+    await markWorkerUnsynced(workerId);
+
+    if (existing.isEmpty) {
+      final row = {
+        'worker_id': workerId,
+        'attendance_date': today,
+        'check_in_time': now,
+        'check_in_face_verified': 1,
+        'status': 'checked_in',
+        'is_synced': 0,
+      };
+      final id = await db.insert('worker_attendance', row);
+      // Today's task row exists only once the worker has checked in, so a
+      // day with no check-in never gets one.
+      await _ensureTodaysWorkerTaskRow(db, workerId);
+      return WorkerAttendanceRecord.fromMap({
+        ...row,
+        'offline_worker_id': id,
+      }, outcome: WorkerScanOutcome.checkedIn);
+    }
+
+    final row = existing.first;
+    await db.update(
+      'worker_attendance',
+      {
+        'check_in_time': now,
+        'check_in_face_verified': 1,
+        'check_out_time': null,
+        'check_out_face_verified': 0,
+        'status': 'checked_in',
+        'is_synced': 0,
+      },
+      where: 'offline_worker_id = ?',
+      whereArgs: [row['offline_worker_id']],
+    );
+    return WorkerAttendanceRecord.fromMap({
+      ...row,
+      'check_in_time': now,
+      'check_in_face_verified': 1,
+      'check_out_time': null,
+      'check_out_face_verified': 0,
+      'status': 'checked_in',
+    }, outcome: WorkerScanOutcome.checkedIn);
+  }
+
+  /// worker_list_screen.dart's explicit Check Out button — unlike
+  /// [recordWorkerScan] (which infers checkout from "not the day's first
+  /// scan"), this requires an actual open check-in for today first: a
+  /// worker who hasn't checked in (or has already checked out and not
+  /// re-checked-in since, see [recordWorkerCheckIn]) gets
+  /// [WorkerScanOutcome.notCheckedIn] back instead of a row being created
+  /// or changed, so checkout can never land before its matching check-in.
+  Future<WorkerAttendanceRecord> recordWorkerCheckOut(int workerId) async {
+    final db = await database;
+    final today = _todayDateKey();
+
+    if (await isTodayHoliday()) {
+      return WorkerAttendanceRecord(
+        attendanceId: -1,
+        workerId: workerId,
+        attendanceDate: today,
+        checkInTime: null,
+        checkOutTime: null,
+        status: 'holiday',
+        outcome: WorkerScanOutcome.holiday,
+      );
+    }
+
+    final existing = await db.query(
+      'worker_attendance',
+      where: 'worker_id = ? AND attendance_date = ?',
+      whereArgs: [workerId, today],
+      limit: 1,
+    );
+    if (existing.isEmpty || existing.first['check_in_time'] == null) {
+      return WorkerAttendanceRecord(
+        attendanceId: -1,
+        workerId: workerId,
+        attendanceDate: today,
+        checkInTime: null,
+        checkOutTime: null,
+        status: 'not_checked_in',
+        outcome: WorkerScanOutcome.notCheckedIn,
+      );
+    }
+
+    final row = existing.first;
+    if (row['check_out_time'] != null) {
+      // Already checked out and not re-checked-in since — nothing open to
+      // close.
+      return WorkerAttendanceRecord.fromMap(
+        row,
+        outcome: WorkerScanOutcome.alreadyCheckedOut,
+      );
+    }
+
+    final now = AppTime.nowInUserZone().toIso8601String();
+    await markWorkerUnsynced(workerId);
+    await db.update(
+      'worker_attendance',
+      {
+        'check_out_time': now,
+        'check_out_face_verified': 1,
+        'status': 'checked_out',
+        'is_synced': 0,
+      },
+      where: 'offline_worker_id = ?',
+      whereArgs: [row['offline_worker_id']],
+    );
+    return WorkerAttendanceRecord.fromMap({
+      ...row,
+      'check_out_time': now,
+      'check_out_face_verified': 1,
+      'status': 'checked_out',
+    }, outcome: WorkerScanOutcome.checkedOut);
+  }
+
   /// Today's `worker_attendance` row for [workerId], or null if they
   /// haven't been scanned yet today.
   Future<WorkerAttendanceRecord?> getTodayAttendance(int workerId) async {
