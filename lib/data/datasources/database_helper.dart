@@ -1440,13 +1440,17 @@ class DatabaseHelper {
   }
 
   /// Materializes today's `worker_tasks` row from the worker's persistent
-  /// assignment (`workers.task_id`, `workers.note`) — called only at
-  /// check-in (see `recordWorkerScan`), for a worker whose first scan of
-  /// the day happens without any task assignment action that day;
-  /// [assignWorkerTask] sets today's row itself via
+  /// assignment (`workers.task_id`, `workers.note`) — called at every
+  /// check-in/checkout (see `recordWorkerScan`), so a reassignment that
+  /// only reached this device via the worker-roster fetch (which updates
+  /// `workers.task_id` but never touches `worker_tasks` — see
+  /// upsertRemoteWorkers) still gets today's row swapped onto the new task
+  /// the next time the worker's scanned, instead of silently staying
+  /// pointed at whatever task was active when today's row was first
+  /// created. [assignWorkerTask] sets today's row itself via
   /// [_applyTodaysTaskAssignment] rather than going through here. Does
-  /// nothing if the worker has no task, is rejected, or already has an
-  /// active row for today.
+  /// nothing if the worker has no task, is rejected, or today's existing
+  /// active row (if any) already matches `workers.task_id`.
   Future<void> _ensureTodaysWorkerTaskRow(
     DatabaseExecutor db,
     int workerId,
@@ -1454,21 +1458,6 @@ class DatabaseHelper {
     const logName = 'DatabaseHelper._ensureTodaysWorkerTaskRow';
     if (await _isRejectedWorker(db, workerId)) {
       log('($workerId): skipped — rejected worker', name: logName);
-      return;
-    }
-
-    final alreadyToday = await db.query(
-      'worker_tasks',
-      columns: ['offline_worker_id'],
-      where: "worker_id = ? AND task_date = ? AND status = 'active'",
-      whereArgs: [workerId, _todayDateKey()],
-      limit: 1,
-    );
-    if (alreadyToday.isNotEmpty) {
-      log(
-        '($workerId): skipped — already has an active row for today',
-        name: logName,
-      );
       return;
     }
 
@@ -1487,6 +1476,30 @@ class DatabaseHelper {
     if (taskId == null) {
       log('($workerId): skipped — workers.task_id is null', name: logName);
       return;
+    }
+
+    final alreadyToday = await db.query(
+      'worker_tasks',
+      columns: ['offline_worker_id', 'task_id'],
+      where: "worker_id = ? AND task_date = ? AND status = 'active'",
+      whereArgs: [workerId, _todayDateKey()],
+      limit: 1,
+    );
+    if (alreadyToday.isNotEmpty) {
+      if (alreadyToday.first['task_id'] == taskId) {
+        log(
+          '($workerId): skipped — already has an active row for today on '
+          'the same task',
+          name: logName,
+        );
+        return;
+      }
+      log(
+        '($workerId): today\'s active row is for a different task than '
+        "workers.task_id (row=${alreadyToday.first['task_id']}, "
+        'workers.task_id=$taskId) — swapping it onto the current task',
+        name: logName,
+      );
     }
     final taskRows = await db.query(
       'tasks',
